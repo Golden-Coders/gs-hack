@@ -16,30 +16,30 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 ## 2. Ingest (P1)
 
-- [ ] 2.1 `POST /ingest` przyjmujący kopertę, nadający `event_id` i `received_at`, odpowiadający 202 po potwierdzeniu zapisu na `events.raw`; weryfikacja: test integracyjny z Redpandą + scenariusze „Poprawna koperta” i „Koperta bez wymaganego pola”
-- [ ] 2.2 `POST /ingest/{schema}` budujący kopertę z `Content-Type`; weryfikacja: test dla JSON i YAML
-- [ ] 2.3 Parsery formatów `json` i `yaml` za wspólnym interfejsem; nieobsługiwany format → 415; weryfikacja: testy jednostkowe parserów i kodów błędów
-- [ ] 2.4 Konsument źródeł Kafki wg `config/p1/sources/*.yaml` (topic → schema, format), z przeładowaniem bez restartu; weryfikacja: dodanie pliku źródła powoduje konsumpcję nowego topiku bez restartu
-- [ ] 2.5 Lista błędów ingestu (tabela + endpoint w `api/p1.rs`); weryfikacja: niepoprawny JSON z Kafki pojawia się w `GET /ingest/errors`
+- [x] 2.1 `POST /ingest` przyjmujący kopertę, nadający `event_id` i `received_at`, odpowiadający 202 po potwierdzeniu zapisu na `events.raw`; weryfikacja: test integracyjny z Redpandą + scenariusze „Poprawna koperta” i „Koperta bez wymaganego pola”
+- [x] 2.2 `POST /ingest/{schema}` budujący kopertę z `Content-Type`; weryfikacja: test dla JSON i YAML
+- [x] 2.3 Parsery formatów `json` i `yaml` za wspólnym interfejsem; nieobsługiwany format → 415; weryfikacja: testy jednostkowe parserów i kodów błędów
+- [x] 2.4 Konsument źródeł Kafki wg `config/p1/sources/*.yaml` (topic → schema, format), z przeładowaniem bez restartu; weryfikacja: dodanie pliku źródła powoduje konsumpcję nowego topiku bez restartu
+- [x] 2.5 Lista błędów ingestu (tabela + endpoint w `api/p1.rs`); weryfikacja: niepoprawny JSON z Kafki pojawia się w `GET /ingest/errors`
 
 ## 3. Normalizacja i UNMAPPED (P1)
 
 - [ ] 3.1 Model i tabela `mappings` (pola-ścieżki, severity: ścieżka|stała|warunek, fingerprint, resolved) + seed `config/p1/mappings/` dla trzech schematów z Appendix A; weryfikacja: testy jednostkowe mapowania każdego fixture'a na oczekiwane zdarzenie kanoniczne
 - [ ] 3.2 Rola normalizer: `events.raw` → `events.normalized` (klucz = fingerprint), normalizacja skali severity, domyślny fingerprint; weryfikacja: scenariusze z `event-normalization` jako testy
-- [ ] 3.3 Zdarzenia bez mappingu → `events.unmapped` + tabela `unmapped_events` (liczba, przykład); weryfikacja: zdarzenie nieznanego schematu jest widoczne w `GET /unmapped`
+- [x] 3.3 Zdarzenia bez mappingu → `events.unmapped` + tabela `unmapped_events` (liczba, przykład); weryfikacja: zdarzenie nieznanego schematu jest widoczne w `GET /unmapped`
 - [ ] 3.4 Hot reload mappingów (pliki → upsert → `NOTIFY` → `ArcSwap`) i CRUD mappingów w `api/p1.rs` z podglądem wyniku na przykładowym payloadzie; weryfikacja: zmiana mappingu działa bez restartu
-- [ ] 3.5 Ponowne przetworzenie UNMAPPED po zapisaniu mappingu; weryfikacja: scenariusz „Utworzenie mappingu z UI” jako test integracyjny
+- [x] 3.5 Ponowne przetworzenie UNMAPPED po zapisaniu mappingu; weryfikacja: scenariusz „Utworzenie mappingu z UI” jako test integracyjny
 
 ## 4. Cykl życia alertu (P1)
 
-- [ ] 4.1 Tabele `alerts`, `alert_episodes` + rola dedup konsumująca `events.normalized` i `alerts.commands` z mapą stanu w pamięci; weryfikacja: test „500 identycznych zdarzeń” daje 1 alert z licznikiem 500 i jedno `alerts.changed {opened}`
-- [ ] 4.2 Przejścia ack/resolve (komendy), auto-resolve ze zdarzenia `resolved`, reopen z nowym epizodem; weryfikacja: testy wszystkich scenariuszy `alert-lifecycle`
-- [ ] 4.3 Okresowy zrzut liczników (~1 s) do Postgresa + `ui.events` z licznikiem; leniwe doczytanie stanu po rebalansie; weryfikacja: test z dwiema instancjami i zatrzymaniem jednej
-- [ ] 4.4 Endpointy `api/p1.rs`: lista i szczegóły alertów, epizody, `POST /alerts/{id}/ack|resolve` publikujące `alerts.commands`; weryfikacja: testy HTTP
+- [x] 4.1 Tabele `alerts`, `alert_episodes` + rola dedup konsumująca `events.normalized` i `alerts.commands` z mapą stanu w pamięci; weryfikacja: test „500 identycznych zdarzeń” daje 1 alert z licznikiem 500 i jedno `alerts.changed {opened}`
+- [x] 4.2 Przejścia ack/resolve (komendy), auto-resolve ze zdarzenia `resolved`, reopen z nowym epizodem; weryfikacja: testy wszystkich scenariuszy `alert-lifecycle`
+- [x] 4.3 Okresowy zrzut liczników (~1 s) do Postgresa + `ui.events` z licznikiem; leniwe doczytanie stanu po rebalansie; weryfikacja: test z dwiema instancjami i zatrzymaniem jednej
+- [x] 4.4 Endpointy `api/p1.rs`: lista i szczegóły alertów, epizody, `POST /alerts/{id}/ack|resolve` publikujące `alerts.commands`; weryfikacja: testy HTTP
 
 ## 5. Test obciążenia (P1)
 
-- [ ] 5.1 `loadgen`: ruch na HTTP i topik źródłowy, mieszanka schematów, sterowany odsetek duplikatów, zadane msg/s; weryfikacja: uruchomienie generuje zadaną liczbę zdarzeń
+- [x] 5.1 `loadgen`: ruch na HTTP i topik źródłowy, mieszanka schematów, sterowany odsetek duplikatów, zadane msg/s; weryfikacja: uruchomienie generuje zadaną liczbę zdarzeń
 - [ ] 5.2 Zapytanie SQL p50/p99 (`delivered_at - received_at`) i skrypt zbierający lag konsumentów; weryfikacja: raport po przebiegu na pustym systemie
 - [ ] 5.3 Pierwszy pomiar po pierwszym przepływie end-to-end (sekcja 18.1) i końcowy przed demo; wyniki w `docs/LOADTEST.md`; weryfikacja: plik zawiera msg/s, p50, p99, konfigurację i komendę do powtórzenia
 
