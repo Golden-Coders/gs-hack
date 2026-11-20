@@ -1,0 +1,18 @@
+.approvals-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.approvals-empty { padding: var(--space-6); text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
+.approvals-list { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.approval { display: flex; flex-wrap: wrap; gap: var(--space-4); justify-content: space-between; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--gray); border-radius: var(--radius); padding: var(--space-3) var(--space-4); }
+.approval-high { border-left-color: var(--red); }
+.approval-main { flex: 1 1 420px; min-width: 0; }
+.approval-title { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.risk { font-size: 12px; font-weight: 700; padding: 1px var(--space-2); border-radius: 999px; line-height: 18px; white-space: nowrap; }
+.risk-high { color: var(--red); background: var(--red-bg); border: 1px solid var(--red); }
+.risk-low { color: var(--green); background: var(--green-bg); }
+.approval-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; }
+.approval-meta dt, .approval-params dt { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.approval-meta dd, .approval-params dd { margin: 0; word-break: break-word; }
+.approval-params-row { grid-column: 1 / -1; }
+.approval-params { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); margin: 0; }
+.approval code, .approval-params dd { font-family: var(--font-mono); font-size: 13px; }
+.approval-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.approval-confirm-text { font-weight: 600; color: var(--red); }
