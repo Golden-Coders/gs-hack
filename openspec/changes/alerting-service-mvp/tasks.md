@@ -98,8 +98,8 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 ## 14. UI — ekrany operacyjne (P4)
 
-- [ ] 14.1 Feed alertów na żywo z filtrem „mój zespół / wszystkie”; weryfikacja: nowy alert pojawia się bez odświeżania
-- [ ] 14.2 Szczegóły alertu: prezentacja wg reguły, licznik, epizody, ack/resolve, runbooki ze statusem kroków i akcjami (zrobione, ponów, pomiń, tryb ręczny), dostarczenia z zakładką nieudanych i „wyślij ponownie”, dziennik; weryfikacja: scenariusz alertu Settlements z wyróżnieniem na czerwono
+- [x] 14.1 Feed alertów na żywo z filtrem „mój zespół / wszystkie”; weryfikacja: nowy alert pojawia się bez odświeżania
+- [x] 14.2 Szczegóły alertu: prezentacja wg reguły, licznik, epizody, ack/resolve, runbooki ze statusem kroków i akcjami (zrobione, ponów, pomiń, tryb ręczny), dostarczenia z zakładką nieudanych i „wyślij ponownie”, dziennik; weryfikacja: scenariusz alertu Settlements z wyróżnieniem na czerwono
 - [ ] 14.3 Kolejka zatwierdzeń; weryfikacja: zatwierdzenie usuwa krok z kolejki i aktualizuje szczegóły alertu
 - [ ] 14.4 Podgląd symulowanych SMS/telefonów z przełącznikiem dostępności kanału; weryfikacja: wyłączenie SMS pokazuje fallback w szczegółach alertu
 
@@ -108,7 +108,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 - [ ] 15.1 Edytor reguł: kreator drzewa warunków ↔ YAML, podpowiedzi pól, odbiorcy, prezentacja, „testuj na zdarzeniu”; weryfikacja: osoba spoza zespołu tworzy regułę w kreatorze bez pisania YAML
 - [ ] 15.2 Mappingi i UNMAPPED: lista, przykładowy payload, tworzenie mappingu przez wybór pól, podgląd wyniku; weryfikacja: nowy schemat → alert w feedzie w < 2 min
 - [ ] 15.3 Formularz akcji HTTP i lista brakujących akcji z „Dodaj”; weryfikacja: dodanie `flush_cdn` zmienia krok runbooka na automatyczny
-- [ ] 15.4 Widoki tylko do odczytu: runbooki oraz osoby/zespoły/preferencje ze ścieżką pliku; weryfikacja: widoki pokazują dane z seedu
+- [x] 15.4 Widoki tylko do odczytu: runbooki oraz osoby/zespoły/preferencje ze ścieżką pliku; weryfikacja: widoki pokazują dane z seedu
 
 ## 16. Dokumentacja (P4, z wkładem właścicieli)
 
