@@ -11,3 +11,10 @@ common = { workspace = true, features = ["db", "kafka"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
