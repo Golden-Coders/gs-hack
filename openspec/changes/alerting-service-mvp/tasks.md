@@ -11,7 +11,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 - [x] 1.5 Napisać `contracts/openapi.yaml` (endpointy z sekcji 4, 7, 10, 11, 13 + `/stream` SSE) i wygenerować z niego mock serwer dla UI; weryfikacja: mock odpowiada na `GET /alerts`
 - [x] 1.6 Szkielet `api` z modułami `p1.rs`, `p2.rs`, `p3.rs` i zamrożoną listą `merge(...)` w `main.rs`; weryfikacja: `GET /health` zwraca 200
 - [x] 1.7 `docker-compose.yml` (redpanda, postgres, mailpit, binarki z jednego obrazu, ui) z utworzeniem topików z D2 (12 partycji) i Dockerfile z `cargo-chef`; weryfikacja: `docker compose up` startuje wszystkie kontenery, `rpk topic list` pokazuje topiki
-- [x] 1.8 Konwencja migracji (`migrations/p1_*`, `p2_*`, `p3_*`, uruchamiane przy starcie) i katalog `config/` z podkatalogami właścicieli; weryfikacja: pusta migracja każdego strumienia wykonuje się przy starcie
+- [x] 1.8 Konwencja migracji (`migrations/1xxx_p1_*`, `2xxx_p2_*`, `3xxx_p3_*` — numer wersji na początku, zakres per strumień; uruchamiane przy starcie) i katalog `config/` z podkatalogami właścicieli; weryfikacja: pusta migracja każdego strumienia wykonuje się przy starcie
 - [x] 1.9 Szkielet `ui/` (Vite + React + TypeScript) z routingiem ekranów i klientem z OpenAPI; weryfikacja: `npm run dev` pokazuje pustą nawigację
 
 ## 2. Ingest (P1)

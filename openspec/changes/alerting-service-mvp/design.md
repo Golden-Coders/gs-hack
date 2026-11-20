@@ -40,7 +40,7 @@ crates/
   mock-targets/ P3 bin: udawane usługi dla akcji (retry_workflow, restart_service, ticket)
   loadgen/     P1 bin: generator ruchu HTTP + Kafka
 ui/            P4: TypeScript + React + Vite
-migrations/    p1_*.sql, p2_*.sql, p3_*.sql (prefiks = właściciel)
+migrations/    1xxx_p1_*.sql, 2xxx_p2_*.sql, 3xxx_p3_*.sql (zakres numerów = właściciel; sqlx wymaga numeru wersji na początku)
 config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (seed + hot reload)
 ```
 
@@ -55,7 +55,7 @@ config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (se
 | Topik | Klucz | Producent | Konsument (grupa) | Treść |
 |---|---|---|---|---|
 | `events.raw` | losowy / `source` | ingest (P1) | lifecycle-normalizer (P1) | `Envelope` + `received_at` |
-| `events.unmapped` | `schema` | lifecycle (P1) | lifecycle-replay (P1) | `Envelope` bez mappingu |
+| `events.unmapped` | `schema` | lifecycle (P1) | — (informacyjny) | `Envelope` bez mappingu; trwała kopia w tabeli `unmapped_events`, z której po zapisaniu mappingu zdarzenia są ponownie publikowane na `events.raw` (`FOR UPDATE SKIP LOCKED`, bezpieczne przy wielu instancjach) |
 | `events.normalized` | **fingerprint** | lifecycle-normalizer (P1) | lifecycle-dedup (P1) | `CanonicalEvent` |
 | `alerts.commands` | **fingerprint** | api/p1 (ack/resolve z UI) | lifecycle-dedup (P1) | `AlertCommand` |
 | `alerts.changed` | `alert_id` | lifecycle (P1) | router (P2), runbooks (P3), api (SSE) | `AlertChanged` |
@@ -76,7 +76,7 @@ config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (se
 
 | Właściciel | Tabele |
 |---|---|
-| P1 | `sources`, `mappings`, `unmapped_events`, `alerts`, `alert_episodes`, `alert_occurrences_rollup` |
+| P1 | `ingest_errors`, `mappings`, `unmapped_events`, `alerts`, `alert_episodes` |
 | P2 | `rules`, `people`, `teams`, `team_members`, `preferences`, `deliveries`, `mock_outbox` |
 | P3 | `runbooks`, `actions`, `runbook_runs`, `step_runs`, `audit_log`, `unhandled_actions` |
 
@@ -88,14 +88,15 @@ config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (se
 
 - `events.normalized` i `alerts.commands` mają klucz = fingerprint, więc wszystkie zdarzenia i polecenia dla jednego F trafiają do jednej instancji `lifecycle`. To ona jest jedynym pisarzem alertu.
 - Stan w pamięci: `HashMap<Fingerprint, OpenAlertState { alert_id, episode, count, last_seen, dirty }>`.
-- Zdarzenie dla otwartego alertu: `count += 1`, `last_seen = now`, bez publikacji. Co ~1 s zrzut zmienionych liczników do Postgresa (batch `UPDATE`) i jeden `ui.events` z nowym licznikiem.
+- Zdarzenie dla otwartego alertu: `count += 1`, `last_seen = now`, bez publikacji. Co ~1 s zrzut zmienionych liczników do Postgresa jako przyrost (`count = count + delta`, żeby dwie instancje po rebalansie nie nadpisały sobie licznika) i jeden `ui.events` z nowym licznikiem.
 - Zmiana stanu (open, ack, resolve, reopen): zapis do Postgresa **synchronicznie** + `alerts.changed`.
-- Rebalans: po przypisaniu partycji stan budowany leniwie — przy chybieniu w cache instancja czyta otwarty alert dla F z Postgresa. Niezrzucone inkrementy z poprzedniej instancji mogą przepaść (licznik może być lekko zaniżony).
+- Rebalans: po każdej zmianie przypisania partycji instancja zrzuca zaległe liczniki i czyści cache; stan budowany leniwie — przy chybieniu w cache instancja czyta otwarty alert dla F z Postgresa. Niezrzucone inkrementy z poprzedniej instancji mogą przepaść (licznik może być lekko zaniżony).
 - Reopen: zdarzenie dla F, którego ostatni alert jest RESOLVED → ten sam `alert_id`, `episode += 1`, `alerts.changed {reopened}`.
 
 ### D5. Hot reload konfiguracji
 
-- Postgres jest źródłem prawdy w runtime. Pliki w `config/` to seed i alternatywny sposób edycji: binarka-właściciel obserwuje swój katalog (`notify`) i robi upsert do Postgresa.
+- Postgres jest źródłem prawdy w runtime. Pliki w `config/` to seed i alternatywny sposób edycji: binarka-właściciel skanuje swój katalog co ~2 s (polling zamiast `notify`, bo bind-mount Dockera na macOS nie przekazuje zdarzeń plikowych) i robi upsert do Postgresa. Seed przy starcie nie nadpisuje zmian zrobionych przez API (`ON CONFLICT DO NOTHING`); upsert następuje dopiero po zmianie pliku.
+- Wyjątek: źródła Kafki (`config/p1/sources/*.yaml`) nie mają API ani tabeli — źródłem prawdy są pliki, które `ingest` skanuje i na ich podstawie uruchamia/zatrzymuje konsumentów bez restartu.
 - Każda zmiana konfiguracji → `NOTIFY config_changed, '<rodzaj>'`. Konsumenci słuchają `LISTEN`, przeładowują swoją część i podmieniają ją atomowo (`ArcSwap<Config>`). Trwające przetwarzanie dokańcza na starej wersji.
 - Każdy zapisany alert/dostarczenie zapamiętuje `rule_version` / `mapping_version`, by było wiadomo, wg której wersji powstał.
 
@@ -175,7 +176,7 @@ config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (se
 `crates/contracts` zawiera:
 - `Envelope { format, schema, payload, source, event_id, received_at }`
 - `CanonicalEvent { event_id, schema, source, severity, title, fingerprint, resolved: bool, fields, raw, received_at, mapping_version }`
-- `AlertChanged { alert_id, fingerprint, episode, transition: Opened|Reopened|Acked|Resolved|CountUpdated, severity, count, event: CanonicalEvent, at }`
+- `AlertChanged { alert_id, fingerprint, episode, transition: Opened|Reopened|Acked|Resolved, state, severity, count, event: CanonicalEvent, actor: Option<Actor>, at }` — zmiany samego licznika nie idą na `alerts.changed`, tylko na `ui.events` (`alert_count`), zob. D4
 - `AlertCommand { fingerprint, alert_id, kind: Ack|Resolve, actor, at }`
 - `DeliveryRequest { delivery_id, alert_id, episode, person_id, chain: Vec<Channel>, rendered: HashMap<Channel, Rendered>, received_at, attempt, not_before }`
 - `RunbookCommand { run_id, step_id, kind: Approve|Reject|Done{note}|Retry|Skip, actor, at }`
@@ -208,3 +209,5 @@ Nowy system, brak migracji danych. Start: `docker compose up` (migracje i seed z
 - Eskalacja / ponowne powiadomienie przy braku ack (odłożone funkcjonalnie; jeśli wejdzie, to jako timer w `runbooks` lub `router`).
 - Konkretny model lokalny i dostawca API dla `RunbookAuthor` (poza MVP).
 - Docelowa liczba partycji i parametry producenta — do ustalenia po pierwszym pomiarze.
+- `POST /mappings/preview` wymaga zależności `api -> lifecycle` (biblioteka mappingu) w `crates/api/Cargo.toml`, czyli pliku wspólnym; do czasu uzgodnienia endpoint zwraca 501 (zadanie 3.4).
+- `rule_ids`, `teams`, `color` i prezentacja w `GET /alerts` / `GET /alerts/{id}` wymagają reguł P2 (tabela `rules` + `condition`); lifecycle ich nie zna. Propozycja: `api/p1.rs` ewaluuje reguły tylko do odczytu przy odczycie alertu — do ustalenia przy integracji (sekcja 18).
