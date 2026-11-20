@@ -1,0 +1,15 @@
+schema: trade.rejected.v2
+fields:
+  desk: $.payload.desk
+  tradeId: $.payload.tradeId
+severity:
+  type: rules
+  rules:
+  - when:
+      field: raw.payload.notional
+      op: gt
+      value: 10000000
+    value: critical
+  default: warning
+fingerprint:
+- $.payload.tradeId

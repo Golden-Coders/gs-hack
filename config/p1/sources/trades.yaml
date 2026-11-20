@@ -1,0 +1,4 @@
+# Źródło Kafki: topik -> schema/format. Nazwa źródła = nazwa pliku.
+topic: trades
+schema: trade.rejected.v2
+format: json

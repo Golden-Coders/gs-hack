@@ -1,0 +1,21 @@
+schema: workflow.v1
+fields:
+  type: $.type
+  workflowName: $.workflowName
+  workflowId: $.workflowId
+  step: $.step
+  environment: $.environment
+title: $.error.message
+severity:
+  type: path
+  path: $.severity
+  map:
+    ERROR: error
+    WARN: warning
+    INFO: info
+    CRITICAL: critical
+  default: warning
+fingerprint:
+- $.workflowName
+- $.step
+- $.error.code
