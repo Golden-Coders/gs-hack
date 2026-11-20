@@ -294,3 +294,279 @@ async fn unmapped(State(st): State<AppState>) -> ApiResult<Json<Value>> {
         .collect();
     Ok(Json(json!(out)))
 }
+
+#[cfg(test)]
+mod tests {
+    //! Testy integracyjne: wymagają działających Postgresa i Redpandy (docker compose).
+    //! Router uruchamiany na losowym porcie, zapytania jako surowe HTTP/1.1.
+    use std::time::Duration;
+
+    use common::kafka::rdkafka::message::Message;
+    use serde_json::{json, Value};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    use super::*;
+
+    struct Server {
+        addr: std::net::SocketAddr,
+        st: AppState,
+    }
+
+    async fn server() -> Server {
+        let st = AppState::connect(common::Config::from_env()).await.expect("connect");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = crate::router(st.clone());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Server { addr, st }
+    }
+
+    impl Server {
+        async fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<&str>) -> (u16, Value) {
+            let mut req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+            for (k, v) in headers {
+                req.push_str(&format!("{k}: {v}\r\n"));
+            }
+            if let Some(b) = body {
+                req.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{b}", b.len()));
+            } else {
+                req.push_str("\r\n");
+            }
+            let mut s = TcpStream::connect(self.addr).await.unwrap();
+            s.write_all(req.as_bytes()).await.unwrap();
+            let mut buf = Vec::new();
+            s.read_to_end(&mut buf).await.unwrap();
+            let text = String::from_utf8(buf).unwrap();
+            let (head, body) = text.split_once("\r\n\r\n").unwrap();
+            let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+            let json = serde_json::from_str(body.trim()).unwrap_or(Value::Null);
+            (status, json)
+        }
+
+        async fn insert_alert(&self, fp: &str, state: &str, age_days: i32) -> Uuid {
+            let id = Uuid::new_v4();
+            sqlx::query(
+                "INSERT INTO alerts (id, fingerprint, state, severity, title, schema, episode, count, first_seen, last_seen, \
+                 last_event, acked_by, updated_at) VALUES ($1, $2, $3, 'warning', 'tytul', 'test', 2, 5, now(), now(), $4, $5, \
+                 now() - make_interval(days => $6))",
+            )
+            .bind(id)
+            .bind(fp)
+            .bind(state)
+            .bind(SqlJson(json!({"title": "tytul"})))
+            .bind(SqlJson(json!({"type": "user", "person_id": "ala"})))
+            .bind(age_days)
+            .execute(&self.st.db)
+            .await
+            .unwrap();
+            id
+        }
+    }
+
+    fn uniq(prefix: &str) -> String {
+        format!("{prefix}-{}", Uuid::new_v4())
+    }
+
+    #[tokio::test]
+    async fn list_alerts_filters() {
+        let s = server().await;
+        let a = s.insert_alert(&uniq("fp"), "acked", 0).await;
+        let b = s.insert_alert(&uniq("fp"), "open", 0).await;
+        let old = s.insert_alert(&uniq("fp"), "acked", 3).await;
+        let ids = |v: &Value| -> Vec<String> { v.as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect() };
+
+        let (st, all) = s.http("GET", "/alerts?limit=1000", &[], None).await;
+        assert_eq!(st, 200);
+        assert!(ids(&all).contains(&a.to_string()));
+
+        let (_, acked) = s.http("GET", "/alerts?state=acked&limit=1000", &[], None).await;
+        assert!(ids(&acked).contains(&a.to_string()));
+        assert!(!ids(&acked).contains(&b.to_string()));
+        assert!(acked.as_array().unwrap().iter().all(|x| x["state"] == "acked"));
+
+        let since: String = sqlx::query_scalar(
+            "SELECT to_char((now() - interval '1 day') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
+        )
+        .fetch_one(&s.st.db)
+        .await
+        .unwrap();
+        let (_, recent) = s.http("GET", &format!("/alerts?since={since}&limit=1000"), &[], None).await;
+        assert!(ids(&recent).contains(&a.to_string()));
+        assert!(!ids(&recent).contains(&old.to_string()));
+
+        let (_, one) = s.http("GET", "/alerts?limit=1", &[], None).await;
+        assert_eq!(one.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn get_alert_details_and_errors() {
+        let s = server().await;
+        let id = s.insert_alert(&uniq("fp"), "acked", 0).await;
+        let (st, v) = s.http("GET", &format!("/alerts/{id}"), &[], None).await;
+        assert_eq!(st, 200);
+        assert_eq!(v["id"], id.to_string());
+        assert_eq!(v["event"]["title"], "tytul");
+        assert_eq!(v["acked_by"], json!({"type": "user", "person_id": "ala"}));
+        assert_eq!(v["episode"], 2);
+        assert_eq!(v["count"], 5);
+
+        let (st, _) = s.http("GET", &format!("/alerts/{}", Uuid::new_v4()), &[], None).await;
+        assert_eq!(st, 404);
+        let (st, _) = s.http("GET", "/alerts/nie-uuid", &[], None).await;
+        assert_eq!(st, 400);
+    }
+
+    #[tokio::test]
+    async fn episodes_newest_first() {
+        let s = server().await;
+        let id = s.insert_alert(&uniq("fp"), "reopened", 0).await;
+        for ep in [1, 2] {
+            sqlx::query("INSERT INTO alert_episodes (alert_id, episode, opened_at, count) VALUES ($1, $2, now(), $3)")
+                .bind(id)
+                .bind(ep)
+                .bind(ep as i64 * 10)
+                .execute(&s.st.db)
+                .await
+                .unwrap();
+        }
+        let (st, v) = s.http("GET", &format!("/alerts/{id}/episodes"), &[], None).await;
+        assert_eq!(st, 200);
+        let eps: Vec<i64> = v.as_array().unwrap().iter().map(|e| e["episode"].as_i64().unwrap()).collect();
+        assert_eq!(eps, vec![2, 1]);
+        assert_eq!(v[0]["count"], 20);
+    }
+
+    async fn find_command(alert_id: Uuid) -> AlertCommand {
+        let cfg = common::Config::from_env();
+        let consumer = common::kafka::consumer(&cfg.kafka_brokers, &uniq("p1-test"), &[topics::ALERTS_COMMANDS]).unwrap();
+        let fut = async {
+            loop {
+                let m = consumer.recv().await.unwrap();
+                let key = String::from_utf8(m.key().unwrap().to_vec()).unwrap();
+                if let Ok(cmd) = common::kafka::decode::<AlertCommand>(&m) {
+                    if cmd.alert_id == alert_id {
+                        assert_eq!(key, cmd.fingerprint);
+                        return cmd;
+                    }
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(15), fut).await.expect("brak komendy na alerts.commands")
+    }
+
+    #[tokio::test]
+    async fn ack_publishes_command() {
+        let s = server().await;
+        let fp = uniq("fp");
+        let id = s.insert_alert(&fp, "open", 0).await;
+
+        let (st, _) = s.http("POST", &format!("/alerts/{id}/ack"), &[], None).await;
+        assert_eq!(st, 400);
+        let (st, _) = s.http("POST", &format!("/alerts/{}/ack", Uuid::new_v4()), &[("X-Person-Id", "ala")], None).await;
+        assert_eq!(st, 404);
+
+        let (st, _) = s.http("POST", &format!("/alerts/{id}/ack"), &[("X-Person-Id", "ala")], None).await;
+        assert_eq!(st, 202);
+        let cmd = find_command(id).await;
+        assert_eq!(cmd.fingerprint, fp);
+        assert!(matches!(cmd.kind, AlertCommandKind::Ack));
+        assert_eq!(cmd.actor, Actor::User { person_id: "ala".into() });
+    }
+
+    #[tokio::test]
+    async fn resolve_accepted() {
+        let s = server().await;
+        let id = s.insert_alert(&uniq("fp"), "open", 0).await;
+        let (st, _) = s.http("POST", &format!("/alerts/{id}/resolve"), &[("X-Person-Id", "bob")], None).await;
+        assert_eq!(st, 202);
+        let (st, _) = s.http("POST", &format!("/alerts/{id}/resolve"), &[], None).await;
+        assert_eq!(st, 400);
+    }
+
+    #[tokio::test]
+    async fn mappings_crud_and_notify() {
+        let s = server().await;
+        let schema = uniq("t-schema");
+        let body = json!({"schema": schema, "severity": {"type": "path", "path": "$.s", "map": {}, "default": "warning"}}).to_string();
+        let path = format!("/mappings/{schema}");
+
+        let mut listener = sqlx::postgres::PgListener::connect_with(&s.st.db).await.unwrap();
+        listener.listen("config_changed").await.unwrap();
+
+        let (st, v1) = s.http("PUT", &path, &[], Some(&body)).await;
+        assert_eq!(st, 200);
+        let (st, v2) = s.http("PUT", &path, &[], Some(&body)).await;
+        assert_eq!(st, 200);
+        assert_eq!(v2["version"].as_i64().unwrap(), v1["version"].as_i64().unwrap() + 1);
+
+        let n = tokio::time::timeout(Duration::from_secs(5), listener.recv()).await.expect("brak NOTIFY").unwrap();
+        assert_eq!(n.channel(), "config_changed");
+        assert_eq!(n.payload(), "mappings");
+
+        let (st, v) = s.http("GET", &path, &[], None).await;
+        assert_eq!(st, 200);
+        assert_eq!(v["schema"], schema);
+        let (_, list) = s.http("GET", "/mappings", &[], None).await;
+        assert!(list.as_array().unwrap().iter().any(|m| m["schema"] == schema.as_str()));
+
+        let (st, _) = s.http("PUT", &path, &[], Some(&body.replace(&schema, "inny"))).await;
+        assert_eq!(st, 400);
+        let (st, _) = s.http("PUT", &path, &[], Some("{nie json")).await;
+        assert_eq!(st, 400);
+
+        let (st, _) = s.http("DELETE", &path, &[], None).await;
+        assert_eq!(st, 204);
+        let (st, _) = s.http("GET", &path, &[], None).await;
+        assert_eq!(st, 404);
+        let (st, _) = s.http("GET", "/mappings/nie-istnieje-xyz", &[], None).await;
+        assert_eq!(st, 404);
+    }
+
+    #[tokio::test]
+    async fn unmapped_aggregates() {
+        let s = server().await;
+        let schema = uniq("unm");
+        for i in 0..3 {
+            sqlx::query(
+                "INSERT INTO unmapped_events (event_id, schema, envelope, received_at) \
+                 VALUES ($1, $2, $3, now() - make_interval(mins => $4))",
+            )
+            .bind(Uuid::new_v4())
+            .bind(&schema)
+            .bind(SqlJson(json!({"payload": {"n": i}})))
+            .bind(10 - i)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+        }
+        let (st, v) = s.http("GET", "/unmapped", &[], None).await;
+        assert_eq!(st, 200);
+        let row = v.as_array().unwrap().iter().find(|r| r["schema"] == schema.as_str()).expect("brak schematu");
+        assert_eq!(row["count"], 3);
+        assert_eq!(row["sample"], json!({"n": 2}));
+    }
+
+    #[tokio::test]
+    async fn ingest_errors_listed() {
+        let s = server().await;
+        let src = uniq("src");
+        sqlx::query("INSERT INTO ingest_errors (source, error, sample) VALUES ($1, 'zly json', '{')")
+            .bind(&src)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+        let (st, v) = s.http("GET", "/ingest/errors", &[], None).await;
+        assert_eq!(st, 200);
+        let e = v.as_array().unwrap().iter().find(|e| e["source"] == src.as_str()).expect("brak błędu");
+        assert_eq!(e["error"], "zly json");
+        assert_eq!(e["sample"], "{");
+    }
+
+    #[tokio::test]
+    async fn preview_not_implemented() {
+        let s = server().await;
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some("{}")).await;
+        assert_eq!(st, 501);
+    }
+}
