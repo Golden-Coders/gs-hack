@@ -14,7 +14,27 @@ nav .session-error { color: #fca5a5; }
 nav .stream-status { font-size: 12px; }
 nav .stream-live { color: #86efac; }
 nav .stream-connecting, nav .stream-reconnecting { color: #fcd34d; }
-nav .stream-idle { opacity: .6; }
+nav .stream-idle, nav .stream-unavailable { opacity: .6; }
 nav .api-url { font-size: 11px; opacity: .5; word-break: break-all; }
 main { padding: 24px 32px; }
 .todo { color: #6b7280; font-style: italic; }
+
+/* wspólne komponenty (13.3) */
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 18px; white-space: nowrap; }
+.badge-red { color: #b91c1c; background: #fee2e2; }
+.badge-orange { color: #c2410c; background: #ffedd5; }
+.badge-yellow { color: #a16207; background: #fef9c3; }
+.badge-green { color: #15803d; background: #dcfce7; }
+.badge-blue { color: #1d4ed8; background: #dbeafe; }
+.badge-gray { color: #4b5563; background: #f3f4f6; }
+.presentation { background: #fff; border: 1px solid #e5e7eb; border-left: 4px solid #9ca3af; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; }
+.presentation header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.presentation h2 { font-size: 17px; margin: 0; }
+.presentation-body { margin: 8px 0; }
+.presented-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; margin: 8px 0 0; }
+.presented-fields .field { padding: 6px 8px; border-radius: 6px; background: #f9fafb; }
+.presented-fields .field.highlighted { font-weight: 600; }
+.presented-fields dt { font-size: 11px; opacity: .7; }
+.presented-fields dd { margin: 0; word-break: break-word; }
+.markdown { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 16px; margin-bottom: 12px; }
+.dev-components .row { display: flex; gap: 6px; flex-wrap: wrap; }

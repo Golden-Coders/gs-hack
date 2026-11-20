@@ -6,6 +6,7 @@ const LABELS: Record<StreamStatus, string> = {
   connecting: "łączenie…",
   live: "na żywo",
   reconnecting: "ponowne łączenie…",
+  unavailable: "na żywo niedostępne (mock)",
 };
 
 export default function StreamIndicator() {

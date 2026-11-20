@@ -8,6 +8,7 @@ import Mappings from "./screens/Mappings";
 import Actions from "./screens/Actions";
 import Runbooks from "./screens/Runbooks";
 import People from "./screens/People";
+import DevComponents from "./screens/DevComponents";
 import SessionBar from "./components/SessionBar";
 
 const NAV: { to: string; label: string; group: "ops" | "config" }[] = [
@@ -49,6 +50,7 @@ export default function App() {
           <Route path="/actions" element={<Actions />} />
           <Route path="/runbooks" element={<Runbooks />} />
           <Route path="/people" element={<People />} />
+          <Route path="/dev/components" element={<DevComponents />} />
         </Routes>
       </main>
     </div>

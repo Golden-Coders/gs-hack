@@ -94,7 +94,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 - [x] 13.1 Klient API z OpenAPI, przełącznik mock/prawdziwy backend, wybór tożsamości („działam jako”); weryfikacja: UI działa na mocku z sekcji 1.5
 - [x] 13.2 Obsługa SSE `/stream` z ponownym połączeniem i dociągnięciem zmian z przerwy; weryfikacja: zerwanie połączenia i powrót uzupełnia feed
-- [ ] 13.3 Wspólne komponenty: badge severity/stanu, renderer prezentacji reguły (pola, kolor), renderer Markdown; weryfikacja: przegląd komponentów na danych z fixtures
+- [x] 13.3 Wspólne komponenty: badge severity/stanu, renderer prezentacji reguły (pola, kolor), renderer Markdown; weryfikacja: przegląd komponentów na danych z fixtures
 
 ## 14. UI — ekrany operacyjne (P4)
 
