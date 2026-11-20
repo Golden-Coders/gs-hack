@@ -113,7 +113,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 ## 16. Dokumentacja (P4, z wkładem właścicieli)
 
 - [ ] 16.1 `README.md`: uruchomienie w ≤ 2 komendach, architektura (diagram z design), jak dodać źródło, schemat, regułę, kanał, akcję, runbook; weryfikacja: osoba spoza strumienia uruchamia demo ze świeżego klona wg README
-- [ ] 16.2 `docs/MOCKS.md` (co jest symulowane i jak podmienić na prawdziwe) oraz sekcja o bezpieczeństwie i użyciu AI w zgłoszeniu; weryfikacja: każdy mock z compose jest opisany
+- [x] 16.2 `docs/MOCKS.md` (co jest symulowane i jak podmienić na prawdziwe) oraz sekcja o bezpieczeństwie i użyciu AI w zgłoszeniu; weryfikacja: każdy mock z compose jest opisany
 
 ## 17. Dane i skrypt demo (P4, z wkładem właścicieli)
 
