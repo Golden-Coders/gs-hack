@@ -173,3 +173,183 @@ impl CompiledMapping {
         event
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+
+    fn fixture(name: &str) -> contracts::IncomingEnvelope {
+        let p = format!("{ROOT}/crates/contracts/fixtures/events/{name}.json");
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    fn seed_def(schema: &str) -> MappingDef {
+        let p = format!("{ROOT}/config/p1/mappings/{schema}.yaml");
+        serde_yaml::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    fn env_of(i: &contracts::IncomingEnvelope) -> Envelope {
+        Envelope {
+            event_id: Uuid::new_v4(),
+            format: i.format.clone(),
+            schema: i.schema.clone(),
+            payload: i.payload.clone(),
+            source: "test".into(),
+            received_at: chrono::Utc::now(),
+        }
+    }
+
+    fn run(schema: &str, fixture_name: &str) -> CanonicalEvent {
+        let m = CompiledMapping::compile(seed_def(schema), 1).unwrap();
+        let env = env_of(&fixture(fixture_name));
+        let raw = parse_payload(&env.format, &env.payload).unwrap();
+        m.normalize(&env, raw)
+    }
+
+    #[test]
+    fn workflow_fixture() {
+        let ev = run("workflow.v1", "workflow_failed");
+        assert_eq!(ev.severity, Severity::Error);
+        assert_eq!(ev.title, "Counterparty service did not respond in 5000 ms");
+        assert_eq!(ev.fingerprint, "workflow.v1|order-settlement|validate-counterparty|TIMEOUT");
+        assert_eq!(ev.raw, fixture("workflow_failed").payload);
+        assert_eq!(ev.fields["workflowName"], "order-settlement");
+        assert_eq!(ev.mapping_version, 1);
+    }
+
+    #[test]
+    fn alertmanager_fixture() {
+        let ev = run("alertmanager", "alertmanager_high_error_rate");
+        assert_eq!(ev.fields["service"], "payments-api");
+        assert_eq!(ev.severity, Severity::Critical);
+        assert_eq!(ev.title, "Error rate 12% over the last 5 minutes");
+        assert_eq!(ev.fingerprint, "alertmanager|HighErrorRate|payments-api|eu-west");
+    }
+
+    #[test]
+    fn trade_fixture_fingerprint() {
+        let ev = run("trade.rejected.v2", "trade_rejected");
+        assert_eq!(ev.fingerprint, "trade.rejected.v2|T-998877");
+        assert_eq!(ev.fields["desk"], "rates");
+        // brak title w mappingu -> nazwa schematu
+        assert_eq!(ev.title, "trade.rejected.v2");
+    }
+
+    #[test]
+    #[ignore = "czeka na condition (P2, tasks 6.1)"]
+    fn trade_fixture_severity_rules() {
+        assert_eq!(run("trade.rejected.v2", "trade_rejected").severity, Severity::Critical);
+    }
+
+    #[test]
+    #[ignore = "czeka na condition (P2, tasks 6.1)"]
+    fn alertmanager_resolved_condition() {
+        let m = CompiledMapping::compile(seed_def("alertmanager"), 1).unwrap();
+        let mut i = fixture("alertmanager_high_error_rate");
+        i.payload["status"] = json!("resolved");
+        let env = env_of(&i);
+        assert!(m.normalize(&env, env.payload.clone()).resolved);
+        let env = env_of(&fixture("alertmanager_high_error_rate"));
+        assert!(!m.normalize(&env, env.payload.clone()).resolved);
+    }
+
+    #[test]
+    fn missing_field_is_null() {
+        let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
+        let mut i = fixture("workflow_failed");
+        i.payload.as_object_mut().unwrap().remove("environment");
+        let env = env_of(&i);
+        let ev = m.normalize(&env, env.payload.clone());
+        assert_eq!(ev.fields["environment"], Value::Null);
+    }
+
+    #[test]
+    fn severity_scale_names() {
+        let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
+        let mut i = fixture("workflow_failed");
+        let sev = |m: &CompiledMapping, i: &contracts::IncomingEnvelope| {
+            let env = env_of(i);
+            m.normalize(&env, env.payload.clone()).severity
+        };
+        assert_eq!(sev(&m, &i), Severity::Error); // `ERROR` z mapy
+        i.payload["severity"] = json!("WARN");
+        assert_eq!(sev(&m, &i), Severity::Warning);
+        i.payload["severity"] = json!("bogus");
+        assert_eq!(sev(&m, &i), Severity::Warning); // default
+        // `critical` bez wpisu w mapie (alertmanager ma pustą mapę) -> nazwa skali
+        let am = CompiledMapping::compile(seed_def("alertmanager"), 1).unwrap();
+        let mut a = fixture("alertmanager_high_error_rate");
+        assert_eq!(sev(&am, &a), Severity::Critical);
+        a.payload["labels"]["severity"] = json!("ERROR");
+        assert_eq!(sev(&am, &a), Severity::Error);
+    }
+
+    #[test]
+    fn same_fingerprint_for_different_workflow_ids() {
+        let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
+        let fp = |id: &str| {
+            let mut i = fixture("workflow_failed");
+            i.payload["workflowId"] = json!(id);
+            let env = env_of(&i);
+            m.normalize(&env, env.payload.clone()).fingerprint
+        };
+        assert_eq!(fp("WF-1"), fp("WF-2"));
+    }
+
+    #[test]
+    fn empty_fingerprint_uses_payload_hash() {
+        let mut def = seed_def("workflow.v1");
+        def.fingerprint.clear();
+        let m = CompiledMapping::compile(def, 1).unwrap();
+        let fp = |payload: Value| {
+            let env = Envelope { payload: payload.clone(), ..env_of(&fixture("workflow_failed")) };
+            m.normalize(&env, payload).fingerprint
+        };
+        let a = fp(json!({"a": 1}));
+        assert_eq!(a, fp(json!({"a": 1})));
+        assert_ne!(a, fp(json!({"a": 2})));
+        let (schema, hash) = a.split_once('|').unwrap();
+        assert_eq!(schema, "workflow.v1");
+        assert_eq!(hash.len(), 16);
+    }
+
+    #[test]
+    fn yaml_payload_is_parsed() {
+        let raw = parse_payload("yaml", &json!("a: 1\nb:\n  c: x\n")).unwrap();
+        assert_eq!(raw, json!({"a": 1, "b": {"c": "x"}}));
+        assert!(parse_payload("yaml", &json!(5)).is_err());
+        assert!(parse_payload("xml", &json!("<a/>")).is_err());
+
+        let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
+        let yaml = "workflowName: wf\nstep: s\nseverity: INFO\nerror:\n  code: E1\n  message: boom\n";
+        let env = Envelope { format: "yaml".into(), payload: json!(yaml), ..env_of(&fixture("workflow_failed")) };
+        let ev = m.normalize(&env, parse_payload(&env.format, &env.payload).unwrap());
+        assert_eq!(ev.fingerprint, "workflow.v1|wf|s|E1");
+        assert_eq!(ev.title, "boom");
+        assert_eq!(ev.severity, Severity::Info);
+    }
+
+    #[test]
+    fn changed_title_path_recompiles() {
+        let mut def = seed_def("workflow.v1");
+        let env = env_of(&fixture("workflow_failed"));
+        let t1 = CompiledMapping::compile(def.clone(), 1).unwrap().normalize(&env, env.payload.clone()).title;
+        def.title = Some("$.workflowName".into());
+        let m2 = CompiledMapping::compile(def, 2).unwrap();
+        let ev = m2.normalize(&env, env.payload.clone());
+        assert_ne!(t1, ev.title);
+        assert_eq!(ev.title, "order-settlement");
+        assert_eq!(ev.mapping_version, 2);
+    }
+
+    #[test]
+    fn invalid_path_fails_compile() {
+        let mut def = seed_def("workflow.v1");
+        def.fingerprint.push("not a path".into());
+        assert!(CompiledMapping::compile(def, 1).is_err());
+    }
+}

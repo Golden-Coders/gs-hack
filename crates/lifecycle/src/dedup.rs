@@ -418,11 +418,16 @@ impl Dedup {
 }
 
 /// Konsument `events.normalized` + `alerts.commands` w grupie `lifecycle-dedup`; działa do sygnału zatrzymania.
-pub async fn run_dedup(brokers: String, pool: PgPool, producer: FutureProducer, mut shutdown: Shutdown) -> Result<()> {
+pub async fn run_dedup(brokers: String, pool: PgPool, producer: FutureProducer, shutdown: Shutdown) -> Result<()> {
+    run_dedup_with(topics::groups::LIFECYCLE_DEDUP, brokers, pool, producer, shutdown).await
+}
+
+/// Jak `run_dedup`, ale z podaną grupą konsumentów (testy używają własnej, izolowanej grupy).
+pub async fn run_dedup_with(group: &str, brokers: String, pool: PgPool, producer: FutureProducer, mut shutdown: Shutdown) -> Result<()> {
     let rebalanced = Arc::new(AtomicBool::new(false));
     let consumer: StreamConsumer<RebalanceContext> = ClientConfig::new()
         .set("bootstrap.servers", &brokers)
-        .set("group.id", topics::groups::LIFECYCLE_DEDUP)
+        .set("group.id", group)
         .set("enable.auto.commit", "false")
         .set("auto.offset.reset", "earliest")
         .set("session.timeout.ms", "10000")

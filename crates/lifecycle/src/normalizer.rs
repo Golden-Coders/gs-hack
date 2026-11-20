@@ -21,9 +21,21 @@ pub async fn run_normalizer(
     pool: PgPool,
     producer: FutureProducer,
     store: MappingStore,
+    shutdown: Shutdown,
+) -> anyhow::Result<()> {
+    run_normalizer_with(topics::groups::LIFECYCLE_NORMALIZER, brokers, pool, producer, store, shutdown).await
+}
+
+/// Jak `run_normalizer`, ale z podaną grupą konsumentów (testy używają własnej, izolowanej grupy).
+pub async fn run_normalizer_with(
+    group: &str,
+    brokers: String,
+    pool: PgPool,
+    producer: FutureProducer,
+    store: MappingStore,
     mut shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let consumer = common::kafka::consumer(&brokers, topics::groups::LIFECYCLE_NORMALIZER, &[topics::EVENTS_RAW])?;
+    let consumer = common::kafka::consumer(&brokers, group, &[topics::EVENTS_RAW])?;
     loop {
         let msg = tokio::select! {
             _ = shutdown.changed() => return Ok(()),
