@@ -1044,7 +1044,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "common",
- "contracts",
+ "futures",
+ "reqwest",
+ "serde_json",
  "tokio",
  "tracing",
 ]
