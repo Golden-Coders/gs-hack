@@ -1,6 +1,7 @@
 // Przełącznik backendu (mock / prawdziwy) i wybór tożsamości („działam jako”).
 import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
+import StreamIndicator from "./StreamIndicator";
 import { API_URL, backend, setPersonId, switchBackend, usePersonId, type Backend } from "../api/session";
 
 export default function SessionBar() {
@@ -43,6 +44,7 @@ export default function SessionBar() {
           <option value="api">prawdziwy (api)</option>
         </select>
       </label>
+      <StreamIndicator />
       <div className="api-url" title="Adres backendu">{API_URL}</div>
       {error && <div className="session-error">{error}</div>}
     </div>
