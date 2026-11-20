@@ -1,0 +1,20 @@
+.ptree { font-family: var(--font-mono); font-size: 13px; }
+.ptree ul { list-style: none; margin: 0; padding: 0; }
+.ptree ul ul { margin-left: var(--space-2); padding-left: var(--space-3); border-left: 1px solid var(--border); }
+.ptree li { margin: 1px 0; }
+.ptree summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; padding: 3px var(--space-2); border-radius: 6px; min-height: 28px; }
+.ptree summary:hover { background: var(--surface-muted); }
+.ptree .ptree-key { color: var(--text); font-weight: 600; }
+.ptree .ptree-meta { color: var(--text-muted); font-size: 12px; }
+
+.ptree .ptree-leaf { display: flex; align-items: baseline; gap: var(--space-2); width: 100%; min-height: 28px; padding: 3px var(--space-2); border: 1px solid transparent; border-radius: 6px; background: transparent; text-align: left; font: inherit; }
+.ptree .ptree-leaf:hover:not(:disabled) { background: var(--blue-bg); border-color: var(--accent); }
+.ptree .ptree-leaf.used { background: var(--surface-muted); border-color: var(--border); }
+.ptree .ptree-val { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.ptree .ptree-string { color: var(--green); }
+.ptree .ptree-number { color: var(--blue); }
+.ptree .ptree-boolean { color: var(--orange); }
+.ptree .ptree-null { color: var(--text-muted); font-style: italic; }
+.ptree .ptree-marks { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); margin-left: auto; }
+.ptree .ptree-mark { font-family: system-ui, sans-serif; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--blue-bg); border-radius: 999px; padding: 0 var(--space-2); line-height: 18px; }
+.ptree .ptree-pick, .ptree .ptree-more { font-size: 12px; min-height: 24px; padding: 0 var(--space-2); }
