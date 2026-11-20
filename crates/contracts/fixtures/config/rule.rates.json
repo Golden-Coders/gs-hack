@@ -1,0 +1,43 @@
+{
+  "id": "rates-big-rejections",
+  "name": "Rates: large rejected trades",
+  "team": "rates",
+  "condition": {
+    "all": [
+      {
+        "field": "schema",
+        "op": "glob",
+        "value": "trade.rejected.*"
+      },
+      {
+        "field": "raw.payload.desk",
+        "op": "eq",
+        "value": "rates"
+      },
+      {
+        "field": "raw.payload.notional",
+        "op": "gt",
+        "value": 10000000
+      }
+    ]
+  },
+  "recipients": [
+    {
+      "type": "team",
+      "id": "rates"
+    }
+  ],
+  "severity_override": null,
+  "presentation": {
+    "title": "Rejected {{raw.payload.currency}} {{raw.payload.notional}} — {{raw.payload.reason}}",
+    "body": null,
+    "fields": [
+      "raw.payload.tradeId",
+      "raw.payload.desk"
+    ],
+    "highlight": {},
+    "color": null
+  },
+  "enabled": true,
+  "version": 1
+}

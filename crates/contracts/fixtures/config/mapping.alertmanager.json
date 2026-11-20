@@ -1,0 +1,25 @@
+{
+  "schema": "alertmanager",
+  "fields": {
+    "service": "$.labels.service",
+    "region": "$.labels.region"
+  },
+  "title": "$.annotations.summary",
+  "severity": {
+    "type": "path",
+    "path": "$.labels.severity",
+    "map": {},
+    "default": "warning"
+  },
+  "fingerprint": [
+    "$.alertname",
+    "$.labels.service",
+    "$.labels.region"
+  ],
+  "resolved": {
+    "field": "raw.status",
+    "op": "eq",
+    "value": "resolved"
+  },
+  "version": 1
+}

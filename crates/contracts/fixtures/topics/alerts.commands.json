@@ -1,0 +1,10 @@
+{
+  "alert_id": "0192f0a0-0000-7000-8000-0000000000a1",
+  "fingerprint": "workflow.v1|order-settlement|validate-counterparty|TIMEOUT",
+  "kind": "ack",
+  "actor": {
+    "type": "user",
+    "person_id": "anna"
+  },
+  "at": "2026-10-23T09:15:00Z"
+}

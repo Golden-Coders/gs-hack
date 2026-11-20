@@ -1,0 +1,42 @@
+{
+  "delivery_id": "0192f0a0-0000-7000-8000-0000000000d1",
+  "alert_id": "0192f0a0-0000-7000-8000-0000000000a1",
+  "episode": 1,
+  "person_id": "jan",
+  "severity": "error",
+  "origin": {
+    "type": "rule",
+    "rule_id": "settlements-prod"
+  },
+  "chain": [
+    "sms",
+    "email",
+    "ui"
+  ],
+  "chain_index": 0,
+  "contacts": {
+    "sms": "+48500100200",
+    "email": "jan@example.com"
+  },
+  "rendered": {
+    "sms": {
+      "title": "WORKFLOW_FAILED order-settlement",
+      "body": "validate-counterparty: TIMEOUT",
+      "link": "http://localhost:5173/alerts/0192f0a0-0000-7000-8000-0000000000a1"
+    },
+    "email": {
+      "title": "WORKFLOW_FAILED order-settlement",
+      "body": "Step validate-counterparty failed: Counterparty service did not respond in 5000 ms",
+      "link": "http://localhost:5173/alerts/0192f0a0-0000-7000-8000-0000000000a1"
+    },
+    "ui": {
+      "title": "WORKFLOW_FAILED order-settlement",
+      "body": "Step validate-counterparty failed: Counterparty service did not respond in 5000 ms",
+      "link": null
+    }
+  },
+  "received_at": "2026-10-23T09:14:02.500Z",
+  "attempt": 1,
+  "not_before": "2026-10-23T09:14:08Z",
+  "last_error": "sms gateway unavailable"
+}

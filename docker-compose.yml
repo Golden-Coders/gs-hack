@@ -1,0 +1,136 @@
+# Uruchomienie całości: `docker compose up --build`
+# UI: http://localhost:5173  | API: http://localhost:${API_PORT:-8080} | Mailpit: http://localhost:8025
+# Redpanda (Kafka API) z hosta: localhost:19092 | Postgres: localhost:5432
+
+x-backend: &backend
+  image: alerting-backend:dev
+  restart: unless-stopped
+  environment: &backend-env
+    DATABASE_URL: postgres://alerting:alerting@postgres:5432/alerting
+    KAFKA_BROKERS: redpanda:9092
+    CONFIG_DIR: /app/config
+    PUBLIC_UI_URL: http://localhost:5173
+    SMTP_HOST: mailpit
+    SMTP_PORT: "1025"
+    ACTION_HOST_ALLOWLIST: mock-targets,localhost
+    API_TOKEN: dev-token
+    RUST_LOG: info
+  volumes:
+    - ./config:/app/config
+  depends_on:
+    postgres: { condition: service_healthy }
+    topics-init: { condition: service_completed_successfully }
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.3.6
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  topics-init:
+    image: redpandadata/redpanda:v24.3.6
+    depends_on:
+      redpanda: { condition: service_healthy }
+    entrypoint: ["/bin/bash", "-c"]
+    # Lista = contracts::topics::ALL, partycje = contracts::topics::PARTITIONS.
+    command:
+      - >-
+        rpk topic create -X brokers=redpanda:9092 -p 12
+        events.raw events.unmapped events.normalized alerts.commands alerts.changed
+        deliveries.requested deliveries.retry deliveries.dlq runbooks.commands ui.events
+        || rpk topic list -X brokers=redpanda:9092
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: alerting
+      POSTGRES_PASSWORD: alerting
+      POSTGRES_DB: alerting
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alerting"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  backend-build:
+    # Buduje obraz backendu raz; pozostałe usługi go używają.
+    build: .
+    image: alerting-backend:dev
+    command: ["true"]
+
+  api:
+    <<: *backend
+    command: ["api"]
+    ports: ["${API_PORT:-8080}:8080"]
+
+  ingest:
+    <<: *backend
+    command: ["ingest"]
+    environment:
+      <<: *backend-env
+      INGEST_PORT: "8081"
+    ports: ["8081:8081"]
+
+  lifecycle:
+    <<: *backend
+    command: ["lifecycle"]
+
+  router:
+    <<: *backend
+    command: ["router"]
+
+  sender:
+    <<: *backend
+    command: ["sender"]
+
+  runbooks:
+    <<: *backend
+    command: ["runbooks"]
+
+  mock-targets:
+    image: alerting-backend:dev
+    restart: unless-stopped
+    command: ["mock-targets"]
+    ports: ["8090:8090"]
+
+  loadgen:
+    <<: *backend
+    command: ["loadgen"]
+    restart: "no"
+    profiles: ["tools"]
+
+  ui:
+    image: node:22-alpine
+    working_dir: /ui
+    command: ["sh", "-c", "npm ci --no-fund --no-audit && npm run dev -- --host 0.0.0.0"]
+    environment:
+      VITE_API_URL: http://localhost:${API_PORT:-8080}
+      VITE_API_TOKEN: dev-token
+    volumes:
+      - ./ui:/ui
+      - ui-node-modules:/ui/node_modules
+    ports: ["5173:5173"]
+
+volumes:
+  ui-node-modules:

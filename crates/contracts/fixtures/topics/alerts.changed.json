@@ -1,0 +1,41 @@
+{
+  "alert_id": "0192f0a0-0000-7000-8000-0000000000a1",
+  "fingerprint": "workflow.v1|order-settlement|validate-counterparty|TIMEOUT",
+  "episode": 1,
+  "transition": "opened",
+  "state": "open",
+  "severity": "error",
+  "count": 1,
+  "event": {
+    "event_id": "0192f0a0-0000-7000-8000-000000000001",
+    "schema": "workflow.v1",
+    "source": "http",
+    "severity": "error",
+    "title": "Counterparty service did not respond in 5000 ms",
+    "fingerprint": "workflow.v1|order-settlement|validate-counterparty|TIMEOUT",
+    "resolved": false,
+    "fields": {
+      "workflowName": "order-settlement",
+      "step": "validate-counterparty",
+      "environment": "prod",
+      "type": "WORKFLOW_FAILED"
+    },
+    "raw": {
+      "type": "WORKFLOW_FAILED",
+      "workflowId": "WF-20261023-00042",
+      "workflowName": "order-settlement",
+      "step": "validate-counterparty",
+      "severity": "ERROR",
+      "environment": "prod",
+      "timestamp": "2026-10-23T09:14:02.331Z",
+      "error": {
+        "code": "TIMEOUT",
+        "message": "Counterparty service did not respond in 5000 ms"
+      }
+    },
+    "received_at": "2026-10-23T09:14:02.500Z",
+    "mapping_version": 1
+  },
+  "actor": null,
+  "at": "2026-10-23T09:14:02.600Z"
+}

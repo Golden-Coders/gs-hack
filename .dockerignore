@@ -1,0 +1,8 @@
+target
+ui
+**/node_modules
+.git
+openspec
+docs
+.claude
+.agents

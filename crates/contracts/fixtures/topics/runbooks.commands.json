@@ -1,0 +1,14 @@
+{
+  "alert_id": "0192f0a0-0000-7000-8000-0000000000a1",
+  "run_id": "0192f0a0-0000-7000-8000-0000000000b1",
+  "step_id": "s3",
+  "kind": {
+    "type": "done",
+    "note": "Restarted manually"
+  },
+  "actor": {
+    "type": "user",
+    "person_id": "jan"
+  },
+  "at": "2026-10-23T09:20:00Z"
+}

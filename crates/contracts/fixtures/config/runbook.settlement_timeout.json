@@ -1,0 +1,61 @@
+{
+  "id": "settlement-timeout",
+  "title": "Settlement timeout",
+  "kind": "automatic",
+  "matches": {
+    "all": [
+      {
+        "field": "raw.type",
+        "op": "eq",
+        "value": "WORKFLOW_FAILED"
+      },
+      {
+        "field": "raw.error.code",
+        "op": "eq",
+        "value": "TIMEOUT"
+      }
+    ]
+  },
+  "rule_ids": [],
+  "body": null,
+  "steps": [
+    {
+      "id": "s1",
+      "type": "check",
+      "text": "Is counterparty-service healthy?",
+      "action": "http_get",
+      "params": {
+        "url": "http://mock-targets:8090/counterparty-service/health"
+      },
+      "approval": "none",
+      "condition": null,
+      "automation": "automated"
+    },
+    {
+      "id": "s2",
+      "type": "action",
+      "text": "Retry workflow {{raw.workflowId}}",
+      "action": "retry_workflow",
+      "params": {
+        "workflowId": "{{raw.workflowId}}"
+      },
+      "approval": "none",
+      "condition": null,
+      "automation": "automated"
+    },
+    {
+      "id": "s3",
+      "type": "action",
+      "text": "Escalate to counterparty-support",
+      "action": "escalate",
+      "params": {
+        "team": "counterparty-support"
+      },
+      "approval": "required",
+      "condition": "retry fails twice",
+      "automation": "automated"
+    }
+  ],
+  "source_file": "config/p3/runbooks/settlement-timeout.yaml",
+  "version": 1
+}

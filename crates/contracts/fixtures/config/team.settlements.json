@@ -1,0 +1,32 @@
+{
+  "id": "settlements",
+  "name": "Team Settlements",
+  "members": [
+    "jan",
+    "ola"
+  ],
+  "preferences": [
+    {
+      "severity": "critical",
+      "channels": [
+        "phone",
+        "sms"
+      ],
+      "hours": null
+    },
+    {
+      "severity": "warning",
+      "channels": [
+        "email"
+      ],
+      "hours": null
+    },
+    {
+      "severity": "info",
+      "channels": [
+        "ui"
+      ],
+      "hours": null
+    }
+  ]
+}

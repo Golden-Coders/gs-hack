@@ -1,0 +1,13 @@
+[package]
+name = "runbooks"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+contracts = { workspace = true }
+common = { workspace = true, features = ["db", "kafka"] }
+condition = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }

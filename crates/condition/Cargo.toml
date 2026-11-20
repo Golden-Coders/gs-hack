@@ -1,0 +1,12 @@
+[package]
+name = "condition"
+description = "Ewaluator warunków i render szablonów (właściciel: P2). Używany przez lifecycle, router i runbooks."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+contracts = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

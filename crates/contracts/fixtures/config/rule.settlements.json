@@ -1,0 +1,47 @@
+{
+  "id": "settlements-prod",
+  "name": "Settlements: failed settlement workflows in prod",
+  "team": "settlements",
+  "condition": {
+    "all": [
+      {
+        "field": "raw.type",
+        "op": "eq",
+        "value": "WORKFLOW_FAILED"
+      },
+      {
+        "field": "raw.workflowName",
+        "op": "eq",
+        "value": "order-settlement"
+      },
+      {
+        "field": "raw.environment",
+        "op": "eq",
+        "value": "prod"
+      }
+    ]
+  },
+  "recipients": [
+    {
+      "type": "team",
+      "id": "settlements"
+    }
+  ],
+  "severity_override": "critical",
+  "presentation": {
+    "title": "{{raw.type}} {{raw.workflowName}}",
+    "body": "Step {{raw.step}} failed: {{raw.error.message}}",
+    "fields": [
+      "raw.workflowId",
+      "raw.step",
+      "raw.error.message"
+    ],
+    "highlight": {
+      "raw.step": "red",
+      "raw.error.message": "red"
+    },
+    "color": "red"
+  },
+  "enabled": true,
+  "version": 1
+}

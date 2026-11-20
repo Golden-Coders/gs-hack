@@ -1,0 +1,17 @@
+{
+  "name": "flush_cache",
+  "kind": "http",
+  "risk": "high",
+  "description": "Flush the cache of a service",
+  "params_schema": null,
+  "http": {
+    "method": "POST",
+    "url": "http://mock-targets:8090/cache/{{service}}/flush",
+    "headers": {
+      "Authorization": "Bearer ${CACHE_ADMIN_TOKEN}"
+    },
+    "body": null,
+    "timeout_ms": 5000
+  },
+  "version": 1
+}

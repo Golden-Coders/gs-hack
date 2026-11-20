@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/api/schema.d.ts","./src/screens/actions.tsx","./src/screens/alertdetail.tsx","./src/screens/alertfeed.tsx","./src/screens/approvals.tsx","./src/screens/mappings.tsx","./src/screens/mockoutbox.tsx","./src/screens/people.tsx","./src/screens/rules.tsx","./src/screens/runbooks.tsx"],"version":"5.6.3"}

@@ -1,0 +1,20 @@
+{
+  "event_id": "0192f0a0-0000-7000-8000-000000000001",
+  "format": "json",
+  "schema": "workflow.v1",
+  "payload": {
+    "type": "WORKFLOW_FAILED",
+    "workflowId": "WF-20261023-00042",
+    "workflowName": "order-settlement",
+    "step": "validate-counterparty",
+    "severity": "ERROR",
+    "environment": "prod",
+    "timestamp": "2026-10-23T09:14:02.331Z",
+    "error": {
+      "code": "TIMEOUT",
+      "message": "Counterparty service did not respond in 5000 ms"
+    }
+  },
+  "source": "http",
+  "received_at": "2026-10-23T09:14:02.500Z"
+}

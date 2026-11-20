@@ -1,0 +1,29 @@
+{
+  "id": "anna",
+  "name": "Anna",
+  "timezone": "Europe/Warsaw",
+  "contacts": {
+    "email": "anna@example.com",
+    "sms": "+48500100300",
+    "phone": "+48500100300"
+  },
+  "preferences": [
+    {
+      "severity": "critical",
+      "channels": [
+        "sms"
+      ],
+      "hours": "08:00-20:00"
+    },
+    {
+      "severity": "critical",
+      "channels": [
+        "email"
+      ],
+      "hours": "20:00-08:00"
+    }
+  ],
+  "fallback": [
+    "email"
+  ]
+}

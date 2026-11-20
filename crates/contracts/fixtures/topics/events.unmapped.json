@@ -1,0 +1,11 @@
+{
+  "event_id": "0192f0a0-0000-7000-8000-000000000002",
+  "format": "json",
+  "schema": "judges.custom.v1",
+  "payload": {
+    "foo": "bar",
+    "level": "high"
+  },
+  "source": "http",
+  "received_at": "2026-10-23T09:14:02.500Z"
+}

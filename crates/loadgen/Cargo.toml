@@ -1,0 +1,13 @@
+[package]
+name = "loadgen"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+contracts = { workspace = true }
+common = { workspace = true, features = ["db", "kafka"] }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }

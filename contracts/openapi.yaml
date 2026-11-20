@@ -1,0 +1,1234 @@
+openapi: 3.0.3
+info:
+  title: Alerting Service API
+  version: 0.1.0
+  description: |
+    Kontrakt REST + SSE między UI (P4) a backendem (Faza 0, ZAMROŻONY – zmiany tylko addytywne,
+    PR + ping do zespołu). Typy odpowiadają `crates/contracts`.
+
+    - Gateway `api` (port 8080): wszystko poza `/ingest*`.
+    - Binarka `ingest` (port 8081): `/ingest`, `/ingest/{schema}`.
+    - Mock dla UI: `cd ui && npm run mock` (Prism, port 4010) serwuje przykłady z tego pliku.
+
+    Uwierzytelnianie: `Authorization: Bearer <API_TOKEN>`. Tożsamość („działam jako”):
+    nagłówek `X-Person-Id` przy operacjach zmieniających stan – trafia do dziennika jako autor.
+servers:
+  - url: http://localhost:8080
+    description: api
+  - url: http://localhost:4010
+    description: mock (Prism)
+tags:
+  - name: ingest
+    description: Przyjmowanie zdarzeń (P1, binarka ingest)
+  - name: p1
+    description: Alerty, mappingi, UNMAPPED (P1)
+  - name: p2
+    description: Reguły, osoby, dostarczenia, symulowane kanały (P2)
+  - name: p3
+    description: Runbooki, akcje, wykonania, zatwierdzenia, dziennik (P3)
+  - name: common
+    description: Health i SSE
+
+security:
+  - bearer: []
+
+paths:
+  /health:
+    get:
+      tags: [common]
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+
+  /stream:
+    get:
+      tags: [common]
+      summary: Strumień zdarzeń na żywo (Server-Sent Events)
+      description: |
+        Zdarzenia SSE:
+        - `event: hello` – po połączeniu, `data: {}`
+        - `event: alert_changed` – `data:` JSON `AlertChanged`
+        - `event: ui_event` – `data:` JSON `UiEvent`
+        Po ponownym połączeniu klient dociąga zmiany przez `GET /alerts?since=<ostatni at>`.
+      parameters:
+        - { name: team, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Strumień SSE
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  # ------------------------------------------------------------------ ingest
+  /ingest:
+    post:
+      tags: [ingest]
+      summary: Przyjmij kopertę
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IncomingEnvelope" }
+            example:
+              format: json
+              schema: workflow.v1
+              payload: { type: WORKFLOW_FAILED, workflowName: order-settlement, step: validate-counterparty, environment: prod, error: { code: TIMEOUT, message: Counterparty service did not respond in 5000 ms } }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "400": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+
+  /ingest/{schema}:
+    post:
+      tags: [ingest]
+      summary: Przyjmij surowy payload; format z Content-Type
+      parameters:
+        - { name: schema, in: path, required: true, schema: { type: string }, example: alertmanager }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {}
+          application/yaml:
+            schema: { type: string }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "400": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+
+  /ingest/errors:
+    get:
+      tags: [p1]
+      summary: Ostatnie błędy ingestu (np. niepoprawny JSON z Kafki)
+      responses:
+        "200":
+          description: Lista błędów
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/IngestError" } }
+
+  # ------------------------------------------------------------------ alerty (P1)
+  /alerts:
+    get:
+      tags: [p1]
+      summary: Lista alertów
+      parameters:
+        - { name: team, in: query, required: false, schema: { type: string }, description: "Tylko alerty dopasowane do reguł zespołu" }
+        - { name: state, in: query, required: false, schema: { $ref: "#/components/schemas/AlertState" } }
+        - { name: since, in: query, required: false, schema: { type: string, format: date-time }, description: "Zmienione od (do dociągania po przerwie SSE)" }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 100 } }
+      responses:
+        "200":
+          description: Alerty, najnowsze najpierw
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AlertSummary" } }
+              example:
+                - id: 0192f0a0-0000-7000-8000-0000000000a1
+                  fingerprint: workflow.v1|order-settlement|validate-counterparty|TIMEOUT
+                  state: open
+                  severity: critical
+                  title: WORKFLOW_FAILED order-settlement
+                  schema: workflow.v1
+                  count: 500
+                  episode: 1
+                  first_seen: "2026-10-23T09:14:02.500Z"
+                  last_seen: "2026-10-23T09:15:02.000Z"
+                  rule_ids: [settlements-prod]
+                  teams: [settlements]
+                  color: red
+                - id: 0192f0a0-0000-7000-8000-0000000000a2
+                  fingerprint: alertmanager|HighErrorRate|payments-api|eu-west
+                  state: acked
+                  severity: critical
+                  title: Error rate 12% over the last 5 minutes
+                  schema: alertmanager
+                  count: 3
+                  episode: 1
+                  first_seen: "2026-10-23T09:13:00.000Z"
+                  last_seen: "2026-10-23T09:16:00.000Z"
+                  rule_ids: [anna-payments-critical]
+                  teams: []
+                  color: null
+                - id: 0192f0a0-0000-7000-8000-0000000000a3
+                  fingerprint: trade.rejected.v2|T-998877
+                  state: open
+                  severity: critical
+                  title: Rejected EUR 25000000 — LIMIT_BREACH
+                  schema: trade.rejected.v2
+                  count: 1
+                  episode: 1
+                  first_seen: "2026-10-23T09:14:05.000Z"
+                  last_seen: "2026-10-23T09:14:05.000Z"
+                  rule_ids: [rates-big-rejections]
+                  teams: [rates]
+                  color: null
+
+  /alerts/{alert_id}:
+    get:
+      tags: [p1]
+      summary: Szczegóły alertu (z prezentacją wg dopasowanych reguł)
+      parameters: [{ $ref: "#/components/parameters/AlertId" }]
+      responses:
+        "200":
+          description: Alert
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDetail" }
+              example:
+                id: 0192f0a0-0000-7000-8000-0000000000a1
+                fingerprint: workflow.v1|order-settlement|validate-counterparty|TIMEOUT
+                state: open
+                severity: critical
+                title: WORKFLOW_FAILED order-settlement
+                schema: workflow.v1
+                count: 500
+                episode: 1
+                first_seen: "2026-10-23T09:14:02.500Z"
+                last_seen: "2026-10-23T09:15:02.000Z"
+                rule_ids: [settlements-prod]
+                teams: [settlements]
+                color: red
+                body: "Step validate-counterparty failed: Counterparty service did not respond in 5000 ms"
+                fields:
+                  - { path: raw.workflowId, label: workflowId, value: WF-20261023-00042, highlight: null }
+                  - { path: raw.step, label: step, value: validate-counterparty, highlight: red }
+                  - { path: raw.error.message, label: error.message, value: Counterparty service did not respond in 5000 ms, highlight: red }
+                event:
+                  event_id: 0192f0a0-0000-7000-8000-000000000001
+                  schema: workflow.v1
+                  source: http
+                  severity: error
+                  title: Counterparty service did not respond in 5000 ms
+                  fingerprint: workflow.v1|order-settlement|validate-counterparty|TIMEOUT
+                  resolved: false
+                  fields: { workflowName: order-settlement, step: validate-counterparty, environment: prod }
+                  raw: { type: WORKFLOW_FAILED, workflowId: WF-20261023-00042, workflowName: order-settlement, step: validate-counterparty, severity: ERROR, environment: prod, error: { code: TIMEOUT, message: Counterparty service did not respond in 5000 ms } }
+                  received_at: "2026-10-23T09:14:02.500Z"
+                  mapping_version: 1
+                acked_by: null
+                resolved_by: null
+        "404": { $ref: "#/components/responses/Error" }
+
+  /alerts/{alert_id}/episodes:
+    get:
+      tags: [p1]
+      summary: Historia epizodów alertu
+      parameters: [{ $ref: "#/components/parameters/AlertId" }]
+      responses:
+        "200":
+          description: Epizody, od najnowszego
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Episode" } }
+              example:
+                - { episode: 1, opened_at: "2026-10-23T09:14:02.500Z", acked_at: null, resolved_at: null, count: 500, resolved_by: null }
+
+  /alerts/{alert_id}/ack:
+    post:
+      tags: [p1]
+      summary: Potwierdź alert (publikuje AlertCommand)
+      parameters: [{ $ref: "#/components/parameters/AlertId" }, { $ref: "#/components/parameters/PersonId" }]
+      responses:
+        "202": { description: Przyjęto komendę }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /alerts/{alert_id}/resolve:
+    post:
+      tags: [p1]
+      summary: Rozwiąż alert (publikuje AlertCommand)
+      parameters: [{ $ref: "#/components/parameters/AlertId" }, { $ref: "#/components/parameters/PersonId" }]
+      responses:
+        "202": { description: Przyjęto komendę }
+        "404": { $ref: "#/components/responses/Error" }
+
+  # ------------------------------------------------------------------ mappingi (P1)
+  /mappings:
+    get:
+      tags: [p1]
+      summary: Lista mappingów
+      responses:
+        "200":
+          description: Mappingi
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MappingDef" } }
+              example:
+                - schema: workflow.v1
+                  fields: { type: $.type, workflowName: $.workflowName, workflowId: $.workflowId, step: $.step, environment: $.environment }
+                  title: $.error.message
+                  severity: { type: path, path: $.severity, map: { ERROR: error, WARN: warning, INFO: info, CRITICAL: critical }, default: warning }
+                  fingerprint: [$.workflowName, $.step, $.error.code]
+                  resolved: null
+                  version: 1
+
+  /mappings/{schema}:
+    parameters:
+      - { name: schema, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [p1]
+      responses:
+        "200":
+          description: Mapping
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MappingDef" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [p1]
+      summary: Utwórz lub zmień mapping (uruchamia ponowne przetworzenie UNMAPPED)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MappingDef" }
+      responses:
+        "200":
+          description: Zapisany mapping (z nową wersją)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MappingDef" }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [p1]
+      responses:
+        "204": { description: Usunięto }
+
+  /mappings/preview:
+    post:
+      tags: [p1]
+      summary: Podgląd wyniku mappingu na przykładowym payloadzie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mapping, payload]
+              properties:
+                mapping: { $ref: "#/components/schemas/MappingDef" }
+                payload: {}
+      responses:
+        "200":
+          description: Zdarzenie kanoniczne
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CanonicalEvent" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /unmapped:
+    get:
+      tags: [p1]
+      summary: Schematy bez mappingu
+      responses:
+        "200":
+          description: Schematy UNMAPPED
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/UnmappedSchema" } }
+              example:
+                - schema: judges.custom.v1
+                  count: 3
+                  first_seen: "2026-10-23T10:00:00Z"
+                  last_seen: "2026-10-23T10:00:30Z"
+                  sample: { foo: bar, level: high, service: { name: pricing-engine-7 } }
+
+  # ------------------------------------------------------------------ reguły (P2)
+  /rules:
+    get:
+      tags: [p2]
+      responses:
+        "200":
+          description: Reguły
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RuleDef" } }
+              example:
+                - id: rates-big-rejections
+                  name: "Rates: large rejected trades"
+                  team: rates
+                  condition:
+                    all:
+                      - { field: schema, op: glob, value: "trade.rejected.*" }
+                      - { field: raw.payload.desk, op: eq, value: rates }
+                      - { field: raw.payload.notional, op: gt, value: 10000000 }
+                  recipients: [{ type: team, id: rates }]
+                  severity_override: null
+                  presentation: { title: "Rejected {{raw.payload.currency}} {{raw.payload.notional}} — {{raw.payload.reason}}", body: null, fields: [raw.payload.tradeId, raw.payload.desk], highlight: {}, color: null }
+                  enabled: true
+                  version: 1
+    post:
+      tags: [p2]
+      summary: Utwórz regułę
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuleDef" }
+      responses:
+        "201":
+          description: Utworzona reguła
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleDef" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /rules/{rule_id}:
+    parameters:
+      - { name: rule_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [p2]
+      responses:
+        "200":
+          description: Reguła
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleDef" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [p2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RuleDef" }
+      responses:
+        "200":
+          description: Zapisana reguła (z nową wersją)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleDef" }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [p2]
+      responses:
+        "204": { description: Usunięto }
+
+  /rules/test:
+    post:
+      tags: [p2]
+      summary: Przetestuj regułę na zdarzeniu (wklejonym albo ostatnim o danym event_id)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rule]
+              properties:
+                rule: { $ref: "#/components/schemas/RuleDef" }
+                event: { $ref: "#/components/schemas/CanonicalEvent" }
+                event_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Wynik testu
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleTestResult" }
+              example:
+                matched: false
+                explanation:
+                  result: false
+                  node: all
+                  actual: null
+                  children:
+                    - { result: true, node: "schema glob trade.rejected.*", actual: trade.rejected.v2, children: [] }
+                    - { result: true, node: "raw.payload.desk eq rates", actual: rates, children: [] }
+                    - { result: false, node: "raw.payload.notional gt 10000000", actual: 5000000, children: [] }
+                rendered: { title: "Rejected EUR 5000000 — LIMIT_BREACH", body: "", link: null }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /fields:
+    get:
+      tags: [p2]
+      summary: Podpowiedzi pól z ostatnich zdarzeń schematu
+      parameters:
+        - { name: schema, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Ścieżki pól
+          content:
+            application/json:
+              schema: { type: array, items: { type: string } }
+              example: [schema, severity, source, title, raw.meta.producer, raw.payload.tradeId, raw.payload.desk, raw.payload.notional, raw.payload.currency, raw.payload.reason]
+
+  # ------------------------------------------------------------------ osoby (P2, tylko odczyt)
+  /people:
+    get:
+      tags: [p2]
+      responses:
+        "200":
+          description: Osoby (z pliku konfiguracyjnego)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source_file, people]
+                properties:
+                  source_file: { type: string }
+                  people: { type: array, items: { $ref: "#/components/schemas/PersonDef" } }
+              example:
+                source_file: config/p2/people.yaml
+                people:
+                  - id: anna
+                    name: Anna
+                    timezone: Europe/Warsaw
+                    contacts: { email: anna@example.com, sms: "+48500100300", phone: "+48500100300" }
+                    preferences:
+                      - { severity: critical, channels: [sms], hours: "08:00-20:00" }
+                      - { severity: critical, channels: [email], hours: "20:00-08:00" }
+                    fallback: [email]
+                  - { id: jan, name: Jan, timezone: Europe/Warsaw, contacts: { email: jan@example.com, sms: "+48500100200", phone: "+48500100200" }, preferences: [], fallback: [email] }
+
+  /teams:
+    get:
+      tags: [p2]
+      responses:
+        "200":
+          description: Zespoły (z pliku konfiguracyjnego)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TeamDef" } }
+              example:
+                - id: settlements
+                  name: Team Settlements
+                  members: [jan, ola]
+                  preferences:
+                    - { severity: critical, channels: [phone, sms], hours: null }
+                    - { severity: warning, channels: [email], hours: null }
+                    - { severity: info, channels: [ui], hours: null }
+
+  # ------------------------------------------------------------------ dostarczenia (P2)
+  /alerts/{alert_id}/deliveries:
+    get:
+      tags: [p2]
+      parameters: [{ $ref: "#/components/parameters/AlertId" }]
+      responses:
+        "200":
+          description: Dostarczenia alertu
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Delivery" } }
+              example:
+                - { id: 0192f0a0-0000-7000-8000-0000000000d1, alert_id: 0192f0a0-0000-7000-8000-0000000000a1, episode: 1, person_id: jan, channel: sms, status: fallback, attempts: 3, last_error: sms gateway unavailable, received_at: "2026-10-23T09:14:02.500Z", delivered_at: null, updated_at: "2026-10-23T09:14:40Z" }
+                - { id: 0192f0a0-0000-7000-8000-0000000000d2, alert_id: 0192f0a0-0000-7000-8000-0000000000a1, episode: 1, person_id: jan, channel: email, status: delivered, attempts: 1, last_error: null, received_at: "2026-10-23T09:14:02.500Z", delivered_at: "2026-10-23T09:14:41Z", updated_at: "2026-10-23T09:14:41Z" }
+
+  /deliveries:
+    get:
+      tags: [p2]
+      summary: Dostarczenia wg statusu (np. nieudane / DLQ)
+      parameters:
+        - { name: status, in: query, required: false, schema: { $ref: "#/components/schemas/DeliveryStatus" } }
+      responses:
+        "200":
+          description: Dostarczenia
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Delivery" } }
+
+  /deliveries/{delivery_id}/resend:
+    post:
+      tags: [p2]
+      summary: Wyślij ponownie nieudane dostarczenie
+      parameters:
+        - { name: delivery_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: "#/components/parameters/PersonId" }
+      responses:
+        "202": { description: Zlecono ponownie }
+        "404": { $ref: "#/components/responses/Error" }
+
+  # ------------------------------------------------------------------ symulowane kanały (P2)
+  /mock/outbox:
+    get:
+      tags: [p2]
+      summary: Wiadomości „wysłane” symulowanymi kanałami SMS i telefon
+      responses:
+        "200":
+          description: Wiadomości, najnowsze najpierw
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MockMessage" } }
+              example:
+                - { id: 1, channel: sms, to: "+48500100200", person_id: jan, title: WORKFLOW_FAILED order-settlement, body: "validate-counterparty: TIMEOUT http://localhost:5173/alerts/0192f0a0-0000-7000-8000-0000000000a1", alert_id: 0192f0a0-0000-7000-8000-0000000000a1, sent_at: "2026-10-23T09:14:02.700Z" }
+                - { id: 2, channel: phone, to: "+48500100200", person_id: jan, title: WORKFLOW_FAILED order-settlement, body: "Call: WORKFLOW_FAILED order-settlement", alert_id: 0192f0a0-0000-7000-8000-0000000000a1, sent_at: "2026-10-23T09:14:02.710Z" }
+
+  /mock/channels:
+    get:
+      tags: [p2]
+      summary: Dostępność symulowanych kanałów
+      responses:
+        "200":
+          description: Kanały
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MockChannelState" } }
+              example:
+                - { channel: sms, available: true }
+                - { channel: phone, available: true }
+                - { channel: email, available: true }
+
+  /mock/channels/{channel}:
+    put:
+      tags: [p2]
+      summary: Włącz / wyłącz symulowany kanał (demo awarii)
+      parameters:
+        - { name: channel, in: path, required: true, schema: { $ref: "#/components/schemas/Channel" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [available]
+              properties:
+                available: { type: boolean }
+      responses:
+        "200":
+          description: Nowy stan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MockChannelState" }
+
+  # ------------------------------------------------------------------ runbooki (P3)
+  /runbooks:
+    get:
+      tags: [p3]
+      responses:
+        "200":
+          description: Runbooki (z plików konfiguracyjnych)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RunbookDef" } }
+              example:
+                - id: payments-high-error-rate
+                  title: HighErrorRate on payments-api
+                  kind: manual
+                  matches: { all: [{ field: raw.alertname, op: eq, value: HighErrorRate }, { field: raw.labels.service, op: eq, value: payments-api }] }
+                  rule_ids: []
+                  body: "# HighErrorRate on payments-api\n1. Open the payments dashboard and check if errors are in one region only.\n2. If one region: fail traffic over to the other region (needs approval from the team lead).\n3. If all regions: check the last deployment and roll it back.\n4. Post an update in the #payments-incidents channel every 15 minutes.\n"
+                  steps: []
+                  source_file: config/p3/runbooks/payments-high-error-rate.md
+                  version: 1
+
+  /runbooks/errors:
+    get:
+      tags: [p3]
+      summary: Błędy ładowania plików runbooków
+      responses:
+        "200":
+          description: Błędy per plik
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [file, error]
+                  properties:
+                    file: { type: string }
+                    error: { type: string }
+                    line: { type: integer, nullable: true }
+
+  /alerts/{alert_id}/runbooks:
+    get:
+      tags: [p3]
+      summary: Runbooki dopasowane do alertu wraz ze stanem wykonania (bieżący epizod)
+      parameters: [{ $ref: "#/components/parameters/AlertId" }]
+      responses:
+        "200":
+          description: Dopasowane runbooki, od najbardziej szczegółowego
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AlertRunbook" } }
+              example:
+                - runbook_id: settlement-timeout
+                  title: Settlement timeout
+                  kind: automatic
+                  body: null
+                  run_id: 0192f0a0-0000-7000-8000-0000000000b1
+                  episode: 1
+                  steps:
+                    - { step_id: s1, type: check, text: Is counterparty-service healthy?, action: http_get, params: { url: "http://mock-targets:8090/counterparty-service/health" }, approval: none, condition: null, automation: automated, status: succeeded, attempt: 0, result: "200 OK", updated_at: "2026-10-23T09:14:03Z" }
+                    - { step_id: s2, type: action, text: Retry workflow WF-20261023-00042, action: retry_workflow, params: { workflowId: WF-20261023-00042 }, approval: none, condition: null, automation: automated, status: failed, attempt: 0, result: "500 from mock-targets", updated_at: "2026-10-23T09:14:04Z" }
+                    - { step_id: s3, type: action, text: Escalate to counterparty-support, action: escalate, params: { team: counterparty-support }, approval: required, condition: retry fails twice, automation: automated, status: pending, attempt: 0, result: null, updated_at: "2026-10-23T09:14:03Z" }
+
+  /runs/{run_id}/steps/{step_id}/{command}:
+    post:
+      tags: [p3]
+      summary: Komenda dla kroku (publikuje RunbookCommand)
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: step_id, in: path, required: true, schema: { type: string } }
+        - { name: command, in: path, required: true, schema: { type: string, enum: [approve, reject, done, retry, skip, manual_mode] } }
+        - { $ref: "#/components/parameters/PersonId" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, description: "Notatka (dla `done`)" }
+      responses:
+        "202": { description: Przyjęto komendę }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /approvals:
+    get:
+      tags: [p3]
+      summary: Kroki oczekujące na zatwierdzenie
+      responses:
+        "200":
+          description: Kolejka zatwierdzeń
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/PendingApproval" } }
+              example:
+                - { alert_id: 0192f0a0-0000-7000-8000-0000000000a1, alert_title: WORKFLOW_FAILED order-settlement, run_id: 0192f0a0-0000-7000-8000-0000000000b1, runbook_title: Settlement timeout, step_id: s3, text: Escalate to counterparty-support, action: escalate, params: { team: counterparty-support }, risk: high, waiting_since: "2026-10-23T09:14:10Z" }
+
+  /alerts/{alert_id}/audit:
+    get:
+      tags: [p3]
+      summary: Dziennik działań dla alertu
+      parameters: [{ $ref: "#/components/parameters/AlertId" }]
+      responses:
+        "200":
+          description: Wpisy chronologicznie
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } }
+              example:
+                - { id: 1, alert_id: 0192f0a0-0000-7000-8000-0000000000a1, episode: 1, run_id: 0192f0a0-0000-7000-8000-0000000000b1, step_id: s1, actor: { type: system }, action: step_succeeded, detail: "http_get 200 OK", at: "2026-10-23T09:14:03Z" }
+                - { id: 2, alert_id: 0192f0a0-0000-7000-8000-0000000000a1, episode: 1, run_id: 0192f0a0-0000-7000-8000-0000000000b1, step_id: s2, actor: { type: system }, action: step_failed, detail: "500 from mock-targets", at: "2026-10-23T09:14:04Z" }
+
+  # ------------------------------------------------------------------ akcje (P3)
+  /actions:
+    get:
+      tags: [p3]
+      responses:
+        "200":
+          description: Rejestr akcji
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/ActionDef" } }
+              example:
+                - { name: http_get, kind: builtin, risk: low, description: HTTP GET (health check), params_schema: null, http: null, version: 1 }
+                - { name: escalate, kind: builtin, risk: high, description: Notify another team, params_schema: null, http: null, version: 1 }
+                - { name: flush_cache, kind: http, risk: high, description: Flush the cache of a service, params_schema: null, http: { method: POST, url: "http://mock-targets:8090/cache/{{service}}/flush", headers: { Authorization: "Bearer ${CACHE_ADMIN_TOKEN}" }, body: null, timeout_ms: 5000 }, version: 1 }
+    post:
+      tags: [p3]
+      summary: Dodaj akcję deklaratywną HTTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionDef" }
+      responses:
+        "201":
+          description: Dodana akcja
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionDef" }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /actions/{name}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [p3]
+      responses:
+        "200":
+          description: Akcja
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionDef" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [p3]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionDef" }
+      responses:
+        "200":
+          description: Zapisana akcja
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionDef" }
+        "400": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [p3]
+      responses:
+        "204": { description: Usunięto }
+
+  /actions/missing:
+    get:
+      tags: [p3]
+      summary: Akcje używane w runbookach, których brakuje w rejestrze
+      responses:
+        "200":
+          description: Brakujące akcje
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/MissingAction" } }
+              example:
+                - { name: flush_cdn, runbook_ids: [cdn-latency], manual_executions: 2 }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+
+  parameters:
+    AlertId:
+      name: alert_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PersonId:
+      name: X-Person-Id
+      in: header
+      required: true
+      description: Kim jest użytkownik („działam jako”) – autor wpisu w dzienniku
+      schema: { type: string, example: anna }
+
+  responses:
+    Accepted:
+      description: Zdarzenie przyjęte i trwale zapisane
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [event_id]
+            properties:
+              event_id: { type: string, format: uuid }
+          example: { event_id: 0192f0a0-0000-7000-8000-000000000001 }
+    Error:
+      description: Błąd
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        detail: { type: string, nullable: true }
+        line: { type: integer, nullable: true, description: "Dla błędów YAML: numer linii" }
+
+    Severity: { type: string, enum: [info, warning, error, critical] }
+    Channel: { type: string, enum: [ui, email, sms, phone] }
+    AlertState: { type: string, enum: [open, acked, resolved, reopened] }
+    DeliveryStatus: { type: string, enum: [pending, retrying, delivered, fallback, failed, dlq] }
+    StepStatus: { type: string, enum: [pending, running, succeeded, failed, waiting_approval, waiting_manual, skipped, rejected] }
+
+    Actor:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [user, system, source] }
+        person_id: { type: string }
+
+    IncomingEnvelope:
+      type: object
+      required: [format, schema, payload]
+      properties:
+        format: { type: string, example: json }
+        schema: { type: string, example: workflow.v1 }
+        payload: {}
+
+    IngestError:
+      type: object
+      required: [source, error, at]
+      properties:
+        source: { type: string }
+        error: { type: string }
+        sample: { type: string, nullable: true }
+        at: { type: string, format: date-time }
+
+    CanonicalEvent:
+      type: object
+      required: [event_id, schema, source, severity, title, fingerprint, resolved, fields, raw, received_at, mapping_version]
+      properties:
+        event_id: { type: string, format: uuid }
+        schema: { type: string }
+        source: { type: string }
+        severity: { $ref: "#/components/schemas/Severity" }
+        title: { type: string }
+        fingerprint: { type: string }
+        resolved: { type: boolean }
+        fields: { type: object, additionalProperties: true }
+        raw: {}
+        received_at: { type: string, format: date-time }
+        mapping_version: { type: integer, format: int64 }
+
+    AlertSummary:
+      type: object
+      required: [id, fingerprint, state, severity, title, schema, count, episode, first_seen, last_seen, rule_ids, teams]
+      properties:
+        id: { type: string, format: uuid }
+        fingerprint: { type: string }
+        state: { $ref: "#/components/schemas/AlertState" }
+        severity: { $ref: "#/components/schemas/Severity" }
+        title: { type: string, description: "Tytuł wg prezentacji pierwszej dopasowanej reguły (lub z mappingu)" }
+        schema: { type: string }
+        count: { type: integer, format: int64 }
+        episode: { type: integer }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        rule_ids: { type: array, items: { type: string } }
+        teams: { type: array, items: { type: string } }
+        color: { type: string, nullable: true }
+
+    PresentedField:
+      type: object
+      required: [path, label, value]
+      properties:
+        path: { type: string }
+        label: { type: string }
+        value: {}
+        highlight: { type: string, nullable: true }
+
+    AlertDetail:
+      allOf:
+        - $ref: "#/components/schemas/AlertSummary"
+        - type: object
+          required: [body, fields, event]
+          properties:
+            body: { type: string }
+            fields: { type: array, items: { $ref: "#/components/schemas/PresentedField" } }
+            event: { $ref: "#/components/schemas/CanonicalEvent" }
+            acked_by: { allOf: [{ $ref: "#/components/schemas/Actor" }], nullable: true }
+            resolved_by: { allOf: [{ $ref: "#/components/schemas/Actor" }], nullable: true }
+
+    Episode:
+      type: object
+      required: [episode, opened_at, count]
+      properties:
+        episode: { type: integer }
+        opened_at: { type: string, format: date-time }
+        acked_at: { type: string, format: date-time, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        count: { type: integer, format: int64 }
+        resolved_by: { allOf: [{ $ref: "#/components/schemas/Actor" }], nullable: true }
+
+    Condition:
+      description: "Drzewo warunków: {all: [...]}, {any: [...]}, {not: ...} albo liść {field, op, value}"
+      type: object
+      properties:
+        all: { type: array, items: { $ref: "#/components/schemas/Condition" } }
+        any: { type: array, items: { $ref: "#/components/schemas/Condition" } }
+        not: { $ref: "#/components/schemas/Condition" }
+        field: { type: string }
+        op: { type: string, enum: [eq, ne, in, gt, gte, lt, lte, contains, regex, exists, glob] }
+        value: {}
+
+    Explanation:
+      type: object
+      required: [result, node, children]
+      properties:
+        result: { type: boolean }
+        node: { type: string }
+        actual: { nullable: true }
+        children: { type: array, items: { $ref: "#/components/schemas/Explanation" } }
+
+    SeveritySpec:
+      type: object
+      required: [type]
+      description: "path: {path, map, default} | const: {value} | rules: {rules: [{when, value}], default}"
+      properties:
+        type: { type: string, enum: [path, const, rules] }
+        path: { type: string }
+        map: { type: object, additionalProperties: { $ref: "#/components/schemas/Severity" } }
+        default: { $ref: "#/components/schemas/Severity" }
+        value: { $ref: "#/components/schemas/Severity" }
+        rules:
+          type: array
+          items:
+            type: object
+            required: [when, value]
+            properties:
+              when: { $ref: "#/components/schemas/Condition" }
+              value: { $ref: "#/components/schemas/Severity" }
+
+    MappingDef:
+      type: object
+      required: [schema, severity]
+      properties:
+        schema: { type: string }
+        fields: { type: object, additionalProperties: { type: string } }
+        title: { type: string, nullable: true }
+        severity: { $ref: "#/components/schemas/SeveritySpec" }
+        fingerprint: { type: array, items: { type: string } }
+        resolved: { allOf: [{ $ref: "#/components/schemas/Condition" }], nullable: true }
+        version: { type: integer, format: int64 }
+
+    UnmappedSchema:
+      type: object
+      required: [schema, count, first_seen, last_seen, sample]
+      properties:
+        schema: { type: string }
+        count: { type: integer, format: int64 }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        sample: {}
+
+    Recipient:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [person, team] }
+        id: { type: string }
+
+    Presentation:
+      type: object
+      properties:
+        title: { type: string, nullable: true }
+        body: { type: string, nullable: true }
+        fields: { type: array, items: { type: string } }
+        highlight: { type: object, additionalProperties: { type: string } }
+        color: { type: string, nullable: true }
+
+    RuleDef:
+      type: object
+      required: [id, name, condition, recipients]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        team: { type: string, nullable: true }
+        condition: { $ref: "#/components/schemas/Condition" }
+        recipients: { type: array, items: { $ref: "#/components/schemas/Recipient" } }
+        severity_override: { allOf: [{ $ref: "#/components/schemas/Severity" }], nullable: true }
+        presentation: { $ref: "#/components/schemas/Presentation" }
+        enabled: { type: boolean }
+        version: { type: integer, format: int64 }
+
+    Rendered:
+      type: object
+      required: [title, body]
+      properties:
+        title: { type: string }
+        body: { type: string }
+        link: { type: string, nullable: true }
+
+    RuleTestResult:
+      type: object
+      required: [matched, explanation, rendered]
+      properties:
+        matched: { type: boolean }
+        explanation: { $ref: "#/components/schemas/Explanation" }
+        rendered: { $ref: "#/components/schemas/Rendered" }
+
+    Preference:
+      type: object
+      required: [severity, channels]
+      properties:
+        severity: { $ref: "#/components/schemas/Severity" }
+        channels: { type: array, items: { $ref: "#/components/schemas/Channel" } }
+        hours: { type: string, nullable: true, example: "08:00-20:00" }
+
+    PersonDef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        timezone: { type: string }
+        contacts: { type: object, additionalProperties: { type: string } }
+        preferences: { type: array, items: { $ref: "#/components/schemas/Preference" } }
+        fallback: { type: array, items: { $ref: "#/components/schemas/Channel" } }
+
+    TeamDef:
+      type: object
+      required: [id, name, members]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        members: { type: array, items: { type: string } }
+        preferences: { type: array, items: { $ref: "#/components/schemas/Preference" } }
+
+    Delivery:
+      type: object
+      required: [id, alert_id, episode, person_id, channel, status, attempts, received_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        alert_id: { type: string, format: uuid }
+        episode: { type: integer }
+        person_id: { type: string }
+        channel: { $ref: "#/components/schemas/Channel" }
+        status: { $ref: "#/components/schemas/DeliveryStatus" }
+        attempts: { type: integer }
+        last_error: { type: string, nullable: true }
+        received_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+
+    MockMessage:
+      type: object
+      required: [id, channel, to, person_id, title, body, sent_at]
+      properties:
+        id: { type: integer, format: int64 }
+        channel: { $ref: "#/components/schemas/Channel" }
+        to: { type: string }
+        person_id: { type: string }
+        title: { type: string }
+        body: { type: string }
+        alert_id: { type: string, format: uuid, nullable: true }
+        sent_at: { type: string, format: date-time }
+
+    MockChannelState:
+      type: object
+      required: [channel, available]
+      properties:
+        channel: { $ref: "#/components/schemas/Channel" }
+        available: { type: boolean }
+
+    StepDef:
+      type: object
+      required: [id, type, text, automation]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [check, action, manual, note] }
+        text: { type: string }
+        action: { type: string, nullable: true }
+        params: { type: object, additionalProperties: true }
+        approval: { type: string, enum: [none, required] }
+        condition: { type: string, nullable: true }
+        automation: { type: string, enum: [automated, manual] }
+
+    RunbookDef:
+      type: object
+      required: [id, title, kind]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        kind: { type: string, enum: [automatic, manual] }
+        matches: { allOf: [{ $ref: "#/components/schemas/Condition" }], nullable: true }
+        rule_ids: { type: array, items: { type: string } }
+        body: { type: string, nullable: true }
+        steps: { type: array, items: { $ref: "#/components/schemas/StepDef" } }
+        source_file: { type: string, nullable: true }
+        version: { type: integer, format: int64 }
+
+    StepState:
+      type: object
+      required: [step_id, type, text, approval, automation, status, attempt, updated_at]
+      properties:
+        step_id: { type: string }
+        type: { type: string, enum: [check, action, manual, note] }
+        text: { type: string, description: "Z podstawionymi wartościami z alertu" }
+        action: { type: string, nullable: true }
+        params: { type: object, additionalProperties: true }
+        approval: { type: string, enum: [none, required] }
+        condition: { type: string, nullable: true }
+        automation: { type: string, enum: [automated, manual] }
+        status: { $ref: "#/components/schemas/StepStatus" }
+        attempt: { type: integer }
+        result: { type: string, nullable: true }
+        note: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+
+    AlertRunbook:
+      type: object
+      required: [runbook_id, title, kind, steps]
+      properties:
+        runbook_id: { type: string }
+        title: { type: string }
+        kind: { type: string, enum: [automatic, manual] }
+        body: { type: string, nullable: true, description: "MANUAL: treść z podstawionymi wartościami" }
+        run_id: { type: string, format: uuid, nullable: true }
+        episode: { type: integer, nullable: true }
+        steps: { type: array, items: { $ref: "#/components/schemas/StepState" } }
+
+    PendingApproval:
+      type: object
+      required: [alert_id, alert_title, run_id, runbook_title, step_id, text, risk, waiting_since]
+      properties:
+        alert_id: { type: string, format: uuid }
+        alert_title: { type: string }
+        run_id: { type: string, format: uuid }
+        runbook_title: { type: string }
+        step_id: { type: string }
+        text: { type: string }
+        action: { type: string, nullable: true }
+        params: { type: object, additionalProperties: true }
+        risk: { type: string, enum: [low, high] }
+        waiting_since: { type: string, format: date-time }
+
+    AuditEntry:
+      type: object
+      required: [id, alert_id, episode, actor, action, at]
+      properties:
+        id: { type: integer, format: int64 }
+        alert_id: { type: string, format: uuid }
+        episode: { type: integer }
+        run_id: { type: string, format: uuid, nullable: true }
+        step_id: { type: string, nullable: true }
+        actor: { $ref: "#/components/schemas/Actor" }
+        action: { type: string, example: step_succeeded }
+        detail: { type: string, nullable: true }
+        at: { type: string, format: date-time }
+
+    HttpActionSpec:
+      type: object
+      required: [method, url]
+      properties:
+        method: { type: string, example: POST }
+        url: { type: string }
+        headers: { type: object, additionalProperties: { type: string } }
+        body: { type: string, nullable: true }
+        timeout_ms: { type: integer }
+
+    ActionDef:
+      type: object
+      required: [name, kind, risk]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [builtin, http] }
+        risk: { type: string, enum: [low, high] }
+        description: { type: string, nullable: true }
+        params_schema: { nullable: true }
+        http: { allOf: [{ $ref: "#/components/schemas/HttpActionSpec" }], nullable: true }
+        version: { type: integer, format: int64 }
+
+    MissingAction:
+      type: object
+      required: [name, runbook_ids, manual_executions]
+      properties:
+        name: { type: string }
+        runbook_ids: { type: array, items: { type: string } }
+        manual_executions: { type: integer }
+
+    # Typy wiadomości SSE (dla generatora typów UI)
+    AlertChanged:
+      type: object
+      required: [alert_id, fingerprint, episode, transition, state, severity, count, event, at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        fingerprint: { type: string }
+        episode: { type: integer }
+        transition: { type: string, enum: [opened, reopened, acked, resolved] }
+        state: { $ref: "#/components/schemas/AlertState" }
+        severity: { $ref: "#/components/schemas/Severity" }
+        count: { type: integer, format: int64 }
+        event: { $ref: "#/components/schemas/CanonicalEvent" }
+        actor: { allOf: [{ $ref: "#/components/schemas/Actor" }], nullable: true }
+        at: { type: string, format: date-time }
+
+    UiEvent:
+      type: object
+      required: [kind, payload, at]
+      properties:
+        alert_id: { type: string, format: uuid, nullable: true }
+        kind: { type: string, enum: [alert_count, unmapped, ingest_error, delivery_status, mock_outbox, step_status, audit_entry, config_changed] }
+        payload: {}
+        at: { type: string, format: date-time }
