@@ -1,5 +1,26 @@
-:root { font-family: system-ui, sans-serif; color: #1d2330; background: #f6f7f9; }
+/* Tokeny: ekrany używają zmiennych, nie surowych kolorów. Kolory statusów = te same co w .badge-*. */
+:root {
+  --bg: #f6f7f9; --surface: #fff; --surface-muted: #f9fafb; --border: #e5e7eb;
+  --text: #1d2330; --text-muted: #4b5563; --accent: #1d4ed8; --focus: #2563eb;
+  --red: #b91c1c; --red-bg: #fee2e2; --orange: #c2410c; --orange-bg: #ffedd5;
+  --yellow: #a16207; --yellow-bg: #fef9c3; --green: #15803d; --green-bg: #dcfce7;
+  --blue: #1d4ed8; --blue-bg: #dbeafe; --gray: #4b5563; --gray-bg: #f3f4f6;
+  --radius: 8px; --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: system-ui, sans-serif; font-size: 14px; line-height: 1.5; color: var(--text); background: var(--bg);
+}
 body { margin: 0; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px; padding: 6px 12px; min-height: 32px; transition: background-color .15s, border-color .15s; }
+button:hover:not(:disabled) { background: var(--gray-bg); }
+button:disabled { cursor: not-allowed; opacity: .5; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { background: #1e40af; }
+button.danger { color: var(--red); border-color: #fca5a5; }
+input, select, textarea { font: inherit; }
+.muted { color: var(--text-muted); }
+.error-box { color: var(--red); background: var(--red-bg); border-radius: var(--radius); padding: var(--space-2) var(--space-3); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
 nav { background: #1d2330; color: #cfd5e1; padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
 nav .brand { font-weight: 700; color: #fff; font-size: 18px; margin-bottom: 12px; }
