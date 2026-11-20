@@ -98,7 +98,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 ## 14. UI — ekrany operacyjne (P4)
 
-- [ ] 14.1 Feed alertów na żywo z filtrem „mój zespół / wszystkie”; weryfikacja: nowy alert pojawia się bez odświeżania
+- [x] 14.1 Feed alertów na żywo z filtrem „mój zespół / wszystkie”; weryfikacja: nowy alert pojawia się bez odświeżania
 - [ ] 14.2 Szczegóły alertu: prezentacja wg reguły, licznik, epizody, ack/resolve, runbooki ze statusem kroków i akcjami (zrobione, ponów, pomiń, tryb ręczny), dostarczenia z zakładką nieudanych i „wyślij ponownie”, dziennik; weryfikacja: scenariusz alertu Settlements z wyróżnieniem na czerwono
 - [ ] 14.3 Kolejka zatwierdzeń; weryfikacja: zatwierdzenie usuwa krok z kolejki i aktualizuje szczegóły alertu
 - [ ] 14.4 Podgląd symulowanych SMS/telefonów z przełącznikiem dostępności kanału; weryfikacja: wyłączenie SMS pokazuje fallback w szczegółach alertu
