@@ -8,6 +8,3 @@
 .source-file-missing { color: var(--text-muted); font-style: italic; }
 .copy-status { color: var(--green); font-size: 12px; }
 .copy-status.failed { color: var(--red); }
-.loading { color: var(--text-muted); }
-.empty { color: var(--text-muted); padding: var(--space-4); border: 1px dashed var(--border); border-radius: var(--radius); }
-.mono { font-family: var(--font-mono); font-size: 13px; }
