@@ -8,7 +8,7 @@ import Mappings from "./screens/Mappings";
 import Actions from "./screens/Actions";
 import Runbooks from "./screens/Runbooks";
 import People from "./screens/People";
-import { API_URL } from "./api/client";
+import SessionBar from "./components/SessionBar";
 
 const NAV: { to: string; label: string; group: "ops" | "config" }[] = [
   { to: "/", label: "Alerty", group: "ops" },
@@ -36,7 +36,7 @@ export default function App() {
             ))}
           </div>
         ))}
-        <div className="api-url" title="VITE_API_URL">{API_URL}</div>
+        <SessionBar />
       </nav>
       <main>
         <Routes>
