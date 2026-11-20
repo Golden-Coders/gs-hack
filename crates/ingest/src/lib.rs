@@ -62,3 +62,36 @@ pub async fn record_error(pool: &common::db::sqlx::PgPool, producer: &FutureProd
         tracing::warn!(error = %e, "publishing ingest error to ui.events failed");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_json_unchanged() {
+        let v = json!({"a": [1, 2]});
+        assert_eq!(parse_payload("json", &v), Ok(v));
+    }
+
+    #[test]
+    fn parse_yaml_string_ok() {
+        let v = Value::String("a: 1\nb: [x, y]\n".into());
+        assert_eq!(parse_payload("yaml", &v), Ok(v));
+    }
+
+    #[test]
+    fn parse_yaml_invalid() {
+        let v = Value::String("a: [unclosed".into());
+        assert!(matches!(parse_payload("yaml", &v), Err(ParseError::Invalid(_))));
+    }
+
+    #[test]
+    fn parse_yaml_non_string() {
+        assert!(matches!(parse_payload("yaml", &json!({"a": 1})), Err(ParseError::Invalid(_))));
+    }
+
+    #[test]
+    fn parse_unsupported() {
+        assert_eq!(parse_payload("xml", &json!("<a/>")), Err(ParseError::Unsupported("xml".into())));
+    }
+}

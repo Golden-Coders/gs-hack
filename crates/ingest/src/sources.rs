@@ -132,3 +132,42 @@ async fn handle(ctx: &Ctx, def: &SourceDef, bytes: &[u8]) {
         Err(ParseError::Invalid(d)) => record_error(&ctx.pool, &ctx.producer, &source, &d, bytes).await,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn def(format: &str) -> SourceDef {
+        SourceDef { topic: "t".into(), schema: "src.v1".into(), format: format.into() }
+    }
+
+    #[test]
+    fn envelope_message_passes_unchanged() {
+        let msg = br#"{"format":"json","schema":"other.v2","payload":{"x":1}}"#;
+        let (f, s, p) = build(&def("json"), msg).unwrap();
+        assert_eq!((f.as_str(), s.as_str(), p), ("json", "other.v2", json!({"x": 1})));
+    }
+
+    #[test]
+    fn raw_json_gets_source_schema_and_format() {
+        let (f, s, p) = build(&def("json"), br#"{"x":1}"#).unwrap();
+        assert_eq!((f.as_str(), s.as_str(), p), ("json", "src.v1", json!({"x": 1})));
+    }
+
+    #[test]
+    fn raw_yaml_becomes_string() {
+        let (f, _, p) = build(&def("yaml"), b"a: 1\n").unwrap();
+        assert_eq!((f.as_str(), p), ("yaml", json!("a: 1\n")));
+    }
+
+    #[test]
+    fn invalid_json_is_error() {
+        assert!(matches!(build(&def("json"), b"{not json"), Err(ParseError::Invalid(_))));
+    }
+
+    #[test]
+    fn unsupported_source_format() {
+        assert!(matches!(build(&def("xml"), b"<a/>"), Err(ParseError::Unsupported(_))));
+    }
+}
