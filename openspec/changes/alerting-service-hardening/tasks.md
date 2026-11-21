@@ -9,7 +9,7 @@ Kontynuacja zarchiwizowanego `alerting-service-mvp` (numery w nawiasach kwadrato
 ## 2. Odporność i skalowanie (P1+P2)
 
 - [ ] 2.1 [19.F1 → 18.4] `scripts/e2e/resilience.sh`: ruch z `loadgen`, w trakcie `docker compose stop mailpit`, wyłączenie SMS przez `PUT /mock/channels/sms`, restart kolejno `ingest`, `lifecycle`, `router`, `sender`; weryfikacja: liczba alertów = liczba unikalnych fingerprintów, brak duplikatów kluczy idempotencji w `deliveries`, fallback i DLQ widoczne w API
-- [ ] 2.2 Wyjaśnić różnicę 3 alertów względem unikalnych fingerprintów z pomiaru 1 (14 928 vs 14 931, rozgrzewka 1 019 vs 1 022); weryfikacja: przyczyna opisana w `docs/LOADTEST.md` (błąd liczenia w `loadgen` albo utrata w potoku — wtedy poprawka z testem)
+- [x] 2.2 Wyjaśnić różnicę 3 alertów względem unikalnych fingerprintów z pomiaru 1 (14 928 vs 14 931, rozgrzewka 1 019 vs 1 022); weryfikacja: przyczyna opisana w `docs/LOADTEST.md` (błąd liczenia w `loadgen` albo utrata w potoku — wtedy poprawka z testem)
 - [ ] 2.3 [19.G1 → 18.5] `docker compose up -d --scale lifecycle=2 --scale sender=2` pod obciążeniem; weryfikacja: dedup poprawny (jak w 2.1), pomiar dopisany do `docs/LOADTEST.md`
 - [ ] 2.4 (opcjonalne, po 2.3) `sender`: przetwarzanie współbieżne z commitem offsetów w kolejności + pula połączeń SMTP (design, ustalenie 4); weryfikacja: `cargo test -p sender` zielone, test idempotencji bez zmian, lag `sender` przy 500 msg/s nie rośnie
 
