@@ -32,7 +32,11 @@ function setStatus(next: StreamStatus) {
   statusListeners.forEach((l) => l());
 }
 
+// Czas ostatniej wiadomości ze strumienia – do decyzji, czy dociągać dane zapytaniami.
+let lastMessageAt = 0;
+
 function emit(msg: StreamMessage) {
+  lastMessageAt = Date.now();
   listeners.forEach((l) => l(msg));
 }
 
@@ -120,6 +124,26 @@ export function useStream(listener: (msg: StreamMessage) => void) {
   const ref = useRef(listener);
   ref.current = listener;
   useEffect(() => subscribe((msg) => ref.current(msg)), []);
+}
+
+const QUIET_MS = 15_000;
+
+/**
+ * Zabezpieczenie na brak zdarzeń na żywo: co `intervalMs` woła `poll`, jeśli strumień nie jest połączony
+ * albo od `QUIET_MS` nic z niego nie przyszło. Nie działa na mocku (dane statyczne) ani w ukrytej karcie.
+ */
+export function usePollWhenQuiet(poll: () => void, intervalMs = 5_000) {
+  const ref = useRef(poll);
+  ref.current = poll;
+  useEffect(() => {
+    if (backend === "mock") return;
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      if (status === "live" && Date.now() - lastMessageAt < QUIET_MS) return;
+      ref.current();
+    }, intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
 }
 
 export function useStreamStatus(): StreamStatus {
