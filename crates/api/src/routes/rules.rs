@@ -1,15 +1,14 @@
-//! Routy strumienia P2: reguły (CRUD, test, podpowiedzi pól), osoby i zespoły,
-//! dostarczenia, symulowane kanały. Właściciel: P2. Zob. `contracts/openapi.yaml` (tag `p2`).
+//! Rules CRUD, rule test sandbox, and field suggestion routes.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path as FsPath, PathBuf};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::{
     body::Bytes,
     extract::{rejection::JsonRejection, Path, Query, State},
     http::StatusCode,
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use common::db::sqlx::{
@@ -17,93 +16,23 @@ use common::db::sqlx::{
     types::{chrono::DateTime, chrono::Utc, Json as SqlJson, Uuid},
     PgPool, Row,
 };
-use contracts::{
-    topics, CanonicalEvent, Channel, DeliveryRequest, MappingDef, PersonDef, Rendered, RuleDef,
-    Severity, TeamDef,
-};
+use contracts::{CanonicalEvent, MappingDef, Rendered, RuleDef, Severity};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use crate::error::{db_err, err, err_with_line, opt_json, ApiResult};
+use crate::routes::resolve_config_path;
 use crate::AppState;
 
-type ApiResult<T> = Result<T, (StatusCode, Json<Value>)>;
-
 static RULES_SEEDED: AtomicBool = AtomicBool::new(false);
-static PEOPLE_SEEDED: AtomicBool = AtomicBool::new(false);
 
-pub fn routes() -> Router<AppState> {
+pub fn router() -> Router<AppState> {
     Router::new()
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/test", post(test_rule))
         .route("/rules/{rule_id}", get(get_rule).put(put_rule).delete(delete_rule))
         .route("/fields", get(get_fields))
-        .route("/people", get(list_people))
-        .route("/teams", get(list_teams))
-        .route("/alerts/{alert_id}/deliveries", get(alert_deliveries))
-        .route("/deliveries", get(list_deliveries))
-        .route("/deliveries/{delivery_id}/resend", post(resend_delivery))
-        .route("/mock/outbox", get(mock_outbox))
-        .route("/mock/channels", get(list_mock_channels))
-        .route("/mock/channels/{channel}", put(put_mock_channel))
 }
-
-fn err(status: StatusCode, error: &str, detail: impl ToString) -> (StatusCode, Json<Value>) {
-    (
-        status,
-        Json(json!({
-            "error": error,
-            "detail": detail.to_string(),
-        })),
-    )
-}
-
-fn err_with_line(
-    status: StatusCode,
-    error: &str,
-    detail: impl ToString,
-    line: Option<usize>,
-) -> (StatusCode, Json<Value>) {
-    (
-        status,
-        Json(json!({
-            "error": error,
-            "detail": detail.to_string(),
-            "line": line,
-        })),
-    )
-}
-
-fn db_err(e: sqlx::Error) -> (StatusCode, Json<Value>) {
-    tracing::error!(error = %e, "db error");
-    err(StatusCode::INTERNAL_SERVER_ERROR, "database error", e)
-}
-
-fn parse_uuid(s: &str, label: &str) -> ApiResult<Uuid> {
-    Uuid::parse_str(s).map_err(|e| err(StatusCode::BAD_REQUEST, &format!("invalid {label}"), e))
-}
-
-fn opt_json(r: &sqlx::postgres::PgRow, col: &str) -> Value {
-    r.get::<Option<SqlJson<Value>>, _>(col)
-        .map_or(Value::Null, |j| j.0)
-}
-
-/// Znajduje ścieżkę pliku/katalogu konfiguracyjnego niezależnie od tego, czy proces
-/// wystartował z katalogu głównego repozytorium, czy z `crates/api`.
-fn resolve_config_path(config_dir: &str, rel: &str) -> PathBuf {
-    let candidates = [
-        FsPath::new(config_dir).join(rel),
-        FsPath::new("config").join(rel),
-        FsPath::new("../../config").join(rel),
-    ];
-    for c in &candidates {
-        if c.exists() {
-            return c.clone();
-        }
-    }
-    candidates[0].clone()
-}
-
-// ------------------------------------------------------------------ Seeding (leniwym startem, gdy router jeszcze nie załadował plików)
 
 async fn ensure_rules_seeded(db: &PgPool, config_dir: &str) {
     if RULES_SEEDED.swap(true, Ordering::SeqCst) {
@@ -161,84 +90,7 @@ async fn ensure_rules_seeded(db: &PgPool, config_dir: &str) {
     }
 }
 
-#[derive(Deserialize)]
-struct PeopleConfigFile {
-    #[serde(default)]
-    people: Vec<PersonDef>,
-    #[serde(default)]
-    teams: Vec<TeamDef>,
-}
-
-async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
-    if PEOPLE_SEEDED.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let people_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM people")
-        .fetch_one(db)
-        .await
-        .unwrap_or(1);
-    let teams_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams")
-        .fetch_one(db)
-        .await
-        .unwrap_or(1);
-    if people_count > 0 && teams_count > 0 {
-        return;
-    }
-    let path = resolve_config_path(config_dir, "people.yaml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return;
-    };
-    let Ok(parsed) = serde_yaml::from_str::<PeopleConfigFile>(&text) else {
-        return;
-    };
-    for person in &parsed.people {
-        let Ok(def_val) = serde_json::to_value(person) else {
-            continue;
-        };
-        let contacts_val = serde_json::to_value(&person.contacts).unwrap_or_else(|_| json!({}));
-        let fallback_val = serde_json::to_value(&person.fallback).unwrap_or_else(|_| json!([]));
-        let _ = sqlx::query(
-            "INSERT INTO people (id, name, timezone, contacts, fallback, def, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, now()) ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(&person.id)
-        .bind(&person.name)
-        .bind(&person.timezone)
-        .bind(SqlJson(contacts_val))
-        .bind(SqlJson(fallback_val))
-        .bind(SqlJson(def_val))
-        .execute(db)
-        .await;
-    }
-    for team in &parsed.teams {
-        let Ok(def_val) = serde_json::to_value(team) else {
-            continue;
-        };
-        let _ = sqlx::query(
-            "INSERT INTO teams (id, name, def, updated_at) \
-             VALUES ($1, $2, $3, now()) ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(&team.id)
-        .bind(&team.name)
-        .bind(SqlJson(def_val))
-        .execute(db)
-        .await;
-
-        for member in &team.members {
-            let _ = sqlx::query(
-                "INSERT INTO team_members (team_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            )
-            .bind(&team.id)
-            .bind(member)
-            .execute(db)
-            .await;
-        }
-    }
-}
-
-// ------------------------------------------------------------------ 1. Reguły CRUD (7.2)
-
-/// Parsuje ciało żądania reguły (obsługuje zarówno JSON jak i YAML) oraz zwraca numer linii przy błędzie.
+/// Parses a rule request body (JSON or YAML) and includes the line number on syntax errors.
 pub fn parse_rule_payload(bytes: &[u8]) -> ApiResult<RuleDef> {
     let text = std::str::from_utf8(bytes)
         .map_err(|e| err_with_line(StatusCode::BAD_REQUEST, "invalid rule", e, Some(1)))?;
@@ -271,7 +123,7 @@ pub fn parse_rule_payload(bytes: &[u8]) -> ApiResult<RuleDef> {
     }
 }
 
-/// Waliduje semantycznie regułę: pola wymagane, kompilację warunku i szablony prezentacji.
+/// Semantically validates a rule: required fields, condition compilation, and presentation templates.
 pub fn validate_rule(rule: &RuleDef) -> ApiResult<()> {
     if rule.id.trim().is_empty() {
         return Err(err(
@@ -446,7 +298,7 @@ async fn delete_rule(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ------------------------------------------------------------------ 2. Test reguły na zdarzeniu (POST /rules/test)
+// ------------------------------------------------------------------ POST /rules/test
 
 #[derive(Deserialize)]
 struct RuleTestRequest {
@@ -473,8 +325,8 @@ fn parse_severity_fuzzy(val: Option<&Value>) -> Severity {
     }
 }
 
-/// Konwertuje dowolny JSON zdarzenia (pełne `CanonicalEvent`, kopertę `IncomingEnvelope`
-/// albo surowy payload wklejony przez operatora) na `CanonicalEvent`.
+/// Coerces an arbitrary event JSON (full `CanonicalEvent`, `IncomingEnvelope`, or raw payload)
+/// into a `CanonicalEvent`.
 pub fn coerce_to_canonical_event(val: Value) -> ApiResult<CanonicalEvent> {
     if let Ok(ev) = serde_json::from_value::<CanonicalEvent>(val.clone()) {
         return Ok(ev);
@@ -488,7 +340,6 @@ pub fn coerce_to_canonical_event(val: Value) -> ApiResult<CanonicalEvent> {
         ));
     };
 
-    // Przypadek 1: Obiekt częściowo kanoniczny z polem `raw`
     if map.contains_key("raw") {
         let event_id = map
             .get("event_id")
@@ -553,7 +404,6 @@ pub fn coerce_to_canonical_event(val: Value) -> ApiResult<CanonicalEvent> {
         });
     }
 
-    // Przypadek 2: Koperta `IncomingEnvelope` ({ format, schema, payload })
     if map.contains_key("format") && map.contains_key("schema") && map.contains_key("payload") {
         let schema = map
             .get("schema")
@@ -580,7 +430,6 @@ pub fn coerce_to_canonical_event(val: Value) -> ApiResult<CanonicalEvent> {
         });
     }
 
-    // Przypadek 3: Surowy payload wklejony bezpośrednio
     let raw = Value::Object(map);
     let schema = raw
         .get("schema")
@@ -708,7 +557,7 @@ async fn test_rule(
     Ok(Json(res))
 }
 
-// ------------------------------------------------------------------ 3. Podpowiedzi pól (GET /fields?schema=...)
+// ------------------------------------------------------------------ GET /fields?schema=...
 
 #[derive(Deserialize)]
 struct FieldsQuery {
@@ -921,276 +770,10 @@ async fn get_fields(
     Ok(Json(out))
 }
 
-// ------------------------------------------------------------------ 4. Osoby i zespoły (GET /people, GET /teams)
-
-async fn list_people(State(st): State<AppState>) -> ApiResult<Json<Value>> {
-    ensure_people_seeded(&st.db, &st.config.config_dir).await;
-    let rows = sqlx::query("SELECT def FROM people ORDER BY id")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
-    let mut people = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let p: PersonDef = serde_json::from_value(opt_json(r, "def"))
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid stored person", e))?;
-        people.push(p);
-    }
-    Ok(Json(json!({
-        "source_file": "config/people.yaml",
-        "people": people,
-    })))
-}
-
-async fn list_teams(State(st): State<AppState>) -> ApiResult<Json<Vec<TeamDef>>> {
-    ensure_people_seeded(&st.db, &st.config.config_dir).await;
-    let rows = sqlx::query("SELECT def FROM teams ORDER BY id")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
-    let mut teams = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let t: TeamDef = serde_json::from_value(opt_json(r, "def"))
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid stored team", e))?;
-        teams.push(t);
-    }
-    Ok(Json(teams))
-}
-
-// ------------------------------------------------------------------ 5. Dostarczenia i Resend (9.3, 9.4)
-
-const DELIVERY_COLS: &str = "id, alert_id, episode::int AS episode, person_id, channel, status, \
-                             attempts::int AS attempts, last_error, received_at, delivered_at, updated_at";
-
-fn delivery_row_to_json(r: &sqlx::postgres::PgRow) -> Value {
-    json!({
-        "id": r.get::<Uuid, _>("id"),
-        "alert_id": r.get::<Uuid, _>("alert_id"),
-        "episode": r.get::<i32, _>("episode"),
-        "person_id": r.get::<String, _>("person_id"),
-        "channel": r.get::<String, _>("channel"),
-        "status": r.get::<String, _>("status"),
-        "attempts": r.get::<i32, _>("attempts"),
-        "last_error": r.get::<Option<String>, _>("last_error"),
-        "received_at": r.get::<DateTime<Utc>, _>("received_at"),
-        "delivered_at": r.get::<Option<DateTime<Utc>>, _>("delivered_at"),
-        "updated_at": r.get::<DateTime<Utc>, _>("updated_at"),
-    })
-}
-
-async fn alert_deliveries(
-    State(st): State<AppState>,
-    Path(alert_id): Path<String>,
-) -> ApiResult<Json<Vec<Value>>> {
-    let alert_id = parse_uuid(&alert_id, "alert_id")?;
-    let sql = format!(
-        "SELECT {DELIVERY_COLS} FROM deliveries WHERE alert_id = $1 ORDER BY received_at ASC, updated_at ASC, id ASC"
-    );
-    let rows = sqlx::query(&sql)
-        .bind(alert_id)
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
-    Ok(Json(rows.iter().map(delivery_row_to_json).collect()))
-}
-
-#[derive(Deserialize)]
-struct DeliveriesQuery {
-    status: Option<String>,
-}
-
-async fn list_deliveries(
-    State(st): State<AppState>,
-    Query(q): Query<DeliveriesQuery>,
-) -> ApiResult<Json<Vec<Value>>> {
-    let sql = format!(
-        "SELECT {DELIVERY_COLS} FROM deliveries \
-         WHERE ($1::text IS NULL OR status = $1) \
-         ORDER BY updated_at DESC LIMIT 200"
-    );
-    let rows = sqlx::query(&sql)
-        .bind(q.status)
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
-    Ok(Json(rows.iter().map(delivery_row_to_json).collect()))
-}
-
-async fn resend_delivery(
-    State(st): State<AppState>,
-    Path(delivery_id): Path<String>,
-) -> ApiResult<StatusCode> {
-    let delivery_id = parse_uuid(&delivery_id, "delivery_id")?;
-    let row = sqlx::query(
-        "SELECT id, alert_id, episode::int AS episode, person_id, channel, request, received_at \
-         FROM deliveries WHERE id = $1",
-    )
-    .bind(delivery_id)
-    .fetch_optional(&st.db)
-    .await
-    .map_err(db_err)?
-    .ok_or_else(|| err(StatusCode::NOT_FOUND, "delivery not found", delivery_id))?;
-
-    let channel_str: String = row.get("channel");
-    let target_channel: Channel =
-        serde_json::from_value(Value::String(channel_str.clone())).unwrap_or(Channel::Email);
-
-    let mut req: DeliveryRequest = match serde_json::from_value(opt_json(&row, "request")) {
-        Ok(r) => r,
-        Err(_) => {
-            let alert_id: Uuid = row.get("alert_id");
-            let episode: i32 = row.get("episode");
-            let person_id: String = row.get("person_id");
-            let received_at: DateTime<Utc> = row.get("received_at");
-            DeliveryRequest {
-                delivery_id,
-                alert_id,
-                episode,
-                person_id,
-                severity: Severity::Critical,
-                origin: contracts::DeliveryOrigin::Rule {
-                    rule_id: "resend".into(),
-                },
-                chain: vec![target_channel, Channel::Ui],
-                chain_index: 0,
-                contacts: BTreeMap::new(),
-                rendered: BTreeMap::new(),
-                received_at,
-                attempt: 0,
-                not_before: None,
-                last_error: None,
-            }
-        }
-    };
-
-    req.delivery_id = delivery_id;
-    req.attempt = 0;
-    req.not_before = None;
-    req.last_error = None;
-    if let Some(idx) = req.chain.iter().position(|c| *c == target_channel) {
-        req.chain_index = idx;
-    } else {
-        req.chain_index = 0;
-    }
-
-    let req_json = serde_json::to_value(&req)
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "serialize delivery request", e))?;
-
-    sqlx::query(
-        "UPDATE deliveries SET status = 'pending', request = $2, updated_at = now() WHERE id = $1",
-    )
-    .bind(delivery_id)
-    .bind(SqlJson(req_json))
-    .execute(&st.db)
-    .await
-    .map_err(db_err)?;
-
-    let key = req.alert_id.to_string();
-    common::kafka::publish(&st.kafka, topics::DELIVERIES_REQUESTED, &key, &req)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "kafka unavailable", e))?;
-
-    Ok(StatusCode::ACCEPTED)
-}
-
-// ------------------------------------------------------------------ 6. Symulowane kanały (9.4)
-
-async fn mock_outbox(State(st): State<AppState>) -> ApiResult<Json<Vec<Value>>> {
-    let rows = sqlx::query(
-        "SELECT id::bigint AS id, channel, recipient, person_id, title, body, alert_id, sent_at \
-         FROM mock_outbox ORDER BY sent_at DESC, id DESC LIMIT 200",
-    )
-    .fetch_all(&st.db)
-    .await
-    .map_err(db_err)?;
-
-    let out: Vec<Value> = rows
-        .iter()
-        .map(|r| {
-            json!({
-                "id": r.get::<i64, _>("id"),
-                "channel": r.get::<String, _>("channel"),
-                "to": r.get::<String, _>("recipient"),
-                "person_id": r.get::<String, _>("person_id"),
-                "title": r.get::<String, _>("title"),
-                "body": r.get::<String, _>("body"),
-                "alert_id": r.get::<Option<Uuid>, _>("alert_id"),
-                "sent_at": r.get::<DateTime<Utc>, _>("sent_at"),
-            })
-        })
-        .collect();
-    Ok(Json(out))
-}
-
-async fn list_mock_channels(State(st): State<AppState>) -> ApiResult<Json<Vec<Value>>> {
-    let rows = sqlx::query(
-        "SELECT channel, available FROM mock_channels \
-         WHERE channel IN ('sms', 'phone', 'email') \
-         ORDER BY CASE channel WHEN 'sms' THEN 1 WHEN 'phone' THEN 2 WHEN 'email' THEN 3 ELSE 4 END",
-    )
-    .fetch_all(&st.db)
-    .await
-    .map_err(db_err)?;
-
-    let out: Vec<Value> = rows
-        .iter()
-        .map(|r| {
-            json!({
-                "channel": r.get::<String, _>("channel"),
-                "available": r.get::<bool, _>("available"),
-            })
-        })
-        .collect();
-    Ok(Json(out))
-}
-
-#[derive(Deserialize)]
-struct ToggleChannelRequest {
-    available: bool,
-}
-
-async fn put_mock_channel(
-    State(st): State<AppState>,
-    Path(channel): Path<String>,
-    body: Result<Json<ToggleChannelRequest>, JsonRejection>,
-) -> ApiResult<Json<Value>> {
-    let parsed_channel: Channel = serde_json::from_value(Value::String(channel.clone()))
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid channel", &channel))?;
-    let channel_str = match parsed_channel {
-        Channel::Ui => "ui",
-        Channel::Email => "email",
-        Channel::Sms => "sms",
-        Channel::Phone => "phone",
-    };
-    let Json(req) =
-        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid request body", e.body_text()))?;
-
-    let mut tx = st.db.begin().await.map_err(db_err)?;
-    sqlx::query(
-        "INSERT INTO mock_channels (channel, available, updated_at) \
-         VALUES ($1, $2, now()) \
-         ON CONFLICT (channel) DO UPDATE SET available = EXCLUDED.available, updated_at = now()",
-    )
-    .bind(channel_str)
-    .bind(req.available)
-    .execute(&mut *tx)
-    .await
-    .map_err(db_err)?;
-
-    sqlx::query("SELECT pg_notify('config_changed', 'mock_channels')")
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
-    tx.commit().await.map_err(db_err)?;
-
-    Ok(Json(json!({
-        "channel": channel_str,
-        "available": req.available,
-    })))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::people::PeopleConfigFile;
     use contracts::{Condition, Op, Presentation, Recipient};
 
     #[test]

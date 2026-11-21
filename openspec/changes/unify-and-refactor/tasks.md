@@ -11,9 +11,9 @@ Nowy aktywny change po zarchiwizowaniu `alerting-service-mvp` i `alerting-servic
 
 ## 2. Unifikacja i uproszczenie `crates/api`
 
-- [ ] 2.1 Wydzielić wspólny `crates/api/src/error.rs` (`ApiError`/`ApiResult`, `db_err`, `parse_id`, `opt_json`) oraz `crates/api/src/rules_eval.rs` (wspólny `CompiledRule`, `load_enabled_rules`, `enrich_alert`, `teams_for_event` współdzielony między `GET /alerts` i SSE `/stream`); weryfikacja: `stream.rs` i `alerts` używają jednej implementacji dopasowania reguł, testy `api` zielone
-- [ ] 2.2 Rozbić `crates/api/src/p1.rs`, `p2.rs`, `p3.rs` na spójne moduły domenowe `crates/api/src/routes/{mod,alerts,mappings,rules,people,deliveries,runbooks,actions}.rs` i usunąć `p1.rs`/`p2.rs`/`p3.rs`; weryfikacja: wszystkie trasy z `contracts/openapi.yaml` działają identycznie, `cargo test -p api` przechodzi
-- [ ] 2.3 Uprościć `crates/api/src/main.rs` i `state.rs` (usunięcie starych komentarzy o zamrożeniu Fazy 0, jednoznaczne podpięcie `routes::router()`); weryfikacja: `cargo check -p api` bez ostrzeżeń
+- [x] 2.1 Wydzielić wspólny `crates/api/src/error.rs` (`ApiError`/`ApiResult`, `db_err`, `parse_id`, `opt_json`) oraz `crates/api/src/rules_eval.rs` (wspólny `CompiledRule`, `load_enabled_rules`, `enrich_alert`, `teams_for_event` współdzielony między `GET /alerts` i SSE `/stream`); weryfikacja: `stream.rs` i `alerts` używają jednej implementacji dopasowania reguł, testy `api` zielone
+- [x] 2.2 Rozbić `crates/api/src/p1.rs`, `p2.rs`, `p3.rs` na spójne moduły domenowe `crates/api/src/routes/{mod,alerts,mappings,rules,people,deliveries,runbooks,actions}.rs` i usunąć `p1.rs`/`p2.rs`/`p3.rs`; weryfikacja: wszystkie trasy z `contracts/openapi.yaml` działają identycznie, `cargo test -p api` przechodzi
+- [x] 2.3 Uprościć `crates/api/src/main.rs` i `state.rs` (usunięcie starych komentarzy o zamrożeniu Fazy 0, jednoznaczne podpięcie `routes::router()`); weryfikacja: `cargo check -p api` bez ostrzeżeń
 
 ## 3. Uproszczenie i deduplikacja backendu Rust
 

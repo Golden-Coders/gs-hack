@@ -1,13 +1,8 @@
-//! api – gateway REST + SSE dla UI (design D13).
-//!
-//! TEN PLIK JEST ZAMROŻONY (Faza 0). Routy dodaje się wyłącznie w module
-//! własnego strumienia: `p1.rs` (alerty, mappingi, ingest), `p2.rs` (reguły,
-//! osoby, dostarczenia, mocki), `p3.rs` (runbooki, akcje, zatwierdzenia).
-//! Wspólne: `state.rs` (stan aplikacji), `/health`, `/stream` (SSE).
+//! REST + SSE API gateway for the AlertHub UI.
 
-mod p1;
-mod p2;
-mod p3;
+mod error;
+mod routes;
+mod rules_eval;
 mod state;
 mod stream;
 
@@ -38,21 +33,18 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Lista modułów – ZAMROŻONA. Nowe endpointy dodajecie w `pN::routes()`.
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/stream", get(stream::sse))
-        .merge(p1::routes())
-        .merge(p2::routes())
-        .merge(p3::routes())
-        // Wszystko powyżej wymaga tokenu; `/health` (niżej) jest publiczne.
+        .merge(routes::router())
+        // Everything above requires a token; `/health` below is public.
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .route("/health", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
-/// `Authorization: Bearer <API_TOKEN>`; dla SSE także `?token=<API_TOKEN>`, bo `EventSource` nie wysyła nagłówków.
+/// `Authorization: Bearer <API_TOKEN>`; for SSE also accepts `?token=<API_TOKEN>` since `EventSource` cannot send headers.
 async fn require_token(State(state): State<AppState>, req: Request, next: Next) -> Response {
     let expected = state.config.api_token.as_str();
     let header_ok = req
