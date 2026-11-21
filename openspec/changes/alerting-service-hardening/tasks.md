@@ -28,9 +28,9 @@ Kontynuacja zarchiwizowanego `alerting-service-mvp` (numery w nawiasach kwadrato
 
 ## 5. Integracja i demo (wszyscy)
 
-- [ ] 5.1 [18.3] Runbooki end-to-end (`scripts/e2e/runbooks.sh` z PR #31): Settlements z zatwierdzeniem i eskalacją, payments MANUAL w emailu, pricing MANUAL z linkiem w SMS; weryfikacja: kroki i dziennik widoczne w UI
-- [ ] 5.2 [19.H1 + 18.6] Kryteria demo na czystym klonie (`scripts/e2e/criteria.sh`): nowy schemat z UI w < 2 min, nowa akcja HTTP w < 1 min, zmiana reguły bez restartu, runbook z poleceniem shell niczego nie wykonuje; weryfikacja: każdy punkt przećwiczony, opis przebiegu w PR
-- [ ] 5.3 [17.1] `make demo` na czystym środowisku; weryfikacja: komenda przechodzi po `docker compose down -v`
+- [x] 5.1 [18.3] Runbooki end-to-end (`scripts/e2e/runbooks.sh` z PR #31): Settlements z zatwierdzeniem i eskalacją, payments MANUAL w emailu, pricing MANUAL z linkiem w SMS; weryfikacja: kroki i dziennik widoczne w UI
+- [x] 5.2 [19.H1 + 18.6] Kryteria demo na czystym klonie (`scripts/e2e/criteria.sh`): nowy schemat z UI w < 2 min, nowa akcja HTTP w < 1 min, zmiana reguły bez restartu, runbook z poleceniem shell niczego nie wykonuje; weryfikacja: każdy punkt przećwiczony, opis przebiegu w PR
+- [x] 5.3 [17.1] `make demo` na czystym środowisku; weryfikacja: komenda przechodzi po `docker compose down -v`
 - [ ] 5.4 [17.2] Próby generalne wg `docs/DEMO.md`; weryfikacja: 2 przebiegi bez ingerencji, nagranie ≤ 5 min
 
 ## 6. Otwarte kwestie (P1+P2, do decyzji)
