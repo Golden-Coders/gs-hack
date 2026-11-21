@@ -2,11 +2,14 @@
 
 use lifecycle::{config, run_config, run_dedup, run_normalizer};
 
+/// Domyślny maks. rozmiar puli Postgresa (nadpisywany przez `DB_MAX_CONNECTIONS`, zob. docs/LOADTEST.md).
+const DB_POOL_DEFAULT: u32 = 8;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     common::init_tracing("lifecycle");
     let cfg = common::Config::from_env();
-    let pool = common::db::connect_and_migrate(&cfg.database_url).await?;
+    let pool = common::db::connect_and_migrate_with(&cfg.database_url, DB_POOL_DEFAULT).await?;
     let producer = common::kafka::producer(&cfg.kafka_brokers)?;
     let store = config::new_store();
     let (tx, rx) = tokio::sync::watch::channel(false);

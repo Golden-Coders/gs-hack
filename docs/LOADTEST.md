@@ -148,3 +148,44 @@ W „Konfiguracja” wpisz wartości `RATE`, `DURATION_SECS`, `DUP_RATIO`, `MODE
 
 - **1 instancja `sender` bez problemu utrzymuje 500 msg/s:** po wprowadzeniu równoległego przetwarzania w `sender` (PR #38) i pełnej refaktoryzacji backendu (PR #43–#46), przy `RATE=500 DURATION_SECS=20 DUP_RATIO=0.5 MODE=both` (`9 995` wysłanych, `0` błędów, `499.7 msg/s`), lag grupy `sender` (próbkowany co 5 s) wynosił kolejno **`0, 0, 3, 0`** i spadł do **`0`** natychmiast po końcu ruchu (vs max lag **9 954** w pomiarze 1).
 - **Latencja e2e kanału `email` (7 506 dostarczeń):** **p50 = 9.5 ms**, **p99 = 20.9 ms** (spadek z 26 070 ms / 40 163 ms sprzed optymalizacji).
+
+## Pula połączeń Postgresa
+
+Przy skalowaniu poziomym pula 10 połączeń na proces × ~20 procesów przekraczała `max_connections=100` w Postgresie
+(`too many clients already`). Rozmiar puli jest teraz konfigurowalny per serwis (`common::db::connect_with`,
+`connect_and_migrate_with`):
+
+- `DB_MAX_CONNECTIONS` (liczba ≥ 1) – maksimum puli procesu; nadpisuje domyślną wartość serwisu. Wartość niepoprawna
+  (nie liczba, `0`) → ostrzeżenie w logu i wartość domyślna.
+- `DB_MIN_CONNECTIONS` (liczba ≥ 0, domyślnie 0) – utrzymywane połączenia; przycinane do maksimum.
+- Domyślne wartości są stałą `DB_POOL_DEFAULT` w `main.rs` każdego serwisu (jedno miejsce, w kodzie – działają bez
+  konfiguracji compose; w razie potrzeby nadpisanie przez `environment:` w `docker-compose.yml` danego serwisu).
+  `connect`/`connect_and_migrate` bez rozmiaru (testy) nadal używają 10.
+
+| Serwis | Domyślnie | Użycie bazy |
+|---|---|---|
+| lifecycle | 8 (+1 `PgListener`) | normalizer + dedup: zapytania na każdą wiadomość, docelowo przetwarzanie współbieżne |
+| sender | 8 | `claim_delivery`, zapis dostarczeń/prób na każde dostarczenie, współbieżnie |
+| runbooks | 6 | runy, kroki, zatwierdzenia, wywołania akcji; mniejszy wolumen niż lifecycle/sender |
+| api | 5 | zapytania UI (lista alertów, komendy, mappings), ruch ludzki |
+| router | 2 (+1 `PgListener`) | tylko przeładowanie konfiguracji; ścieżka gorąca czyta migawkę `ArcSwap` |
+| ingest | 2 | tylko skaner źródeł / błędy (`events.unmapped`) |
+
+Budżet (`PgListener::connect` otwiera osobne połączenie poza pulą, więc liczymy +1 dla lifecycle i router):
+
+- 1× każdy serwis: 9 + 3 + 8 + 6 + 5 + 2 = **33** połączenia.
+- Skalowane (lifecycle×4, router×4, sender×2, runbooks×2, ingest×2, api×1): 36 + 12 + 16 + 12 + 4 + 5 = **85**
+  (z 100 zostaje ~15 na psql, migracje i administrację). Pule są leniwe, więc realne użycie jest zwykle niższe.
+  Przy większej liczbie replik obniż `DB_MAX_CONNECTIONS` albo użyj PgBouncera.
+
+### PgBouncer (opcja)
+
+Gdy budżet 100 nie wystarcza, można postawić PgBouncera przed Postgresem w trybie `transaction` pooling:
+
+- sqlx domyślnie używa prepared statements. W trybie transaction wymagany jest PgBouncer ≥ 1.21 z
+  `max_prepared_statements > 0` albo wyłączenie cache'u po stronie klienta (`statement_cache_capacity(0)` w
+  `PgConnectOptions`); inaczej pojawią się błędy `prepared statement ... does not exist`.
+- `LISTEN/NOTIFY config_changed` wymaga stałej sesji. Używają go (`PgListener`): `crates/lifecycle/src/config.rs`,
+  `crates/router/src/config.rs` oraz test w `crates/api/src/routes/mappings.rs`. Te połączenia muszą iść bezpośrednio
+  do Postgresa (osobny `DATABASE_URL` dla listenera) albo przez pulę w trybie `session`.
+- Migracje (advisory lock sqlx) również wymagają sesji – uruchamiaj je bezpośrednio.

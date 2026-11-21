@@ -18,11 +18,14 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
+/// Domyślny maks. rozmiar puli Postgresa (nadpisywany przez `DB_MAX_CONNECTIONS`, zob. docs/LOADTEST.md).
+const DB_POOL_DEFAULT: u32 = 6;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     common::init_tracing("runbooks");
     let config = common::Config::from_env();
-    let pool = common::db::connect_and_migrate(&config.database_url).await?;
+    let pool = common::db::connect_and_migrate_with(&config.database_url, DB_POOL_DEFAULT).await?;
 
     // Pierwsze wczytanie przed konsumentem: bez runbooków alert przeszedłby bez runów.
     let author = author::from_env()?;

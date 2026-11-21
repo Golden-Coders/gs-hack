@@ -4,11 +4,14 @@ use std::sync::Arc;
 
 use ingest::{http, sources};
 
+/// Domyślny maks. rozmiar puli Postgresa (nadpisywany przez `DB_MAX_CONNECTIONS`, zob. docs/LOADTEST.md).
+const DB_POOL_DEFAULT: u32 = 2;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     common::init_tracing("ingest");
     let config = common::Config::from_env();
-    let pool = common::db::connect_and_migrate(&config.database_url).await?;
+    let pool = common::db::connect_and_migrate_with(&config.database_url, DB_POOL_DEFAULT).await?;
     let producer = common::kafka::producer(&config.kafka_brokers)?;
 
     let ctx = Arc::new(sources::Ctx { brokers: config.kafka_brokers.clone(), pool, producer: producer.clone() });
