@@ -12,7 +12,8 @@ use common::db::sqlx::{
     types::{chrono::DateTime, chrono::Utc, Json as SqlJson, Uuid},
     Row,
 };
-use contracts::{topics, Actor, AlertCommand, AlertCommandKind, MappingDef};
+use contracts::{formats, topics, Actor, AlertCommand, AlertCommandKind, CanonicalEvent, Envelope, MappingDef};
+use lifecycle::mapping::{parse_payload, CompiledMapping};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -234,6 +235,8 @@ async fn put_mapping(
     if def.schema != schema {
         return Err(err(StatusCode::BAD_REQUEST, "schema mismatch", "schema w body różni się od ścieżki"));
     }
+    // Ta sama kompilacja co w lifecycle: mapping, który się nie kompiluje, nie trafia do bazy.
+    CompiledMapping::compile(def.clone(), 0).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", format!("{e:#}")))?;
     let stored = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", e))?;
     let mut tx = st.db.begin().await.map_err(db_err)?;
     let version: i64 = sqlx::query(
@@ -261,12 +264,30 @@ async fn delete_mapping(State(st): State<AppState>, Path(schema): Path<String>) 
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn preview() -> (StatusCode, Json<Value>) {
-    err(
-        StatusCode::NOT_IMPLEMENTED,
-        "not implemented",
-        "preview wymaga zależności api -> lifecycle (zmiana crates/api/Cargo.toml do uzgodnienia)",
-    )
+#[derive(Deserialize)]
+struct PreviewReq {
+    mapping: MappingDef,
+    payload: Value,
+}
+
+/// Podgląd zdarzenia kanonicznego: ten sam kod co normalizer w lifecycle, bez zapisu.
+/// Payload-string traktujemy jako YAML (przykład wklejony w UI), resztę jako JSON.
+async fn preview(body: Result<Json<PreviewReq>, JsonRejection>) -> ApiResult<Json<CanonicalEvent>> {
+    let bad = |e: String| err(StatusCode::BAD_REQUEST, "invalid preview", e);
+    let Json(req) = body.map_err(|e| bad(e.body_text()))?;
+    let format = if req.payload.is_string() { formats::YAML } else { formats::JSON };
+    let raw = parse_payload(format, &req.payload).map_err(|e| bad(format!("{e:#}")))?;
+    let version = req.mapping.version;
+    let mapping = CompiledMapping::compile(req.mapping, version).map_err(|e| bad(format!("{e:#}")))?;
+    let env = Envelope {
+        event_id: Uuid::now_v7(),
+        format: format.into(),
+        schema: mapping.def.schema.clone(),
+        payload: req.payload,
+        source: "preview".into(),
+        received_at: Utc::now(),
+    };
+    Ok(Json(mapping.normalize(&env, raw)))
 }
 
 async fn unmapped(State(st): State<AppState>) -> ApiResult<Json<Value>> {
@@ -563,10 +584,78 @@ mod tests {
         assert_eq!(e["sample"], "{");
     }
 
+    const WORKFLOW_MAPPING: &str = include_str!("../../contracts/fixtures/config/mapping.workflow.json");
+    const WORKFLOW_EVENT: &str = include_str!("../../contracts/fixtures/events/workflow_failed.json");
+
+    async fn mapping_rows(s: &Server, schema: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM mappings WHERE schema = $1").bind(schema).fetch_one(&s.st.db).await.unwrap()
+    }
+
     #[tokio::test]
-    async fn preview_not_implemented() {
+    async fn preview_workflow_json_payload() {
         let s = server().await;
-        let (st, _) = s.http("POST", "/mappings/preview", &[], Some("{}")).await;
-        assert_eq!(st, 501);
+        let mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        let payload = serde_json::from_str::<Value>(WORKFLOW_EVENT).unwrap()["payload"].clone();
+        let body = json!({"mapping": mapping, "payload": payload}).to_string();
+        let (st, v) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 200, "{v}");
+        assert_eq!(v["severity"], "error");
+        assert_eq!(v["title"], "Counterparty service did not respond in 5000 ms");
+        assert_eq!(v["fingerprint"], "workflow.v1|order-settlement|validate-counterparty|TIMEOUT");
+        assert_eq!(v["raw"], payload);
+        assert_eq!(v["fields"]["step"], "validate-counterparty");
+    }
+
+    #[tokio::test]
+    async fn preview_yaml_string_payload() {
+        let s = server().await;
+        let mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        let yaml = "workflowName: order-settlement\nstep: validate-counterparty\nseverity: WARN\nerror:\n  code: TIMEOUT\n  message: boom\n";
+        let body = json!({"mapping": mapping, "payload": yaml}).to_string();
+        let (st, v) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 200, "{v}");
+        assert_eq!(v["fields"]["workflowName"], "order-settlement");
+        assert_eq!(v["fields"]["step"], "validate-counterparty");
+        assert_eq!(v["severity"], "warning");
+        assert_eq!(v["title"], "boom");
+    }
+
+    #[tokio::test]
+    async fn preview_errors_are_400_and_nothing_is_stored() {
+        let s = server().await;
+        let schema = uniq("prev");
+        let mut mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        mapping["schema"] = json!(schema);
+
+        let mut bad = mapping.clone();
+        bad["fields"]["x"] = json!("$[[[");
+        let body = json!({"mapping": bad, "payload": {"a": 1}}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 400);
+
+        let body = json!({"mapping": mapping}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 400);
+
+        let body = json!({"mapping": mapping, "payload": "a: [unclosed"}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 400);
+
+        let body = json!({"mapping": mapping, "payload": {"workflowName": "w"}}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 200);
+        assert_eq!(mapping_rows(&s, &schema).await, 0);
+    }
+
+    #[tokio::test]
+    async fn put_rejects_uncompilable_mapping() {
+        let s = server().await;
+        let schema = uniq("badput");
+        let mut mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        mapping["schema"] = json!(schema);
+        mapping["fields"]["x"] = json!("$[[[");
+        let (st, _) = s.http("PUT", &format!("/mappings/{schema}"), &[], Some(&mapping.to_string())).await;
+        assert_eq!(st, 400);
+        assert_eq!(mapping_rows(&s, &schema).await, 0);
     }
 }

@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 contracts = { workspace = true }
 condition = { workspace = true }
+lifecycle = { path = "../lifecycle" }
 common = { workspace = true, features = ["db", "kafka"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
