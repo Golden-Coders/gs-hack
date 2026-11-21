@@ -1,11 +1,4 @@
-.people-section { margin-bottom: var(--space-6); }
-.people-section h2 { font-size: 16px; margin: 0 0 var(--space-1); }
-.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.people-table { width: 100%; border-collapse: collapse; min-width: 720px; }
-.people-table caption { text-align: left; padding: 0; }
-.people-table th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface-muted); }
-.people-table td { vertical-align: top; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
-.people-table tr:last-child td { border-bottom: none; }
+.people-table { min-width: 720px; }
 .person-name { font-weight: 600; }
 .person-id { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; }
 .contacts, .prefs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }

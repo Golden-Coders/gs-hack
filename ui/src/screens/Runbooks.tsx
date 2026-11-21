@@ -1,15 +1,16 @@
 // Runbooki (tylko do odczytu): lista z plików konfiguracyjnych, warunek dopasowania, treść MANUAL / kroki AUTOMATIC.
 // Edycja wyłącznie w plikach – tasks.md 15.4.
-import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
+import { useResource } from "../api/useResource";
+import { Badge } from "../components/Badges";
 import Markdown from "../components/Markdown";
 import ConditionView from "../components/ConditionView";
 import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
+import { Empty, ErrorBox, Loading } from "../ui/primitives";
 import "./Runbooks.css";
 
 type Runbook = Schemas["RunbookDef"];
 type Step = Schemas["StepDef"];
-type LoadError = { file: string; error: string; line?: number | null };
 
 const STEP_TYPE: Record<Step["type"], string> = {
   check: "sprawdzenie",
@@ -25,11 +26,11 @@ function StepItem({ step }: { step: Step }) {
       <div>
         <div className="step-head">
           <span className="step-text">{step.text}</span>
-          <span className="badge badge-gray">{STEP_TYPE[step.type] ?? step.type}</span>
-          <span className={step.automation === "automated" ? "badge badge-blue" : "badge badge-yellow"}>
+          <Badge tone="gray">{STEP_TYPE[step.type] ?? step.type}</Badge>
+          <Badge tone={step.automation === "automated" ? "blue" : "yellow"}>
             {step.automation === "automated" ? "automatyczny" : "ręczny"}
-          </span>
-          {step.approval === "required" && <span className="badge badge-orange">wymaga zatwierdzenia</span>}
+          </Badge>
+          {step.approval === "required" && <Badge tone="orange">wymaga zatwierdzenia</Badge>}
           <span className="runbook-meta mono">{step.id}</span>
         </div>
         {step.action && (
@@ -53,7 +54,7 @@ function RunbookItem({ rb }: { rb: Runbook }) {
     <details className="runbook">
       <summary>
         <span className="runbook-title">{rb.title}</span>
-        <span className={isManual ? "badge badge-gray" : "badge badge-blue"}>{isManual ? "ręczny" : "automatyczny"}</span>
+        <Badge tone={isManual ? "gray" : "blue"}>{isManual ? "ręczny" : "automatyczny"}</Badge>
         <span className="runbook-meta mono">{rb.id}</span>
         {!isManual && <span className="runbook-meta">{steps.length} kroków</span>}
         {ruleIds.length > 0 && <span className="runbook-meta">reguły: {ruleIds.length}</span>}
@@ -103,28 +104,11 @@ function RunbookItem({ rb }: { rb: Runbook }) {
 }
 
 export default function Runbooks() {
-  const [runbooks, setRunbooks] = useState<Runbook[] | null>(null);
-  const [errors, setErrors] = useState<LoadError[]>([]);
-  const [failure, setFailure] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [rb, er] = await Promise.all([api.GET("/runbooks"), api.GET("/runbooks/errors")]);
-        if (cancelled) return;
-        if (rb.error || !rb.data) throw new Error("GET /runbooks nie powiodło się");
-        setRunbooks(rb.data);
-        // Błędy parsowania są dodatkiem – ich brak nie blokuje listy.
-        setErrors(er.data ?? []);
-      } catch (e) {
-        if (!cancelled) setFailure(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const list = useResource(() => api.GET("/runbooks"));
+  // Błędy parsowania są dodatkiem – ich brak nie blokuje listy.
+  const loadErrors = useResource(() => api.GET("/runbooks/errors"));
+  const runbooks = list.data;
+  const errors = loadErrors.data ?? [];
 
   return (
     <section>
@@ -151,13 +135,9 @@ export default function Runbooks() {
         </div>
       )}
 
-      {failure && (
-        <div className="error-box" role="alert">
-          Nie udało się pobrać runbooków: {failure}
-        </div>
-      )}
-      {!failure && runbooks === null && <p className="loading">Ładowanie runbooków…</p>}
-      {runbooks && runbooks.length === 0 && <p className="empty">Brak runbooków w plikach konfiguracyjnych.</p>}
+      {list.error && <ErrorBox message={`Nie udało się pobrać runbooków: ${list.error}`} onRetry={list.reload} disabled={list.loading} />}
+      {!list.error && runbooks === null && <Loading>Ładowanie runbooków…</Loading>}
+      {runbooks && runbooks.length === 0 && <Empty>Brak runbooków w plikach konfiguracyjnych.</Empty>}
       {runbooks && runbooks.length > 0 && (
         <div className="runbook-list">
           {runbooks.map((rb) => (
