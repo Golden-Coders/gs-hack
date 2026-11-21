@@ -9,6 +9,7 @@
 mod author;
 mod engine;
 mod matching;
+mod notify;
 mod parse;
 mod registry;
 mod store;
@@ -37,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         producer,
         executor: registry::Executor::new(config.action_host_allowlist.clone()),
         snapshot,
+        public_ui_url: config.public_ui_url.clone(),
     });
     engine.resume_all().await?;
     let consumer = tokio::spawn(engine.clone().consume(config.kafka_brokers.clone()));

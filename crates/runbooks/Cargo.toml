@@ -20,6 +20,8 @@ arc-swap = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+# Biblioteka P2: te same preferencje kanałów i łańcuch zapasowy dla escalate/notify co dla reguł.
+router = { path = "../router" }
 
 [dev-dependencies]
 axum = { workspace = true }

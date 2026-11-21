@@ -14,7 +14,7 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use common::db::sqlx::{self, PgPool};
 use common::kafka::{self, rdkafka::producer::FutureProducer};
-use contracts::{topics, ActionDef, RunbookDef, UiEvent, UiEventKind};
+use contracts::{topics, ActionDef, PersonDef, RuleDef, RunbookDef, TeamDef, UiEvent, UiEventKind};
 use serde_json::{json, Value};
 
 use crate::parse;
@@ -33,6 +33,11 @@ pub struct Snapshot {
     /// Runbooki po klasyfikacji (`automation`, wymuszone zatwierdzenia).
     pub runbooks: Vec<RunbookDef>,
     pub unhandled: Unhandled,
+    /// Tylko odczyt z tabel P2: włączone reguły (przypięcie runbooka do reguły),
+    /// osoby i zespoły (akcje `escalate` i `notify`).
+    pub rules: Vec<RuleDef>,
+    pub people: HashMap<String, PersonDef>,
+    pub teams: HashMap<String, TeamDef>,
 }
 
 /// Jeden obieg: pliki → baza → migawka. Zwraca `true`, gdy migawka się zmieniła.
@@ -42,6 +47,10 @@ pub async fn reload_once(pool: &PgPool, config_dir: &str, snapshot: &ArcSwap<Sna
     let next = load(pool).await?;
     if next.unhandled != previous.unhandled {
         write_unhandled(pool, &next.unhandled).await?;
+    }
+    if next.runbooks != previous.runbooks {
+        // Router (P2) przeładowuje runbooki MANUAL tylko po tym powiadomieniu (design D5).
+        sqlx::query("SELECT pg_notify('config_changed', 'runbooks')").execute(pool).await?;
     }
     if next.runbooks.len() != previous.runbooks.len() || next.registry.len() != previous.registry.len() {
         tracing::info!(runbooks = next.runbooks.len(), actions = next.registry.len(), unhandled = next.unhandled.len(), "p3 config reloaded");
@@ -232,7 +241,21 @@ pub async fn load(pool: &PgPool) -> anyhow::Result<Snapshot> {
         }
         runbooks.push(resolved);
     }
-    Ok(Snapshot { registry, runbooks, unhandled })
+    Ok(Snapshot {
+        registry,
+        runbooks,
+        unhandled,
+        rules: read_defs(pool, "SELECT def FROM rules WHERE enabled ORDER BY id").await?,
+        people: read_defs::<PersonDef>(pool, "SELECT def FROM people ORDER BY id").await?.into_iter().map(|p| (p.id.clone(), p)).collect(),
+        teams: read_defs::<TeamDef>(pool, "SELECT def FROM teams ORDER BY id").await?.into_iter().map(|t| (t.id.clone(), t)).collect(),
+    })
+}
+
+/// Definicje JSONB z tabel innego strumienia. Wiersz, który nie pasuje do kontraktu, pomijamy
+/// (jego właściciel waliduje zapis; tu nie spamujemy logu co 2 s).
+async fn read_defs<T: serde::de::DeserializeOwned>(pool: &PgPool, sql: &str) -> anyhow::Result<Vec<T>> {
+    let rows: Vec<Value> = sqlx::query_scalar(sql).fetch_all(pool).await?;
+    Ok(rows.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
 }
 
 async fn write_unhandled(pool: &PgPool, unhandled: &Unhandled) -> anyhow::Result<()> {
