@@ -393,8 +393,20 @@ impl Engine {
         let snapshot = self.snapshot.load();
         if matches!(name, "escalate" | "notify") {
             let notice = notify::Notice::new(name, run.alert_id, run.episode, run.run_id, &run.title, step, &run.context, &self.public_ui_url);
-            let (requests, summary) = notify::build(&notice, &step.params, &snapshot, chrono::Utc::now())?;
-            for request in &requests {
+            let (requests, unknown) = notify::build(&notice, &step.params, &snapshot, chrono::Utc::now())?;
+            // Odbiorcy już powiadomieni o tym epizodzie na tym kanale (sender by ich pominął) – nie zlecamy
+            // i mówimy to w dzienniku zamiast udawać, że zostali powiadomieni.
+            let keys: Vec<String> = requests.iter().map(notify::delivery_key).collect();
+            let already: std::collections::HashSet<String> =
+                sqlx::query_scalar::<_, String>("SELECT idempotency_key FROM deliveries WHERE idempotency_key = ANY($1) AND status = 'delivered'")
+                    .bind(&keys)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| format!("odczyt dostarczeń: {e}"))?
+                    .into_iter()
+                    .collect();
+            let summary = notify::summary(&requests, &already, &unknown);
+            for request in requests.iter().filter(|r| !already.contains(&notify::delivery_key(r))) {
                 kafka::publish(&self.producer, topics::DELIVERIES_REQUESTED, &run.alert_id.to_string(), request)
                     .await
                     .map_err(|e| format!("publikacja zlecenia dostarczenia: {e}"))?;

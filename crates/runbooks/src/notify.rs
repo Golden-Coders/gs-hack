@@ -5,6 +5,8 @@
 //! `router::default_fallback_chain`), więc preferencje osób i godziny działają tak samo.
 //! Sender deduplikuje po `keys::delivery(alert, epizod, osoba, kanał)`: osoba, która o tym
 //! epizodzie dostała już powiadomienie z reguły na tym samym kanale, nie dostanie go drugi raz.
+//! Dlatego silnik sprawdza przed publikacją tabelę `deliveries` (P2, tylko odczyt) i takich odbiorców
+//! nie zleca, a dziennik mówi wprost, kto został pominięty (`summary`).
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -87,12 +89,11 @@ fn render(n: &Notice, channel: Channel) -> Rendered {
     Rendered { title, body, link: Some(n.link.clone()) }
 }
 
-/// Zlecenia dostarczenia dla kroku i krótki opis wyniku do dziennika.
+/// Zlecenia dostarczenia dla kroku i lista nieznanych osób (do dziennika, zob. `summary`).
 /// Błąd = żaden odbiorca nie został ustalony (krok kończy się `failed`, operator może ponowić albo pominąć).
-pub fn build(n: &Notice, params: &Map<String, Value>, snap: &Snapshot, now: DateTime<Utc>) -> Result<(Vec<DeliveryRequest>, String), String> {
+pub fn build(n: &Notice, params: &Map<String, Value>, snap: &Snapshot, now: DateTime<Utc>) -> Result<(Vec<DeliveryRequest>, Vec<String>), String> {
     let mut requests = Vec::new();
     let mut seen = HashSet::new();
-    let mut summary = Vec::new();
     let mut unknown = Vec::new();
     for (person_id, team_ctx) in recipients(n, params, snap)? {
         let Some(person) = snap.people.get(&person_id) else {
@@ -106,7 +107,6 @@ pub fn build(n: &Notice, params: &Map<String, Value>, snap: &Snapshot, now: Date
             }
             let chain = router::default_fallback_chain(primary, &person.fallback);
             let rendered: BTreeMap<Channel, Rendered> = chain.iter().map(|&c| (c, render(n, c))).collect();
-            summary.push(format!("{} ({})", person.id, serde_json::to_value(primary).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()));
             requests.push(DeliveryRequest {
                 delivery_id: Uuid::now_v7(),
                 alert_id: n.alert_id,
@@ -128,11 +128,40 @@ pub fn build(n: &Notice, params: &Map<String, Value>, snap: &Snapshot, now: Date
     if requests.is_empty() {
         return Err(if unknown.is_empty() { "brak odbiorców".into() } else { format!("nieznane osoby: {}", unknown.join(", ")) });
     }
-    let mut text = format!("powiadomiono: {}", summary.join(", "));
-    if !unknown.is_empty() {
-        text.push_str(&format!("; pominięto nieznane osoby: {}", unknown.join(", ")));
+    Ok((requests, unknown))
+}
+
+/// Klucz idempotencji, po którym sender rozpozna zlecenie (pierwszy kanał łańcucha).
+pub fn delivery_key(r: &DeliveryRequest) -> String {
+    contracts::keys::delivery(r.alert_id, r.episode, &r.person_id, r.chain.first().copied().unwrap_or(Channel::Ui))
+}
+
+fn label(r: &DeliveryRequest) -> String {
+    let channel = r.chain.first().and_then(|c| serde_json::to_value(c).ok()).and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    format!("{} ({channel})", r.person_id)
+}
+
+/// Uczciwy opis wyniku do dziennika. `already` = klucze dostarczeń, które sender ma już jako `delivered`;
+/// tych odbiorców nie zlecamy, bo sender i tak by ich pominął. „Zlecono”, nie „powiadomiono” —
+/// dostarczenie jest asynchroniczne, jego wynik widać w zakładce dostarczeń alertu.
+pub fn summary(requests: &[DeliveryRequest], already: &HashSet<String>, unknown: &[String]) -> String {
+    let (skipped, sent): (Vec<_>, Vec<_>) = requests.iter().partition(|r| already.contains(&delivery_key(r)));
+    let mut parts = Vec::new();
+    if sent.is_empty() {
+        parts.push("nikogo nie powiadomiono".to_string());
+    } else {
+        parts.push(format!("zlecono powiadomienie: {}", sent.iter().map(|r| label(r)).collect::<Vec<_>>().join(", ")));
     }
-    Ok((requests, text))
+    if !skipped.is_empty() {
+        parts.push(format!(
+            "pominięto (już powiadomieni o tym epizodzie na tym kanale): {}",
+            skipped.iter().map(|r| label(r)).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if !unknown.is_empty() {
+        parts.push(format!("pominięto nieznane osoby: {}", unknown.join(", ")));
+    }
+    parts.join("; ")
 }
 
 #[cfg(test)]
@@ -181,7 +210,7 @@ mod tests {
 
     #[test]
     fn escalate_creates_requests_for_team_members_with_team_preferences() {
-        let (reqs, summary) = build(&notice("escalate"), &params(json!({ "team": "counterparty-support" })), &snapshot(), Utc::now()).unwrap();
+        let (reqs, unknown) = build(&notice("escalate"), &params(json!({ "team": "counterparty-support" })), &snapshot(), Utc::now()).unwrap();
         assert_eq!(reqs.len(), 1);
         let r = &reqs[0];
         assert_eq!((r.person_id.as_str(), r.chain.first().copied(), r.chain.last().copied()), ("kasia", Some(Channel::Email), Some(Channel::Ui)));
@@ -189,14 +218,29 @@ mod tests {
         assert_eq!(r.contacts[&Channel::Email], "kasia@example.com");
         assert!(r.rendered[&Channel::Email].body.contains("http://localhost:5173/alerts/"));
         assert!(r.rendered[&Channel::Email].title.starts_with("Eskalacja"));
-        assert_eq!(summary, "powiadomiono: kasia (email)");
+        assert_eq!(summary(&reqs, &HashSet::new(), &unknown), "zlecono powiadomienie: kasia (email)");
     }
 
     #[test]
     fn notify_uses_personal_preferences_and_reports_unknown_people() {
-        let (reqs, summary) = build(&notice("notify"), &params(json!({ "people": ["anna", "ghost"] })), &snapshot(), Utc::now()).unwrap();
+        let (reqs, unknown) = build(&notice("notify"), &params(json!({ "people": ["anna", "ghost"] })), &snapshot(), Utc::now()).unwrap();
         assert_eq!(reqs.iter().map(|r| (r.person_id.as_str(), r.chain[0])).collect::<Vec<_>>(), [("anna", Channel::Sms)]);
-        assert!(summary.contains("pominięto nieznane osoby: ghost"), "{summary}");
+        let text = summary(&reqs, &HashSet::new(), &unknown);
+        assert!(text.contains("pominięto nieznane osoby: ghost"), "{text}");
+    }
+
+    #[test]
+    fn already_delivered_recipients_are_reported_as_skipped_not_notified() {
+        let (reqs, unknown) = build(&notice("notify"), &params(json!({ "people": ["anna", "kasia"] })), &snapshot(), Utc::now()).unwrap();
+        let anna = reqs.iter().find(|r| r.person_id == "anna").unwrap();
+        let already: HashSet<String> = [delivery_key(anna)].into();
+        let text = summary(&reqs, &already, &unknown);
+        assert!(text.starts_with("zlecono powiadomienie: kasia"), "{text}");
+        assert!(text.contains("pominięto (już powiadomieni o tym epizodzie na tym kanale): anna (sms)"), "{text}");
+
+        let all: HashSet<String> = reqs.iter().map(delivery_key).collect();
+        let text = summary(&reqs, &all, &unknown);
+        assert!(text.starts_with("nikogo nie powiadomiono; pominięto"), "{text}");
     }
 
     #[test]
