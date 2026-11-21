@@ -10,7 +10,7 @@ export default function SessionBar() {
     <Stack space="space.100">
       <div>
         <Text size="small" color="color.text.subtle">
-          Zalogowano jako:
+          Signed in as:
         </Text>
         <div>
           <Text weight="semibold">{personName ?? personId ?? "—"}</Text>
@@ -18,7 +18,7 @@ export default function SessionBar() {
       </div>
       {personId && (
         <Button appearance="subtle" onClick={() => void logout()}>
-          Wyloguj się
+          Sign out
         </Button>
       )}
     </Stack>

@@ -112,11 +112,11 @@ export async function checkSession(): Promise<void> {
 export async function loginWithPassword(username: string, password: string): Promise<void> {
   const cleanUser = username.trim().toLowerCase();
   if (!cleanUser || !password) {
-    throw new Error("Podaj login oraz hasło.");
+    throw new Error("Please enter both username and password.");
   }
   if (backend === "mock") {
     if (password !== "haslo") {
-      throw new Error("Nieprawidłowy login lub hasło.");
+      throw new Error("Invalid username or password.");
     }
     personId = cleanUser;
     personName = cleanUser;
@@ -133,7 +133,7 @@ export async function loginWithPassword(username: string, password: string): Pro
   });
   if (!res.ok) {
     const errBody = (await res.json().catch(() => null)) as { detail?: string; error?: string } | null;
-    throw new Error(errBody?.detail || errBody?.error || "Nieprawidłowy login lub hasło.");
+    throw new Error(errBody?.detail || errBody?.error || "Invalid username or password.");
   }
   const data = (await res.json()) as { person_id: string; name?: string; session_token?: string };
   personId = data.person_id;

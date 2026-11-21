@@ -39,17 +39,17 @@ export default function Runbooks({
       }),
     );
     setBusy(null);
-    flag(err, `Komenda „${cmd}” dla kroku ${step} wykonana`, `Komenda „${cmd}” dla kroku ${step} nie powiodła się`);
+    flag(err, `Command "${cmd}" executed for step ${step}`, `Command "${cmd}" failed for step ${step}`);
     if (!err) onChanged();
   }
 
   const blocked = busy !== null || !personId;
-  const hint = personId ? undefined : "Wybierz osobę w polu „Działam jako”";
+  const hint = personId ? undefined : "Sign in to execute steps";
 
   return (
-    <Card title="Runbooki" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
+    <Card title="Runbooks" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
       {!resource.loading && !resource.error && runbooks.length === 0 && (
-        <Empty>Żaden runbook nie pasuje do tego alertu.</Empty>
+        <Empty>No runbooks match this alert.</Empty>
       )}
       {runbooks.map((rb) => (
         <article key={rb.runbook_id} className="ad-runbook">
@@ -59,7 +59,7 @@ export default function Runbooks({
           </header>
           {rb.kind === "manual" && rb.body && <Markdown source={rb.body} />}
           {rb.kind === "automatic" && rb.steps.length === 0 && (
-            <Text as="p" color="color.text.subtle">Runbook bez kroków.</Text>
+            <Text as="p" color="color.text.subtle">Runbook has no steps.</Text>
           )}
           {rb.steps.length > 0 && (
             <ol className="ad-steps">
@@ -76,23 +76,23 @@ export default function Runbooks({
                       <StepStatusBadge status={s.status} />
                       <span className="ad-step-text">{s.text}</span>
                     </div>
-                    {s.note && <div className="ad-step-result">Notatka: {s.note}</div>}
+                    {s.note && <div className="ad-step-result">Note: {s.note}</div>}
 
                     {s.status === "waiting_approval" && (
                       <div className="ad-step-actions">
-                        <Link to={approvalTarget}>Przejdź do zatwierdzenia →</Link>
+                        <Link to={approvalTarget}>Go to approval →</Link>
                       </div>
                     )}
                     {runId && s.status === "failed" && (
                       <div className="ad-step-actions">
                         <Button spacing="compact" isLoading={busy === `${key}/retry`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "retry")}>
-                          Ponów
+                          Retry
                         </Button>
                         <Button spacing="compact" isLoading={busy === `${key}/skip`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "skip")}>
-                          Pomiń
+                          Skip
                         </Button>
                         <Button spacing="compact" isLoading={busy === `${key}/manual_mode`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "manual_mode")}>
-                          Tryb ręczny
+                          Manual mode
                         </Button>
                       </div>
                     )}
@@ -100,18 +100,18 @@ export default function Runbooks({
                       <div className="ad-step-actions">
                         <div className="ad-note">
                           <TextInput
-                            aria-label={`Notatka do kroku ${i + 1}`}
-                            placeholder="Notatka (opcjonalnie)"
+                            aria-label={`Note for step ${i + 1}`}
+                            placeholder="Note (optional)"
                             value={notes[key] ?? ""}
                             onChange={(e) => setNotes((n) => ({ ...n, [key]: e.currentTarget.value }))}
                             isDisabled={busy !== null}
                           />
                         </div>
                         <Button appearance="primary" spacing="compact" isLoading={busy === `${key}/done`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "done")}>
-                          Zrobione
+                          Mark done
                         </Button>
                         <Button spacing="compact" isLoading={busy === `${key}/skip`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "skip")}>
-                          Pomiń
+                          Skip
                         </Button>
                       </div>
                     )}

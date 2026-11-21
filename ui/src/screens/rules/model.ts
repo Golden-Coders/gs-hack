@@ -9,17 +9,17 @@ export type Severity = Schemas["Severity"];
 export type Recipient = Schemas["Recipient"];
 
 export const OPS: { op: Op; label: string; hint?: string }[] = [
-  { op: "eq", label: "równa się" },
-  { op: "ne", label: "jest różne od" },
-  { op: "in", label: "jest jedną z wartości", hint: "wartości oddzielone przecinkami, np. TIMEOUT, REJECTED" },
-  { op: "gt", label: "jest większe niż", hint: "liczba" },
-  { op: "gte", label: "jest większe lub równe", hint: "liczba" },
-  { op: "lt", label: "jest mniejsze niż", hint: "liczba" },
-  { op: "lte", label: "jest mniejsze lub równe", hint: "liczba" },
-  { op: "contains", label: "zawiera" },
-  { op: "regex", label: "pasuje do wyrażenia regularnego", hint: "np. ^payments-.*" },
-  { op: "exists", label: "istnieje" },
-  { op: "glob", label: "pasuje do wzorca", hint: "* zastępuje dowolny tekst, np. trade.rejected.*" },
+  { op: "eq", label: "equals" },
+  { op: "ne", label: "does not equal" },
+  { op: "in", label: "is one of", hint: "comma-separated values, e.g. TIMEOUT, REJECTED" },
+  { op: "gt", label: "greater than", hint: "number" },
+  { op: "gte", label: "greater than or equal", hint: "number" },
+  { op: "lt", label: "less than", hint: "number" },
+  { op: "lte", label: "less than or equal", hint: "number" },
+  { op: "contains", label: "contains" },
+  { op: "regex", label: "matches regex", hint: "e.g. ^payments-.*" },
+  { op: "exists", label: "exists" },
+  { op: "glob", label: "matches pattern", hint: "* matches any text, e.g. trade.rejected.*" },
 ];
 
 export const OP_LABEL: Record<string, string> = Object.fromEntries(OPS.map((o) => [o.op, o.label]));
@@ -34,13 +34,13 @@ export const SEVERITIES: { value: Severity; label: string }[] = [
 ];
 
 const COLOR_LABELS: Record<PaletteName, string> = {
-  red: "czerwony",
-  orange: "pomarańczowy",
-  yellow: "żółty",
-  green: "zielony",
-  blue: "niebieski",
-  purple: "fioletowy",
-  gray: "szary",
+  red: "red",
+  orange: "orange",
+  yellow: "yellow",
+  green: "green",
+  blue: "blue",
+  purple: "purple",
+  gray: "gray",
 };
 export const COLORS: { value: PaletteName; label: string }[] = PALETTE_NAMES.map((value) => ({ value, label: COLOR_LABELS[value] }));
 const COLOR_SET: ReadonlySet<string> = new Set(PALETTE_NAMES);
@@ -287,15 +287,15 @@ export interface FormErrors {
 function templateError(t: string): string | undefined {
   const open = (t.match(/\{\{/g) ?? []).length;
   const close = (t.match(/\}\}/g) ?? []).length;
-  return open !== close ? "Niedomknięte {{ }} w szablonie" : undefined;
+  return open !== close ? "Unclosed {{ }} in template" : undefined;
 }
 
 export function validateForm(f: RuleForm, isNew: boolean): FormErrors {
   const e: FormErrors = { leaves: {}, groups: {}, warnings: {}, count: 0 };
-  if (!f.name.trim()) e.name = "Podaj nazwę reguły";
-  if (!f.id.trim()) e.id = "Podaj identyfikator";
-  else if (isNew && !/^[a-z0-9][a-z0-9_-]*$/.test(f.id)) e.id = "Tylko małe litery, cyfry, myślnik i podkreślenie";
-  if (f.recipients.length === 0) e.recipients = "Wybierz co najmniej jednego odbiorcę";
+  if (!f.name.trim()) e.name = "Enter a rule name";
+  if (!f.id.trim()) e.id = "Enter an identifier";
+  else if (isNew && !/^[a-z0-9][a-z0-9_-]*$/.test(f.id)) e.id = "Only lowercase letters, digits, hyphens, and underscores";
+  if (f.recipients.length === 0) e.recipients = "Select at least one recipient";
   const te = templateError(f.title);
   if (te) e.title = te;
   const be = templateError(f.body);
@@ -306,43 +306,43 @@ export function validateForm(f: RuleForm, isNew: boolean): FormErrors {
       const le: LeafError = { kind: "required" };
       let bad = false;
       if (!n.field.trim()) {
-        le.field = "Wybierz pole";
+        le.field = "Select a field";
         bad = true;
       }
       if (n.op !== "exists") {
         const text = n.value;
         if (text.trim() === "") {
-          le.value = "Podaj wartość";
+          le.value = "Enter a value";
           bad = true;
         } else if (
           NUMERIC_OPS.has(n.op) &&
           !Number.isFinite(Number(text.trim())) &&
           !/^(info|warn|warning|error|crit|critical)$/i.test(text.trim())
         ) {
-          le.value = "Wpisz liczbę";
+          le.value = "Enter a number";
           le.kind = "format";
           bad = true;
         } else if (n.op === "regex") {
           try {
             new RegExp(text);
           } catch {
-            le.value = "Niepoprawne wyrażenie regularne";
+            le.value = "Invalid regular expression";
             le.kind = "format";
             bad = true;
           }
         } else if (n.op === "in" && (textToValue("in", text) as unknown[]).length === 0) {
-          le.value = "Podaj co najmniej jedną wartość";
+          le.value = "Enter at least one value";
           bad = true;
         }
       }
       if (bad) e.leaves[n.uid] = le;
     } else if (n.kind === "not") {
-      if (!n.child) e.groups[n.uid] = "Negacja musi zawierać warunek";
+      if (!n.child) e.groups[n.uid] = "Negation must contain a condition";
       else walk(n.child);
     } else {
       if (n.children.length === 0) {
         e.warnings[n.uid] =
-          n.kind === "all" ? "Pusta grupa jest zawsze spełniona" : "Pusta grupa nigdy nie jest spełniona";
+          n.kind === "all" ? "An empty group always matches" : "An empty group never matches";
       }
       n.children.forEach(walk);
     }

@@ -11,10 +11,10 @@ type Mapping = Schemas["MappingDef"];
 type Severity = Schemas["Severity"];
 
 const SEVERITY_OPTIONS: { value: Severity; label: string }[] = [
-  { value: "critical", label: "Krytyczny (critical)" },
-  { value: "error", label: "Błąd (error)" },
-  { value: "warning", label: "Ostrzeżenie (warning)" },
-  { value: "info", label: "Informacja (info)" },
+  { value: "critical", label: "Critical" },
+  { value: "error", label: "Error" },
+  { value: "warning", label: "Warning" },
+  { value: "info", label: "Info" },
 ];
 
 function stripJsonPath(p: string | null | undefined): string {
@@ -138,11 +138,11 @@ export default function MappingEditor({
     setError(null);
     const cleanSchema = schema.trim();
     if (!cleanSchema) {
-      setError("Podaj nazwę typu zdarzenia (schematu).");
+      setError("Enter an event schema name.");
       return;
     }
     if (sevMode === "path" && !sevPath.trim()) {
-      setError("Podaj nazwę pola z priorytetem (np. severity lub labels.severity).");
+      setError("Enter the field name containing severity (e.g. severity or labels.severity).");
       return;
     }
 
@@ -152,7 +152,7 @@ export default function MappingEditor({
       const p = f.path.trim();
       if (!n && !p) continue;
       if (!n || !p) {
-        setError("W sekcji dodatkowych pól uzupełnij zarówno nazwę, jak i pole ze zdarzenia.");
+        setError("In extra fields, fill in both the short name and the event field path.");
         return;
       }
       fieldsObj[n] = ensureJsonPath(p);
@@ -200,7 +200,7 @@ export default function MappingEditor({
         setError(describeError(apiErr, response));
       }
     } catch {
-      setError("Nie udało się połączyć z API.");
+      setError("Cannot connect to API.");
     } finally {
       setSaving(false);
     }
@@ -210,7 +210,7 @@ export default function MappingEditor({
     setSaving(true);
     setError(null);
     const err = await onDelete(initial.schema);
-    if (err) setError(`Nie udało się usunąć mappingu: ${err}`);
+    if (err) setError(`Failed to delete mapping: ${err}`);
     setSaving(false);
   }
 
@@ -218,13 +218,12 @@ export default function MappingEditor({
     <div className="mp-editor-clean">
       <header className="mp-editor-head">
         <Heading size="medium" as="h2">
-          {isNew ? (schema ? `Nowy mapping: ${schema}` : "Nowy mapping") : initial.schema}
+          {isNew ? (schema ? `New mapping: ${schema}` : "New mapping") : initial.schema}
         </Heading>
       </header>
 
-      {/* Jeśli mamy przykładowe zdarzenie (np. z UNMAPPED), pokazujemy klikalne pola */}
       {sampleFields.length > 0 && (
-        <Card title="Wykryte pola w przykładowym zdarzeniu (kliknij, aby użyć)">
+        <Card title="Detected fields in sample event (click to use)">
           <div className="mp-sample-chips">
             {sampleFields.map((sf) => (
               <div key={sf.path} className="mp-chip-row">
@@ -232,13 +231,13 @@ export default function MappingEditor({
                 <span className="mp-chip-val">{sf.preview}</span>
                 <div className="mp-chip-btns">
                   <Button spacing="compact" onClick={() => setTitle(sf.path)}>
-                    Jako tytuł
+                    Use as title
                   </Button>
                   <Button spacing="compact" onClick={() => addGroupField(sf.path)}>
-                    Do grupowania
+                    Use for grouping
                   </Button>
                   <Button spacing="compact" onClick={() => addExtraField(sf.path)}>
-                    Jako pole
+                    Add field
                   </Button>
                 </div>
               </div>
@@ -247,52 +246,52 @@ export default function MappingEditor({
         </Card>
       )}
 
-      {/* 1. Podstawowe informacje: Typ zdarzenia i Tytuł */}
-      <Card title="1. Typ zdarzenia i tytuł alertu">
+      {/* 1. Event type & alert title */}
+      <Card title="1. Event schema & alert title">
         <div className="mp-two-col">
-          <Field label="Nazwa typu zdarzenia (schema)">
+          <Field label="Event schema name">
             {(f) => (
               <TextInput
                 {...f}
                 value={schema}
                 isDisabled={!isNew && Boolean(initial.schema)}
                 onChange={(e) => setSchema(e.currentTarget.value)}
-                placeholder="np. orders.failed.v1"
+                placeholder="e.g. orders.failed.v1"
               />
             )}
           </Field>
           <Field
-            label="Skąd brać tytuł alertu?"
-            hint="Nazwa pola ze zdarzenia (np. error.message albo annotations.summary)"
+            label="Alert title field"
+            hint="Field name from the event (e.g. error.message or annotations.summary)"
           >
             {(f) => (
               <TextInput
                 {...f}
                 value={title}
                 onChange={(e) => setTitle(e.currentTarget.value)}
-                placeholder="np. error.message"
+                placeholder="e.g. error.message"
               />
             )}
           </Field>
         </div>
       </Card>
 
-      {/* 2. Priorytet alertu */}
-      <Card title="2. Jak ustalić priorytet alertu?">
+      {/* 2. Alert severity */}
+      <Card title="2. How should alert severity be determined?">
         <div className="mp-sev-mode">
           <Segmented
-            label="Sposób ustalania priorytetu"
+            label="Severity source"
             value={sevMode}
             onChange={(m) => setSevMode(m)}
             options={[
-              { value: "const", label: "Zawsze taki sam priorytet" },
-              { value: "path", label: "Odczytaj z pola w zdarzeniu" },
+              { value: "const", label: "Always the same severity" },
+              { value: "path", label: "Read from an event field" },
             ]}
           />
         </div>
 
         {sevMode === "const" ? (
-          <Field label="Priorytet dla wszystkich zdarzeń tego typu">
+          <Field label="Severity for all events of this schema">
             {(f) => (
               <Select
                 {...f}
@@ -304,17 +303,17 @@ export default function MappingEditor({
           </Field>
         ) : (
           <div className="mp-two-col">
-            <Field label="Pole z priorytetem w zdarzeniu" hint="np. severity lub labels.severity">
+            <Field label="Severity field in event" hint="e.g. severity or labels.severity">
               {(f) => (
                 <TextInput
                   {...f}
                   value={sevPath}
                   onChange={(e) => setSevPath(e.currentTarget.value)}
-                  placeholder="np. severity"
+                  placeholder="e.g. severity"
                 />
               )}
             </Field>
-            <Field label="Domyślny priorytet (gdy pole jest puste)">
+            <Field label="Default severity (when field is missing)">
               {(f) => (
                 <Select
                   {...f}
@@ -328,72 +327,72 @@ export default function MappingEditor({
         )}
       </Card>
 
-      {/* 3. Grupowanie duplikatów */}
-      <Card title="3. Po jakich polach łączyć powtarzające się alerty?">
+      {/* 3. Deduplication / grouping */}
+      <Card title="3. Which fields group duplicate alerts?">
         <Text as="p" size="small" color="color.text.subtle">
-          Zdarzenia z taką samą wartością tych pól zostaną połączone w jeden alert zamiast tworzyć duplikaty.
+          Events with matching values for these fields are merged into a single alert instead of creating duplicates.
         </Text>
         <div className="mp-field-list">
           {groupFields.map((g, idx) => (
             <div key={idx} className="mp-field-row">
               <div className="mp-grow">
-                <Field label={idx === 0 ? "Pole grupujące" : "Kolejne pole"}>
+                <Field label={idx === 0 ? "Grouping field" : "Additional field"}>
                   {(f) => (
                     <TextInput
                       {...f}
                       value={g}
                       onChange={(e) => updateGroupField(idx, e.currentTarget.value)}
-                      placeholder="np. labels.service lub workflowName"
+                      placeholder="e.g. labels.service or workflowName"
                     />
                   )}
                 </Field>
               </div>
               <div className="mp-row-btn">
                 <Button appearance="subtle" onClick={() => removeGroupField(idx)}>
-                  Usuń
+                  Remove
                 </Button>
               </div>
             </div>
           ))}
         </div>
         <div className="mp-add-btn">
-          <Button onClick={() => addGroupField("")}>+ Dodaj pole grupujące</Button>
+          <Button onClick={() => addGroupField("")}>+ Add grouping field</Button>
         </div>
       </Card>
 
-      {/* 4. Dodatkowe pola wyciągane do alertu i reguł */}
-      <Card title="4. Dodatkowe pola widoczne w alercie i regułach (opcjonalnie)">
+      {/* 4. Extra fields */}
+      <Card title="4. Extra fields for alerts and rules (optional)">
         {extraFields.length === 0 ? (
           <Text as="p" size="small" color="color.text.subtle">
-            Brak dodatkowych pól. Dodaj pole, jeśli chcesz po nim filtrować w regułach (np. service, desk, region).
+            No extra fields. Add fields you want to filter on in rules (e.g. service, desk, region).
           </Text>
         ) : (
           <div className="mp-field-list">
             {extraFields.map((ef, idx) => (
               <div key={ef.uid} className="mp-extra-row">
-                <Field label={idx === 0 ? "Krótka nazwa (np. service)" : "Krótka nazwa"}>
+                <Field label={idx === 0 ? "Short name (e.g. service)" : "Short name"}>
                   {(f) => (
                     <TextInput
                       {...f}
                       value={ef.name}
                       onChange={(e) => updateExtraField(ef.uid, { name: e.currentTarget.value })}
-                      placeholder="np. service"
+                      placeholder="e.g. service"
                     />
                   )}
                 </Field>
-                <Field label={idx === 0 ? "Ścieżka w zdarzeniu (np. labels.service)" : "Ścieżka w zdarzeniu"}>
+                <Field label={idx === 0 ? "Path in event (e.g. labels.service)" : "Path in event"}>
                   {(f) => (
                     <TextInput
                       {...f}
                       value={ef.path}
                       onChange={(e) => updateExtraField(ef.uid, { path: e.currentTarget.value })}
-                      placeholder="np. labels.service"
+                      placeholder="e.g. labels.service"
                     />
                   )}
                 </Field>
                 <div className="mp-row-btn">
                   <Button appearance="subtle" onClick={() => removeExtraField(ef.uid)}>
-                    Usuń
+                    Remove
                   </Button>
                 </div>
               </div>
@@ -401,7 +400,7 @@ export default function MappingEditor({
           </div>
         )}
         <div className="mp-add-btn">
-          <Button onClick={() => addExtraField("")}>+ Dodaj pole</Button>
+          <Button onClick={() => addExtraField("")}>+ Add field</Button>
         </div>
       </Card>
 
@@ -409,13 +408,13 @@ export default function MappingEditor({
 
       <div className="mp-savebar">
         <Button appearance="primary" isLoading={saving} isDisabled={saving} onClick={() => void handleSave()}>
-          {isNew ? "Utwórz mapping" : "Zapisz zmiany"}
+          {isNew ? "Create mapping" : "Save changes"}
         </Button>
         {!isNew && (
           <ConfirmInline
-            label="Usuń mapping"
-            question={`Usunąć mapping „${initial.schema}”?`}
-            confirmLabel="Tak, usuń"
+            label="Delete mapping"
+            question={`Delete mapping "${initial.schema}"?`}
+            confirmLabel="Yes, delete"
             busy={saving}
             onConfirm={() => void handleConfirmDelete()}
           />

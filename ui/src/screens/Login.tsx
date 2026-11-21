@@ -20,7 +20,7 @@ export default function Login() {
     try {
       await loginWithPassword(username, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nie udało się zalogować.");
+      setError(err instanceof Error ? err.message : "Sign in failed.");
     } finally {
       setBusy(false);
     }
@@ -36,26 +36,26 @@ export default function Login() {
                 AlertHub
               </Heading>
               <Text as="p" color="color.text.subtle">
-                Zaloguj się na swoje konto operatora
+                Sign in to your operator account
               </Text>
             </div>
 
             {error && <ErrorBox message={error} />}
 
-            <Field label="Login (nick)">
+            <Field label="Username">
               {(f) => (
                 <TextInput
                   {...f}
                   value={username}
                   onChange={(e) => setUsername(e.currentTarget.value)}
-                  placeholder="np. anna, jan, krzysztof..."
+                  placeholder="e.g. anna, jan, krzysztof..."
                   autoComplete="username"
                   autoFocus
                 />
               )}
             </Field>
 
-            <Field label="Hasło">
+            <Field label="Password">
               {(f) => (
                 <TextInput
                   {...f}
@@ -74,7 +74,7 @@ export default function Login() {
               isLoading={busy}
               isDisabled={busy || !username.trim() || !password}
             >
-              Zaloguj się
+              Sign in
             </Button>
           </form>
         </Card>

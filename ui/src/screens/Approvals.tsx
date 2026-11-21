@@ -30,12 +30,12 @@ function formatSince(iso: string): string {
   const min = Math.floor(ms / 60_000);
   const ago =
     min < 1
-      ? "przed chwilą"
+      ? "just now"
       : min < 60
-        ? `${min} min temu`
+        ? `${min}m ago`
         : min < 48 * 60
-          ? `${Math.floor(min / 60)} h ${min % 60} min temu`
-          : `${Math.floor(min / (24 * 60))} dni temu`;
+          ? `${Math.floor(min / 60)}h ${min % 60}m ago`
+          : `${Math.floor(min / (24 * 60))}d ago`;
   return `${ago} (${formatTime(iso)})`;
 }
 
@@ -46,21 +46,21 @@ function RejectDialog({ steps, onCancel, onConfirm }: { steps: Pending[]; onCanc
   return (
     <ModalDialog onClose={onCancel} width="small" autoFocus={cancelRef}>
       <ModalHeader hasCloseButton>
-        <ModalTitle appearance="danger">{one ? "Odrzucić ten krok?" : `Odrzucić ${stepsLabel(steps.length)}?`}</ModalTitle>
+        <ModalTitle appearance="danger">{one ? "Reject this step?" : `Reject ${stepsLabel(steps.length)}?`}</ModalTitle>
       </ModalHeader>
       <ModalBody>
         <Text as="p">
           {one
-            ? `„${steps[0]?.text}” zostanie odrzucony; runbook nie wykona tego kroku.`
-            : `Odrzucenie obejmie ${stepsLabel(steps.length)} z różnych runbooków. Tej decyzji nie da się cofnąć.`}
+            ? `"${steps[0]?.text}" will be rejected; the runbook will not execute this step.`
+            : `Rejection will apply to ${stepsLabel(steps.length)} across runbooks. This action cannot be undone.`}
         </Text>
       </ModalBody>
       <ModalFooter>
         <Button appearance="subtle" ref={cancelRef} onClick={onCancel}>
-          Anuluj
+          Cancel
         </Button>
         <Button appearance="danger" onClick={onConfirm}>
-          {one ? "Odrzuć krok" : `Odrzuć ${stepsLabel(steps.length)}`}
+          {one ? "Reject step" : `Reject ${stepsLabel(steps.length)}`}
         </Button>
       </ModalFooter>
     </ModalDialog>
@@ -120,7 +120,7 @@ export default function Approvals() {
       onStep: (r) => {
         if (r.ok) setDecidedAt((cur) => ({ ...cur, [r.key]: Date.now() }));
         else {
-          setRowErrors((cur) => ({ ...cur, [r.key]: r.message ?? "Błąd" }));
+          setRowErrors((cur) => ({ ...cur, [r.key]: r.message ?? "Error" }));
           const step = byKey.get(r.key);
           if (step) setFailed((cur) => ({ ...cur, [r.key]: step }));
         }
@@ -129,16 +129,16 @@ export default function Approvals() {
     setBusy((cur) => new Set([...cur].filter((k) => !keys.includes(k))));
     if (!outcome.sent) {
       if (outcome.reason === "no-identity") {
-        showFlag({ title: "Wybierz tożsamość", description: "Bez „działam jako” API nie przyjmie decyzji.", appearance: "warning", isAutoDismiss: true });
+        showFlag({ title: "Sign in required", description: "You must be signed in to submit decisions.", appearance: "warning", isAutoDismiss: true });
       }
       return;
     }
     if (outcome.results.some((r) => r.status === 409 || r.status === 404)) list.refresh();
     if (outcome.failCount > 0) {
-      const verb = command === "approve" ? "Zatwierdzono" : "Odrzucono";
+      const verb = command === "approve" ? "Approved" : "Rejected";
       showFlag({
-        title: `${verb} ${outcome.okCount} z ${steps.length}`,
-        description: `Nie udało się: ${stepsLabel(outcome.failCount)} — szczegóły przy wierszach.`,
+        title: `${verb} ${outcome.okCount} of ${steps.length}`,
+        description: `Failed: ${stepsLabel(outcome.failCount)} — see details below.`,
         appearance: outcome.okCount === 0 ? "error" : "warning",
         isAutoDismiss: false,
       });
@@ -167,13 +167,13 @@ export default function Approvals() {
 
   return (
     <section className="approvals">
-      <PageHeader actions={<Button onClick={list.reload}>Odśwież</Button>}>Kolejka zatwierdzeń</PageHeader>
+      <PageHeader actions={<Button onClick={list.reload}>Refresh</Button>}>Approval Queue</PageHeader>
       <Text as="p" color="color.text.subtle">
-        Kroki runbooków czekające na decyzję człowieka. Zatwierdzenie jest możliwe tylko tutaj
+        Runbook steps waiting for human decision. Approvals are recorded exclusively here
         {personId ? (
           <>
             {" "}
-            — decyzję zapiszemy jako <Text as="strong" weight="bold">{personId}</Text>.
+            — decisions will be recorded as <Text as="strong" weight="bold">{personId}</Text>.
           </>
         ) : (
           "."
@@ -181,19 +181,19 @@ export default function Approvals() {
       </Text>
 
       {!personId && (
-        <ErrorBox message="Wybierz tożsamość („działam jako” w panelu bocznym), aby zatwierdzać i odrzucać kroki." />
+        <ErrorBox message="Sign in to approve or reject steps." />
       )}
       {list.error && (
-        <ErrorBox message={`Nie udało się pobrać kolejki zatwierdzeń: ${list.error}`} onRetry={list.reload} disabled={list.loading} />
+        <ErrorBox message={`Failed to load approval queue: ${list.error}`} onRetry={list.reload} disabled={list.loading} />
       )}
 
-      {items === null && !list.error && <ListSkeleton label="Ładowanie kolejki zatwierdzeń…" />}
+      {items === null && !list.error && <ListSkeleton label="Loading approval queue…" />}
       {items?.length === 0 && (
-        <EmptyList header="Brak kroków do zatwierdzenia" description="Kroki runbooków czekające na człowieka pojawią się tu same." />
+        <EmptyList header="No pending approvals" description="Runbook steps waiting for human approval will appear here automatically." />
       )}
 
       {items && items.length > 0 && (
-        <ul className="approvals-list" aria-label="Kroki oczekujące na zatwierdzenie">
+        <ul className="approvals-list" aria-label="Steps pending approval">
           {items.map((a) => {
             const key = keyOf(a);
             const isBusy = busy.has(key);
@@ -227,11 +227,11 @@ export default function Approvals() {
                       <dd>{a.runbook_title}</dd>
                     </div>
                     <div>
-                      <dt>Akcja</dt>
-                      <dd>{a.action ? <Code>{a.action}</Code> : <Text color="color.text.subtle">brak (krok ręczny)</Text>}</dd>
+                      <dt>Action</dt>
+                      <dd>{a.action ? <Code>{a.action}</Code> : <Text color="color.text.subtle">none (manual step)</Text>}</dd>
                     </div>
                     <div>
-                      <dt>Czeka od</dt>
+                      <dt>Waiting since</dt>
                       <dd>{formatSince(a.waiting_since)}</dd>
                     </div>
                   </dl>
@@ -239,20 +239,20 @@ export default function Approvals() {
                     <>
                       <ErrorBox message={rowErrors[key]} />
                       <Button appearance="subtle" onClick={() => dismissError(key)}>
-                        Zamknij komunikat
+                        Dismiss
                       </Button>
                     </>
                   )}
                 </div>
                 <div className="approval-actions">
-                  <Tooltip content="Zatwierdź (a)">
+                  <Tooltip content="Approve (a)">
                     <Button appearance="primary" isLoading={isBusy} isDisabled={!personId} onClick={() => void decide([a], "approve")}>
-                      {isBusy ? "Wysyłanie…" : "Zatwierdź"}
+                      {isBusy ? "Sending…" : "Approve"}
                     </Button>
                   </Tooltip>
-                  <Tooltip content="Odrzuć (r)">
+                  <Tooltip content="Reject (r)">
                     <Button isDisabled={!personId || isBusy} onClick={() => setRejecting([a])}>
-                      Odrzuć
+                      Reject
                     </Button>
                   </Tooltip>
                 </div>

@@ -75,26 +75,26 @@ export function validate(f: FormState, opts: { isNew: boolean; originalName?: st
   const e: FieldErrors = {};
   const name = f.name.trim();
   const isRenamed = !opts.isNew && opts.originalName !== undefined && name !== opts.originalName;
-  if (!name) e.name = "Podaj nazwę akcji.";
+  if (!name) e.name = "Enter an action name.";
   else if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name))
-    e.name = "Nazwa: litery, cyfry, „_” i „-”, zaczyna się od litery (np. flush_cache).";
+    e.name = "Name must start with a letter and use only letters, digits, '_' and '-' (e.g. flush_cache).";
   else if ((opts.isNew || isRenamed) && (RESERVED_NAMES.includes(name) || opts.takenNames.has(name)))
-    e.name = "Akcja o tej nazwie już istnieje (albo nazwa jest zarezerwowana).";
+    e.name = "An action with this name already exists (or the name is reserved).";
 
   const url = f.url.trim();
-  if (!url) e.url = "Podaj adres URL (szablon).";
-  else if (!/^https?:\/\//i.test(url)) e.url = "URL musi zaczynać się od http:// lub https://.";
+  if (!url) e.url = "Enter a URL (template).";
+  else if (!/^https?:\/\//i.test(url)) e.url = "URL must start with http:// or https://.";
 
-  if (!/^\d+$/.test(f.timeout.trim()) || Number(f.timeout) < 1) e.timeout = "Timeout: dodatnia liczba milisekund.";
-  else if (Number(f.timeout) > 300_000) e.timeout = "Timeout może mieć najwyżej 300000 ms.";
+  if (!/^\d+$/.test(f.timeout.trim()) || Number(f.timeout) < 1) e.timeout = "Timeout must be a positive number of milliseconds.";
+  else if (Number(f.timeout) > 300_000) e.timeout = "Timeout cannot exceed 300000 ms.";
 
   const seen = new Set<string>();
   for (const h of f.headers) {
     const k = h.name.trim().toLowerCase();
     if (!k && !h.value.trim()) continue;
-    if (!k) e.headers = "Nagłówek bez nazwy.";
-    else if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(k)) e.headers = `Niepoprawna nazwa nagłówka: ${h.name}.`;
-    else if (seen.has(k)) e.headers = `Nagłówek ${h.name} występuje więcej niż raz.`;
+    if (!k) e.headers = "Header name cannot be empty.";
+    else if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(k)) e.headers = `Invalid header name: ${h.name}.`;
+    else if (seen.has(k)) e.headers = `Duplicate header: ${h.name}.`;
     seen.add(k);
   }
 
@@ -102,9 +102,9 @@ export function validate(f: FormState, opts: { isNew: boolean; originalName?: st
     try {
       const parsed: unknown = JSON.parse(f.paramsSchema);
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
-        e.paramsSchema = "Schemat parametrów musi być obiektem JSON (JSON Schema).";
+        e.paramsSchema = "Parameter schema must be a JSON object (JSON Schema).";
     } catch {
-      e.paramsSchema = "Niepoprawny JSON.";
+      e.paramsSchema = "Invalid JSON.";
     }
   }
   return e;

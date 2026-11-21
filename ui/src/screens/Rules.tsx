@@ -53,7 +53,7 @@ export default function Rules() {
 
   const select = useCallback(
     (next: { rule?: string; creating?: boolean }) => {
-      if (dirty && !window.confirm("Masz niezapisane zmiany w regule. Odrzucić je?")) return;
+      if (dirty && !window.confirm("You have unsaved changes in this rule. Discard them?")) return;
       setDirty(false);
       setParams(next.creating ? { new: "1" } : next.rule ? { rule: next.rule } : {});
     },
@@ -84,18 +84,18 @@ export default function Rules() {
       <PageHeader
         actions={
           <Button appearance="primary" iconBefore={PlusIcon} onClick={() => select({ creating: true })}>
-            Nowa reguła
+            New rule
           </Button>
         }
       >
-        Reguły
+        Rules
       </PageHeader>
       {resource.error && <ErrorBox message={resource.error} onRetry={resource.reload} disabled={resource.loading} />}
 
       <div className="rules-layout">
-        <div className="rules-list" role="region" aria-label="Lista reguł">
+        <div className="rules-list" role="region" aria-label="Rule list">
           {rules === null && !resource.error && <Loading />}
-          {rules?.length === 0 && <Empty>Brak reguł. Kliknij „Nowa reguła”.</Empty>}
+          {rules?.length === 0 && <Empty>No rules yet. Click "New rule".</Empty>}
           <ul>
             {rules?.map((r) => (
               <li key={r.id}>
@@ -108,7 +108,7 @@ export default function Rules() {
                 >
                   <span className="rules-item-name">{r.name}</span>
                   <Text size="small" color="color.text.subtle">
-                    → {recipientsLabel(r, people, teams) || "brak odbiorców"}
+                    → {recipientsLabel(r, people, teams) || "no recipients"}
                   </Text>
                 </button>
               </li>
@@ -142,7 +142,7 @@ export default function Rules() {
             />
           )}
           {!creating && !selected && rules !== null && (
-            <Empty>Wybierz regułę z listy po lewej stronie albo kliknij „Nowa reguła”.</Empty>
+            <Empty>Select a rule from the list on the left or click "New rule".</Empty>
           )}
         </div>
       </div>

@@ -59,7 +59,7 @@ export function Card({
                   {title}
                 </Heading>
               )}
-              {loading && <Spinner size="small" label="ładowanie…" />}
+              {loading && <Spinner size="small" label="loading…" />}
             </Inline>
             {actions && (
               <Inline space="space.100" alignBlock="center" shouldWrap>
@@ -84,7 +84,7 @@ export function ErrorBox({ message, onRetry, disabled }: { message: string; onRe
           {onRetry && (
             <Inline>
               <Button onClick={onRetry} isDisabled={disabled}>
-                Spróbuj ponownie
+                Try again
               </Button>
             </Inline>
           )}
@@ -110,7 +110,7 @@ export function Empty({ children }: { children: ReactNode }) {
   );
 }
 
-export function Loading({ children = "Ładowanie…" }: { children?: ReactNode }) {
+export function Loading({ children = "Loading…" }: { children?: ReactNode }) {
   return (
     <div role="status">
       <Inline space="space.100" alignBlock="center">
@@ -142,7 +142,7 @@ export function useRerenderOnMount(onSettled?: () => void) {
 }
 
 /** Szkielet listy na czas pierwszego ładowania (zajmuje mniej więcej tyle miejsca co wiersze). */
-export function ListSkeleton({ rows = 5, label = "Ładowanie…" }: { rows?: number; label?: string }) {
+export function ListSkeleton({ rows = 5, label = "Loading…" }: { rows?: number; label?: string }) {
   return (
     <div role="status" aria-label={label}>
       <Stack space="space.100">
@@ -280,7 +280,7 @@ export function ConfirmInline({
         {confirmLabel}
       </Button>
       <Button appearance="subtle" onClick={() => setAsking(false)} isDisabled={busy} autoFocus>
-        Anuluj
+        Cancel
       </Button>
     </span>
   );
@@ -289,7 +289,7 @@ export function ConfirmInline({
 const CopyIcon = adsIcon(Copy);
 
 /** Kopiowanie tekstu do schowka z informacją o wyniku dla czytników ekranu. */
-export function CopyButton({ text, label = "Kopiuj" }: { text: string; label?: string }) {
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [status, setStatus] = useState<"idle" | "ok" | "failed">("idle");
   async function copy() {
     try {
@@ -312,7 +312,7 @@ export function CopyButton({ text, label = "Kopiuj" }: { text: string; label?: s
       <span role="status">
         {status !== "idle" && (
           <Text size="small" color={status === "ok" ? "color.text.success" : "color.text.danger"}>
-            {status === "ok" ? "Skopiowano" : "Nie udało się skopiować"}
+            {status === "ok" ? "Copied" : "Failed to copy"}
           </Text>
         )}
       </span>

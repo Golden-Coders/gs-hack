@@ -55,7 +55,7 @@ function Node(p: NodeProps) {
       <li className={`ptree-leaf${labels?.length ? " used" : ""}`}>
         <Pressable
           onClick={() => onSelect(path, value)}
-          aria-label={`${actionLabel ?? "Wybierz"}: ${path.join(".")}, wartość ${preview(value)}`}
+          aria-label={`${actionLabel ?? "Select"}: ${path.join(".")}, value ${preview(value)}`}
         >
           <span className="ptree-key">{display}</span>
           <span className={`ptree-val ptree-${value === null ? "null" : typeof value}`} title={String(value)}>
@@ -85,7 +85,7 @@ function Node(p: NodeProps) {
                 onSelect(path, value);
               }}
             >
-              Wybierz
+              Select
             </Button>
           )}
           <Marks labels={labels} />
@@ -97,7 +97,7 @@ function Node(p: NodeProps) {
           {entries.length > shown.length && (
             <li>
               <Button spacing="compact" appearance="subtle" onClick={() => setLimit(limit + PAGE)}>
-                Pokaż więcej (jeszcze {entries.length - shown.length})
+                Show more ({entries.length - shown.length} remaining)
               </Button>
             </li>
           )}
@@ -111,7 +111,7 @@ export default function PayloadTree({ value, onSelect, marks, actionLabel, selec
   if (value === null || typeof value !== "object") {
     return (
       <Text as="p" color="color.text.subtle">
-        Payload nie jest obiektem ani tablicą – nie ma pól do wyboru.
+        Payload is not an object or array — no selectable fields.
       </Text>
     );
   }

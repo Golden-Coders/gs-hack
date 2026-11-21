@@ -55,13 +55,13 @@ export default function AlertDetail() {
   return (
     <section className="alert-detail">
       <div className="ad-back">
-        <Link to="/">← Wszystkie alerty</Link>
+        <Link to="/">← All alerts</Link>
       </div>
 
       {alert.error && (
-        <ErrorBox message={`Nie udało się pobrać alertu: ${alert.error}`} onRetry={alert.reload} disabled={alert.loading} />
+        <ErrorBox message={`Failed to load alert: ${alert.error}`} onRetry={alert.reload} disabled={alert.loading} />
       )}
-      {!a && alert.loading && <Loading>Ładowanie alertu…</Loading>}
+      {!a && alert.loading && <Loading>Loading alert…</Loading>}
 
       {a && (
         <>
@@ -90,7 +90,7 @@ function AlertActions({
     const params = { path: { alert_id: a.id }, header: asPerson() };
     const err = await send(() => api.POST("/alerts/{alert_id}/resolve", { params }));
     setBusy(false);
-    flag(err, "Rozwiązano alert", "Nie udało się rozwiązać alertu");
+    flag(err, "Alert resolved", "Failed to resolve alert");
     if (!err) onResolved();
   }
 
@@ -103,12 +103,12 @@ function AlertActions({
           appearance="primary"
           isLoading={busy}
           isDisabled={busy || noPerson || resolved}
-          title={noPerson ? "Wybierz osobę w polu „Działam jako”" : undefined}
+          title={noPerson ? "Sign in to act on this alert" : undefined}
           onClick={() => void resolve()}
         >
-          Rozwiąż alert
+          Resolve alert
         </Button>
-        {noPerson && <Text color="color.text.subtle">Wybierz osobę w polu „Działam jako”, aby działać na alercie.</Text>}
+        {noPerson && <Text color="color.text.subtle">Sign in to take action on this alert.</Text>}
       </div>
     </div>
   );

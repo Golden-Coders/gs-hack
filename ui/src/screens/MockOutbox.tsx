@@ -19,29 +19,29 @@ type TierConfig = {
 const TIERS: TierConfig[] = [
   {
     id: "critical",
-    title: "Krytyczne (critical)",
+    title: "Critical",
     badge: "critical",
-    description: "Natychmiastowe powiadomienie dla najpoważniejszych awarii.",
+    description: "Immediate notifications for high-impact outages.",
   },
   {
     id: "medium",
-    title: "Średnie",
+    title: "Medium",
     badge: "warning",
-    description: "Ostrzeżenia i błędy wymagające reakcji zespołu.",
+    description: "Warnings and errors requiring team attention.",
   },
   {
     id: "other",
-    title: "Pozostałe",
+    title: "Other",
     badge: "info",
-    description: "Zwykłe zdarzenia informacyjne i niskiego priorytetu.",
+    description: "Informational and low-priority events.",
   },
 ];
 
 const CHANNELS: { id: ChannelId; label: string }[] = [
   { id: "sms", label: "SMS" },
-  { id: "phone", label: "Telefon" },
-  { id: "email", label: "E-mail" },
-  { id: "ui", label: "Na stronę" },
+  { id: "phone", label: "Phone" },
+  { id: "email", label: "Email" },
+  { id: "ui", label: "Web UI" },
 ];
 
 type Matrix = Record<TierId, Record<ChannelId, boolean>>;
@@ -98,10 +98,10 @@ export default function MockOutbox() {
 
   return (
     <section className="mock-outbox">
-      <PageHeader>Kanały powiadomień (SMS / telefon / e-mail)</PageHeader>
+      <PageHeader>Notification Channels</PageHeader>
 
-      <Card title="Dostępność kanałów dla typów powiadomień">
-        <ul className="tier-list" aria-label="Kanały powiadomień dla poszczególnych typów alertów">
+      <Card title="Channel availability by alert severity">
+        <ul className="tier-list" aria-label="Notification channels per alert severity">
           {TIERS.map((t) => (
             <li key={t.id} className="tier-card">
               <div className="tier-info">

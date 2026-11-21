@@ -61,7 +61,7 @@ interface Props {
 
 function apiMessage(error: unknown, response: Response): string {
   const line = (error as { line?: number | null } | undefined)?.line;
-  return `${describeError(error, response)}${line ? ` (linia ${line})` : ""}`;
+  return `${describeError(error, response)}${line ? ` (line ${line})` : ""}`;
 }
 
 export default function RuleEditor({ initial, people, teams, onSaved, onDeleted, onDirtyChange }: Props) {
@@ -90,7 +90,7 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
     setForm((f) => ({
       ...f,
       name,
-      id: isNew ? slugify(name) || "nowa-regula" : f.id,
+      id: isNew ? slugify(name) || "new-rule" : f.id,
     }));
 
   const leaves: LeafNode[] = useMemo(() => {
@@ -177,10 +177,10 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
         const targetId = outcome.target_rule_id ?? initial?.id;
         if (targetId) {
           const err = await send(() => api.DELETE("/rules/{rule_id}", { params: { path: { rule_id: targetId } } }));
-          if (err) setAiError(`Nie udało się usunąć reguły (${err}).`);
+          if (err) setAiError(`Failed to delete rule (${err}).`);
           else onDeleted(targetId);
         } else {
-          setAiError("Model wywołał delete_rule, ale nie wskazano reguły do usunięcia.");
+          setAiError("Model called delete_rule, but no target rule was specified.");
         }
         return;
       }
@@ -194,14 +194,14 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
             outcome.tool_call === "select_rule" && drafted.id
               ? drafted.id
               : isNew
-                ? slugify(draftedForm.name) || draftedForm.id || "nowa-regula"
+                ? slugify(draftedForm.name) || draftedForm.id || "new-rule"
                 : prev.id,
           version: outcome.tool_call === "select_rule" ? (drafted.version ?? prev.version) : prev.version,
         }));
         setSubmitted(false);
       }
     } catch {
-      setAiError("Nie udało się połączyć z lokalnym modelem AI (Ollama).");
+      setAiError("Failed to connect to local AI model (Ollama).");
     } finally {
       setAiBusy(false);
     }
@@ -228,7 +228,7 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
       setSubmitted(false);
       onSaved(saved, isNew);
     } catch {
-      setSaveError("Nie udało się połączyć z API.");
+      setSaveError("Cannot connect to API.");
     } finally {
       setSaving(false);
     }
@@ -239,7 +239,7 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
     setSaving(true);
     setSaveError(null);
     const err = await send(() => api.DELETE("/rules/{rule_id}", { params: { path: { rule_id: initial.id } } }));
-    if (err) setSaveError(`Nie udało się usunąć reguły (${err}).`);
+    if (err) setSaveError(`Failed to delete rule (${err}).`);
     else onDeleted(initial.id);
     setSaving(false);
   }
@@ -254,16 +254,16 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
 
       <header className="rules-editor-head">
         <Heading size="medium" as="h2">
-          {isNew ? "Nowa reguła" : form.name || initial?.name}
+          {isNew ? "New rule" : form.name || initial?.name}
         </Heading>
       </header>
 
-      {/* 1. Panel AI */}
-      <Card title="Asystent AI — stwórz lub zmień regułę opisem">
+      {/* 1. AI Assistant */}
+      <Card title="AI Assistant — create or edit a rule from natural language">
         <div className="rules-ai-box">
           <Field
-            label="Opisz regułę własnymi słowami"
-            hint="Np. „Gdy transakcja na desku rates zostanie odrzucona z powodu LIMIT_BREACH, ustaw priorytet krytyczny i powiadom zespół Rates”"
+            label="Describe the rule in plain English"
+            hint='e.g. "When a trade on the rates desk is rejected due to LIMIT_BREACH, set severity to critical and notify Team Rates"'
           >
             {(f) => (
               <TextArea
@@ -274,7 +274,7 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
                   setAiPrompt(e.currentTarget.value);
                   if (aiError) setAiError(null);
                 }}
-                placeholder="Napisz dla AI, jak ma działać ta reguła…"
+                placeholder="Tell the AI how this rule should behave…"
               />
             )}
           </Field>
@@ -286,7 +286,7 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
               isLoading={aiBusy}
               onClick={() => void handleAiSubmit()}
             >
-              Wygeneruj z AI
+              Generate with AI
             </Button>
             {aiToolInfo && (
               <Text size="small" color="color.text.subtle">
@@ -299,28 +299,28 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
       </Card>
 
       <fieldset className="rules-fieldset" disabled={saving}>
-        {/* 2. Podstawowe informacje */}
-        <Card title="1. Nazwa i priorytet">
+        {/* 2. Name & Severity */}
+        <Card title="1. Name & severity">
           <div className="rules-grid">
-            <Field label="Nazwa reguły" error={submitted ? errors.name : null}>
+            <Field label="Rule name" error={submitted ? errors.name : null}>
               {(f) => (
                 <TextInput
                   {...f}
                   value={form.name}
                   onChange={(e) => onName(e.currentTarget.value)}
-                  placeholder="np. Krytyczne błędy płatności"
+                  placeholder="e.g. Critical payment errors"
                   autoComplete="off"
                 />
               )}
             </Field>
-            <Field label="Priorytet alertu">
+            <Field label="Alert severity">
               {(f) => (
                 <Select
                   {...f}
                   value={form.severityOverride}
                   onChange={(v) => update({ severityOverride: v as RuleForm["severityOverride"] })}
                   options={[
-                    { value: "", label: "Domyślny (z alertu)" },
+                    { value: "", label: "Default (from alert)" },
                     ...SEVERITIES.map((x) => ({ value: x.value, label: x.label })),
                   ]}
                 />
@@ -329,16 +329,16 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
           </div>
         </Card>
 
-        {/* 3. Warunki */}
-        <Card title="2. Kiedy reguła ma zadziałać?">
+        {/* 3. Conditions */}
+        <Card title="2. When should this rule trigger?">
           <div className="rules-cond-mode">
             <Segmented
-              label="Łączenie warunków"
+              label="Condition matching"
               value={form.root.kind}
               onChange={(mode) => setLeaves(leaves, mode)}
               options={[
-                { value: "all", label: "Wszystkie warunki muszą pasować (I)" },
-                { value: "any", label: "Wystarczy dowolny warunek (LUB)" },
+                { value: "all", label: "All conditions must match (AND)" },
+                { value: "any", label: "Any condition matches (OR)" },
               ]}
             />
           </div>
@@ -350,19 +350,19 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
               const valueErr = err?.value && (submitted || err.kind === "format") ? err.value : undefined;
               return (
                 <div key={leaf.uid} className="cb-leaf">
-                  <Field label={idx === 0 ? "Pole zdarzenia" : "Pole"} error={fieldErr}>
+                  <Field label={idx === 0 ? "Event field" : "Field"} error={fieldErr}>
                     {(f) => (
                       <TextInput
                         {...f}
                         list={FIELD_LIST_ID}
                         value={leaf.field}
                         onChange={(e) => updateLeaf(leaf.uid, { field: e.currentTarget.value })}
-                        placeholder="np. raw.labels.service"
+                        placeholder="e.g. raw.labels.service"
                         autoComplete="off"
                       />
                     )}
                   </Field>
-                  <Field label={idx === 0 ? "Warunek" : "Warunek"}>
+                  <Field label="Condition">
                     {(f) => (
                       <Select
                         {...f}
@@ -373,13 +373,13 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
                     )}
                   </Field>
                   {leaf.op !== "exists" && (
-                    <Field label={idx === 0 ? "Wartość" : "Wartość"} error={valueErr}>
+                    <Field label="Value" error={valueErr}>
                       {(f) => (
                         <TextInput
                           {...f}
                           value={leaf.value}
                           onChange={(e) => updateLeaf(leaf.uid, { value: e.currentTarget.value })}
-                          placeholder="np. payments-api"
+                          placeholder="e.g. payments-api"
                           autoComplete="off"
                         />
                       )}
@@ -387,7 +387,7 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
                   )}
                   <div className="cb-remove">
                     <Button appearance="subtle" onClick={() => removeCondition(leaf.uid)}>
-                      Usuń
+                      Remove
                     </Button>
                   </div>
                 </div>
@@ -396,16 +396,16 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
           </div>
 
           <div className="cb-add">
-            <Button onClick={addCondition}>+ Dodaj kolejny warunek</Button>
+            <Button onClick={addCondition}>+ Add condition</Button>
           </div>
         </Card>
 
-        {/* 4. Odbiorcy */}
-        <Card title="3. Kogo powiadomić?">
+        {/* 4. Recipients */}
+        <Card title="3. Who should be notified?">
           <div className="rules-recipients">
             <fieldset className="rules-group">
-              <legend>Zespoły</legend>
-              {teams.length === 0 && <Text color="color.text.subtle">Brak zespołów</Text>}
+              <legend>Teams</legend>
+              {teams.length === 0 && <Text color="color.text.subtle">No teams</Text>}
               {teams.map((t) => (
                 <Checkbox
                   key={t.id}
@@ -416,8 +416,8 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
               ))}
             </fieldset>
             <fieldset className="rules-group">
-              <legend>Osoby</legend>
-              {people.length === 0 && <Text color="color.text.subtle">Brak osób</Text>}
+              <legend>People</legend>
+              {people.length === 0 && <Text color="color.text.subtle">No people</Text>}
               {people.map((p) => (
                 <Checkbox
                   key={p.id}
@@ -432,21 +432,21 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
         </Card>
 
         {submitted && errors.count > 0 && (
-          <SectionMessage appearance="error" title="Uzupełnij brakujące pola przed zapisem">
-            <Text as="p">Sprawdź nazwę reguły, warunki oraz czy wybrano przynajmniej jednego odbiorcę.</Text>
+          <SectionMessage appearance="error" title="Complete missing fields before saving">
+            <Text as="p">Check the rule name, conditions, and make sure at least one recipient is selected.</Text>
           </SectionMessage>
         )}
         {saveError && <ErrorBox message={saveError} />}
 
         <div className="rules-savebar">
           <Button appearance="primary" onClick={() => void save()} isDisabled={saving || (!dirty && !isNew)} isLoading={saving}>
-            {isNew ? "Utwórz regułę" : "Zapisz regułę"}
+            {isNew ? "Create rule" : "Save rule"}
           </Button>
           {!isNew && (
             <ConfirmInline
-              label="Usuń regułę"
-              question={`Usunąć regułę „${initial?.name}”?`}
-              confirmLabel="Tak, usuń"
+              label="Delete rule"
+              question={`Delete rule "${initial?.name}"?`}
+              confirmLabel="Yes, delete"
               onConfirm={() => void remove()}
               busy={saving}
             />

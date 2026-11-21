@@ -23,7 +23,7 @@ function PaletteDialog({ screens, onClose, onClosed }: { screens: PaletteScreen[
   const results: Result[] = [
     ...screens
       .filter((s) => s.label.toLowerCase().includes(q))
-      .map((s) => ({ key: `screen:${s.to}`, label: s.label, hint: "Ekran", to: s.to })),
+      .map((s) => ({ key: `screen:${s.to}`, label: s.label, hint: "Screen", to: s.to })),
     ...(q
       ? alerts
           .filter((a) => a.title.toLowerCase().includes(q))
@@ -42,13 +42,13 @@ function PaletteDialog({ screens, onClose, onClosed }: { screens: PaletteScreen[
   return (
     <ModalDialog onClose={onClose} onCloseComplete={onClosed} width="small" autoFocus={inputRef}>
       <ModalHeader hasCloseButton>
-        <ModalTitle>Paleta komend</ModalTitle>
+        <ModalTitle>Command palette</ModalTitle>
       </ModalHeader>
       <ModalBody>
         <TextInput
           ref={inputRef}
-          aria-label="Szukaj ekranu lub alertu"
-          placeholder="Ekran albo tytuł alertu…"
+          aria-label="Search screen or alert"
+          placeholder="Screen or alert title…"
           value={query}
           onChange={(e) => {
             setQuery(e.currentTarget.value);
@@ -65,8 +65,8 @@ function PaletteDialog({ screens, onClose, onClosed }: { screens: PaletteScreen[
           }}
         />
         <MenuGroup>
-          <Section title={q ? "Wyniki" : "Ekrany"}>
-            {results.length === 0 && <Text as="p" color="color.text.subtle">Brak wyników.</Text>}
+          <Section title={q ? "Results" : "Screens"}>
+            {results.length === 0 && <Text as="p" color="color.text.subtle">No results.</Text>}
             {results.map((r, i) => (
               <ButtonItem key={r.key} isSelected={i === current} description={r.hint} onClick={() => go(r)}>
                 {r.label}

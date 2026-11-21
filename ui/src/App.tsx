@@ -32,13 +32,13 @@ const People = lazy(() => import("./screens/People"));
 const DevComponents = lazy(() => import("./screens/DevComponents"));
 
 const NAV: { to: string; label: string; group: "ops" | "config" }[] = [
-  { to: "/", label: "Alerty", group: "ops" },
-  { to: "/approvals", label: "Zatwierdzenia", group: "ops" },
-  { to: "/mock-outbox", label: "SMS / telefony", group: "ops" },
-  { to: "/rules", label: "Reguły", group: "config" },
-  { to: "/mappings", label: "Mappingi", group: "config" },
-  { to: "/actions", label: "Akcje", group: "config" },
-  { to: "/runbooks", label: "Runbooki", group: "config" },
+  { to: "/", label: "Alerts", group: "ops" },
+  { to: "/approvals", label: "Approvals", group: "ops" },
+  { to: "/mock-outbox", label: "Channels", group: "ops" },
+  { to: "/rules", label: "Rules", group: "config" },
+  { to: "/mappings", label: "Mappings", group: "config" },
+  { to: "/actions", label: "Actions", group: "config" },
+  { to: "/runbooks", label: "Runbooks", group: "config" },
   { to: "/people", label: "Teams", group: "config" },
 ];
 
@@ -60,7 +60,7 @@ export default function App() {
   }, []);
 
   if (!authChecked) {
-    return <Loading>Sprawdzanie sesji…</Loading>;
+    return <Loading>Checking session…</Loading>;
   }
 
   if (!personId) {
@@ -71,22 +71,21 @@ export default function App() {
     <PageLayout>
       <CommandPalette screens={NAV} />
       <Content>
-        {/* LeftSidebar (z przyciskiem zwijania): poniżej 768 px page-layout zwija go do wysuwanego panelu. */}
         <LeftSidebar
-          id="nawigacja"
-          skipLinkTitle="Nawigacja"
+          id="navigation"
+          skipLinkTitle="Navigation"
           width={240}
-          resizeButtonLabel="Nawigacja"
-          resizeGrabAreaLabel="Zmień szerokość nawigacji"
-          valueTextLabel="Szerokość"
+          resizeButtonLabel="Navigation"
+          resizeGrabAreaLabel="Resize navigation"
+          valueTextLabel="Width"
         >
-          <SideNavigation label="Nawigacja">
+          <SideNavigation label="Navigation">
             <NavigationHeader>
-              <Header>Alerting</Header>
+              <Header>AlertHub</Header>
             </NavigationHeader>
             <NavigationContent>
               {(["ops", "config"] as const).map((group) => (
-                <Section key={group} title={group === "ops" ? "Operacje" : "Konfiguracja"} hasSeparator={group === "config"}>
+                <Section key={group} title={group === "ops" ? "Operations" : "Configuration"} hasSeparator={group === "config"}>
                   {NAV.filter((n) => n.group === group).map((n) => (
                     <CustomItem
                       key={n.to}
@@ -105,7 +104,7 @@ export default function App() {
             </NavigationFooter>
           </SideNavigation>
         </LeftSidebar>
-        <Main id="tresc" skipLinkTitle="Treść">
+        <Main id="content" skipLinkTitle="Main content">
           <Box padding="space.300">
             <Suspense fallback={<Loading />}>
             <Routes>

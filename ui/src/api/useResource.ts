@@ -39,7 +39,7 @@ export function useResource<T>(load: () => Promise<FetchResult<T>>, key = ""): R
         }
       },
       () => {
-        if (n === seq.current) setState((s) => ({ ...s, error: "Brak połączenia z API", loading: false }));
+        if (n === seq.current) setState((s) => ({ ...s, error: "Cannot connect to API", loading: false }));
       },
     );
   }, []);

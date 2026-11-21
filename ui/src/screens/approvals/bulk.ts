@@ -14,10 +14,10 @@ export const stepKey = (s: StepRef) => `${s.run_id}:${s.step_id}`;
 
 /** Komunikat przy wierszu; `status === null` = brak połączenia z API. */
 export function failureMessage(status: number | null): string {
-  if (status === null) return "Brak połączenia z API — decyzja nie została wysłana.";
-  if (status === 409) return "Krok nie czeka już na zatwierdzenie (ktoś był szybszy lub runbook się zmienił).";
-  if (status === 404) return "Nie znaleziono kroku — mógł zostać zamknięty.";
-  return `Błąd ${status} przy wysyłaniu decyzji.`;
+  if (status === null) return "Cannot connect to API — decision was not sent.";
+  if (status === 409) return "Step is no longer waiting for approval (someone acted earlier or the runbook changed).";
+  if (status === 404) return "Step not found — it may have been closed.";
+  return `Error ${status} while sending decision.`;
 }
 
 /**
@@ -57,8 +57,5 @@ export function pruneSelection(selected: ReadonlySet<string>, visibleKeys: reado
 
 /** Polska liczba mnoga: 1 krok, 2–4 kroki, 5+ kroków (12–14 → kroków). */
 export function stepsLabel(n: number): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  const form = n === 1 ? "krok" : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? "kroki" : "kroków";
-  return `${n} ${form}`;
+  return `${n} ${n === 1 ? "step" : "steps"}`;
 }

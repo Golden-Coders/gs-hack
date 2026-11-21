@@ -7,14 +7,14 @@ export function ReadOnlyNote({ children }: { children: React.ReactNode }) {
   return (
     <Box paddingBlockEnd="space.200">
       <Inline space="space.100" alignBlock="center" shouldWrap>
-        <Lozenge>Tylko do odczytu</Lozenge>
+        <Lozenge>Read-only</Lozenge>
         <Text color="color.text.subtle">{children}</Text>
       </Inline>
     </Box>
   );
 }
 
-export default function SourceFile({ path, label = "Edytuj w:" }: { path?: string | null; label?: string }) {
+export default function SourceFile({ path, label = "Edit in:" }: { path?: string | null; label?: string }) {
   return (
     <Box paddingBlock="space.100">
       <Inline space="space.100" alignBlock="center" shouldWrap>
@@ -27,7 +27,7 @@ export default function SourceFile({ path, label = "Edytuj w:" }: { path?: strin
             <CopyButton text={path} />
           </>
         ) : (
-          <Text color="color.text.subtle">brak ścieżki pliku w odpowiedzi API</Text>
+          <Text color="color.text.subtle">no file path in API response</Text>
         )}
       </Inline>
     </Box>

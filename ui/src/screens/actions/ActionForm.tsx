@@ -65,10 +65,10 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
       if (err?.error) {
         setTopError([err.error, err.detail].filter(Boolean).join(": "));
       } else {
-        setTopError(`Nie udało się zapisać akcji (HTTP ${res.response.status}).`);
+        setTopError(`Failed to save action (HTTP ${res.response.status}).`);
       }
     } catch {
-      setTopError("Brak połączenia z API.");
+      setTopError("Cannot connect to API.");
     } finally {
       setSaving(false);
     }
@@ -79,7 +79,7 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
     setSaving(true);
     setTopError(null);
     const err = await onDelete(initial.name);
-    if (err) setTopError(`Nie udało się usunąć akcji: ${err}`);
+    if (err) setTopError(`Failed to delete action: ${err}`);
     setSaving(false);
   }
 
@@ -87,31 +87,31 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
     <form className="act-editor-clean" onSubmit={(e) => void submit(e)} noValidate>
       <header className="act-editor-head">
         <Heading size="medium" as="h2">
-          {isNew ? (f.name ? `Nowa akcja: ${f.name}` : "Nowa akcja") : initial.name}
+          {isNew ? (f.name ? `New action: ${f.name}` : "New action") : initial.name}
         </Heading>
       </header>
 
-      {/* 1. Nazwa, opis i tryb wykonywania */}
-      <Card title="1. Podstawowe informacje">
+      {/* 1. Basic info */}
+      <Card title="1. Basic information">
         <div className="act-two-col">
-          <Field label="Nazwa akcji (używana w runbookach)" error={errors.name}>
+          <Field label="Action name (used in runbooks)" error={errors.name}>
             {(p) => (
               <TextInput
                 {...p}
                 value={f.name}
-                placeholder="np. flush_cdn"
+                placeholder="e.g. flush_cdn"
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(e) => set("name", e.currentTarget.value)}
               />
             )}
           </Field>
-          <Field label="Krótki opis (co robi ta akcja?)">
+          <Field label="Short description (what does it do?)">
             {(p) => (
               <TextInput
                 {...p}
                 value={f.description}
-                placeholder="np. Czyści pamięć podręczną usługi"
+                placeholder="e.g. Flushes the service cache"
                 onChange={(e) => set("description", e.currentTarget.value)}
               />
             )}
@@ -120,21 +120,21 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
 
         <div className="act-risk-box">
           <Segmented
-            label="Tryb wykonywania akcji"
+            label="Execution mode"
             value={f.risk}
             onChange={(v) => set("risk", v)}
             options={[
-              { value: "low", label: "Wykonuj automatycznie" },
-              { value: "high", label: "Zawsze pytaj o zatwierdzenie (wysokie ryzyko)" },
+              { value: "low", label: "Run automatically" },
+              { value: "high", label: "Always require approval (high risk)" },
             ]}
           />
         </div>
       </Card>
 
-      {/* 2. Wywołanie HTTP */}
-      <Card title="2. Wywołanie HTTP">
+      {/* 2. HTTP call */}
+      <Card title="2. HTTP request">
         <div className="act-url-grid">
-          <Field label="Metoda">
+          <Field label="Method">
             {(p) => (
               <Select
                 {...p}
@@ -145,9 +145,9 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
             )}
           </Field>
           <Field
-            label="Adres URL"
+            label="URL"
             error={errors.url}
-            hint="Możesz używać zmiennych z alertu w podwójnych nawiasach, np. http://mock-targets:8090/cache/{{service}}/flush"
+            hint="Use alert variables in double braces, e.g. http://mock-targets:8090/cache/{{service}}/flush"
           >
             {(p) => (
               <TextInput
@@ -165,8 +165,8 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
         {f.method !== "GET" && (
           <div className="act-body-box">
             <Field
-              label="Dane wysyłane w żądaniu (JSON — opcjonalnie)"
-              hint='Np. {"service": "{{service}}"}'
+              label="Request body (JSON — optional)"
+              hint='e.g. {"service": "{{service}}"}'
             >
               {(p) => (
                 <TextArea
@@ -183,20 +183,20 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
         )}
       </Card>
 
-      {/* 3. Nagłówki HTTP (opcjonalne) */}
-      <Card title="3. Nagłówki i autoryzacja (opcjonalnie)">
+      {/* 3. HTTP headers */}
+      <Card title="3. Headers & authorization (optional)">
         {f.headers.length === 0 ? (
           <Text as="p" size="small" color="color.text.subtle">
-            Brak dodatkowych nagłówków. Jeśli endpoint wymaga tokenu, dodaj nagłówek (np. Authorization: Bearer {"${CACHE_ADMIN_TOKEN}"}).
+            No custom headers. If the endpoint requires a token, add a header (e.g. Authorization: Bearer {"${CACHE_ADMIN_TOKEN}"}).
           </Text>
         ) : (
           <div className="act-headers-list">
-            {f.headers.map((h, idx) => {
+            {f.headers.map((h) => {
               const secret = looksLikePastedSecret(h.name, h.value);
               return (
                 <div key={h.id} className="act-header-item">
                   <div className="act-header-row">
-                    <Field label={idx === 0 ? "Nagłówek" : "Nagłówek"}>
+                    <Field label="Header">
                       {(p) => (
                         <TextInput
                           {...p}
@@ -208,7 +208,7 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
                         />
                       )}
                     </Field>
-                    <Field label={idx === 0 ? "Wartość" : "Wartość"}>
+                    <Field label="Value">
                       {(p) => (
                         <TextInput
                           {...p}
@@ -225,13 +225,13 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
                         appearance="subtle"
                         onClick={() => setF((cur) => ({ ...cur, headers: cur.headers.filter((x) => x.id !== h.id) }))}
                       >
-                        Usuń
+                        Remove
                       </Button>
                     </div>
                   </div>
                   {secret && (
                     <SectionMessage appearance="warning">
-                      Zamiast wklejać jawny token, użyj zmiennej środowiskowej, np. <code>{"${NAZWA_TOKENU}"}</code>.
+                      Instead of pasting a raw token, reference an environment variable such as <code>{"${TOKEN_NAME}"}</code>.
                     </SectionMessage>
                   )}
                 </div>
@@ -241,7 +241,7 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
         )}
         {errors.headers && <ErrorBox message={errors.headers} />}
         <div className="act-add-btn">
-          <Button onClick={() => set("headers", [...f.headers, newRow()])}>+ Dodaj nagłówek</Button>
+          <Button onClick={() => set("headers", [...f.headers, newRow()])}>+ Add header</Button>
         </div>
       </Card>
 
@@ -249,13 +249,13 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
 
       <div className="act-savebar">
         <Button type="submit" appearance="primary" isLoading={saving} isDisabled={saving}>
-          {isNew ? "Utwórz akcję" : "Zapisz zmiany"}
+          {isNew ? "Create action" : "Save changes"}
         </Button>
         {!isNew && onDelete && (
           <ConfirmInline
-            label="Usuń akcję"
-            question={`Usunąć akcję „${initial.name}”?`}
-            confirmLabel="Tak, usuń"
+            label="Delete action"
+            question={`Delete action "${initial.name}"?`}
+            confirmLabel="Yes, delete"
             busy={saving}
             onConfirm={() => void handleConfirmDelete()}
           />

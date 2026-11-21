@@ -52,94 +52,94 @@ const s = (label: string, appearance: ThemeAppearance, icon: LucideIcon, isBold?
   isBold ? { label, appearance, icon, isBold } : { label, appearance, icon };
 
 const alertState: Table<Schemas["AlertState"]> = {
-  open: s("otwarty", "moved", BellRing),
-  reopened: s("ponownie otwarty", "moved", RotateCcw, true),
-  acked: s("potwierdzony", "inprogress", Eye),
-  resolved: s("rozwiązany", "success", CircleCheck),
+  open: s("open", "moved", BellRing),
+  reopened: s("reopened", "moved", RotateCcw, true),
+  acked: s("acknowledged", "inprogress", Eye),
+  resolved: s("resolved", "success", CircleCheck),
 };
 
 const severity: Table<Schemas["Severity"]> = {
-  critical: s("krytyczny", "removed", Siren, true),
-  error: s("błąd", "moved", TriangleExclamationPoint, true),
-  warning: s("ostrzeżenie", "moved", CircleExclamationPoint),
-  info: s("informacja", "default", Info),
+  critical: s("critical", "removed", Siren, true),
+  error: s("error", "moved", TriangleExclamationPoint, true),
+  warning: s("warning", "moved", CircleExclamationPoint),
+  info: s("info", "default", Info),
 };
 
 const delivery: Table<Schemas["DeliveryStatus"]> = {
-  pending: s("oczekuje", "default", Clock),
-  retrying: s("ponawianie", "moved", RefreshCw),
-  delivered: s("dostarczono", "success", CheckCheck),
-  fallback: s("kanał zapasowy", "inprogress", ArrowRightLeft),
-  failed: s("błąd", "removed", CircleX),
+  pending: s("pending", "default", Clock),
+  retrying: s("retrying", "moved", RefreshCw),
+  delivered: s("delivered", "success", CheckCheck),
+  fallback: s("fallback", "inprogress", ArrowRightLeft),
+  failed: s("failed", "removed", CircleX),
   dlq: s("DLQ", "removed", ArchiveX, true),
 };
 
 const step: Table<Schemas["StepStatus"]> = {
-  pending: s("oczekuje", "default", Circle),
-  running: s("w toku", "inprogress", LoaderCircle),
-  succeeded: s("zrobione", "success", CircleCheck),
-  failed: s("błąd", "removed", CircleX),
-  waiting_approval: s("czeka na zatwierdzenie", "moved", Hand, true),
-  waiting_manual: s("krok ręczny", "moved", UserRound),
-  skipped: s("pominięty", "default", SkipForward),
-  rejected: s("odrzucony", "removed", Ban),
+  pending: s("pending", "default", Circle),
+  running: s("running", "inprogress", LoaderCircle),
+  succeeded: s("done", "success", CircleCheck),
+  failed: s("failed", "removed", CircleX),
+  waiting_approval: s("waiting approval", "moved", Hand, true),
+  waiting_manual: s("manual step", "moved", UserRound),
+  skipped: s("skipped", "default", SkipForward),
+  rejected: s("rejected", "removed", Ban),
 };
 
 const risk: Table<Schemas["ActionDef"]["risk"]> = {
-  high: s("ryzyko: wysokie", "moved", ShieldExclamationPoint, true),
-  low: s("ryzyko: niskie", "default", ShieldCheck),
+  high: s("high risk", "moved", ShieldExclamationPoint, true),
+  low: s("low risk", "default", ShieldCheck),
 };
 
 const approval: Table<Exclude<NonNullable<Schemas["StepDef"]["approval"]>, "none">> = {
-  required: s("wymaga zatwierdzenia", "moved", ShieldQuestionMark),
+  required: s("requires approval", "moved", ShieldQuestionMark),
 };
 
 const approvalDeadline: Table<"overdue"> = {
-  overdue: s("przekroczony termin", "removed", TimerOff, true),
+  overdue: s("overdue", "removed", TimerOff, true),
 };
 
 const channelAvailability: Table<`${Schemas["MockChannelState"]["available"]}`> = {
-  true: s("włączony", "success", Wifi),
-  false: s("awaria", "removed", WifiOff, true),
+  true: s("enabled", "success", Wifi),
+  false: s("outage", "removed", WifiOff, true),
 };
 
 const channel: Table<Schemas["Channel"]> = {
   ui: s("UI", "default", Monitor),
-  email: s("e-mail", "default", Mail),
+  email: s("Email", "default", Mail),
   sms: s("SMS", "default", MessageSquare),
-  phone: s("telefon", "default", Phone),
+  phone: s("Phone", "default", Phone),
 };
 
 const rule: Table<`${boolean}`> = {
-  true: s("włączona", "success", CirclePlay),
-  false: s("wyłączona", "default", CirclePause),
+  true: s("enabled", "success", CirclePlay),
+  false: s("disabled", "default", CirclePause),
 };
 
 const stream: Table<StreamStatus> = {
-  idle: s("rozłączono", "default", Unplug),
-  connecting: s("łączenie…", "inprogress", LoaderCircle),
-  live: s("na żywo", "success", Radio),
-  reconnecting: s("ponowne łączenie…", "moved", RefreshCw),
-  unavailable: s("na żywo niedostępne (mock)", "default", WifiOff),
+  idle: s("disconnected", "default", Unplug),
+  connecting: s("connecting…", "inprogress", LoaderCircle),
+  live: s("live", "success", Radio),
+  reconnecting: s("reconnecting…", "moved", RefreshCw),
+  unavailable: s("live unavailable (mock)", "default", WifiOff),
 };
 
 const runbookKind: Table<Schemas["RunbookDef"]["kind"]> = {
-  automatic: s("automatyczny", "new", Bot),
-  manual: s("ręczny", "default", BookOpen),
+  automatic: s("automatic", "new", Bot),
+  manual: s("manual", "default", BookOpen),
 };
 
 const stepAutomation: Table<Schemas["StepDef"]["automation"]> = {
-  automated: s("automatyczny", "new", Bot),
-  manual: s("do wykonania ręcznie", "moved", Hand),
+  automated: s("automated", "new", Bot),
+  manual: s("manual", "moved", Hand),
 };
 
 const actionKind: Table<Schemas["ActionDef"]["kind"]> = {
-  builtin: s("wbudowana", "default", Lock),
+  builtin: s("built-in", "default", Lock),
   http: s("HTTP", "new", Zap),
 };
 
 const schema: Table<"unmapped"> = { unmapped: s("UNMAPPED", "moved", CircleQuestionMark) };
-const action: Table<"missing"> = { missing: s("brak w rejestrze", "moved", CircleQuestionMark) };
+const action: Table<"missing"> = { missing: s("missing in registry", "moved", CircleQuestionMark) };
 
 export const STATUS = {
   alertState,

@@ -109,7 +109,7 @@ export default function AlertFeed() {
                 isDisabled={!personId || resolvingId !== null}
                 onClick={(e) => void resolveAlert(e, a.id)}
               >
-                Rozwiąż
+                Resolve
               </Button>
             </div>
           ),
@@ -123,41 +123,41 @@ export default function AlertFeed() {
       <PageHeader
         actions={
           <Segmented
-            label="Filtr alertów"
+            label="Alert filter"
             value={filter}
             onChange={setFilter}
             options={[
-              { value: "mine", label: `Mój zespół${myTeams?.length ? ` (${myTeams.join(", ")})` : ""}` },
-              { value: "all", label: "Wszystkie" },
+              { value: "mine", label: `My team${myTeams?.length ? ` (${myTeams.join(", ")})` : ""}` },
+              { value: "all", label: "All" },
             ]}
           />
         }
       >
-        Alerty
+        Alerts
       </PageHeader>
 
       {error && <ErrorBox message={error} onRetry={retry} disabled={loading} />}
       {filter === "mine" && myTeams && myTeams.length === 0 && (
         <SectionMessage appearance="information">
           <Text as="p">
-            {personId ? `„${personId}” nie należy do żadnego zespołu.` : "Nie wybrano tożsamości."}{" "}
-            <Button onClick={() => setFilter("all")}>Pokaż wszystkie</Button>
+            {personId ? `"${personId}" does not belong to any team.` : "No operator identity selected."}{" "}
+            <Button onClick={() => setFilter("all")}>Show all</Button>
           </Text>
         </SectionMessage>
       )}
 
       {loading && alerts.length === 0 ? (
-        <ListSkeleton label="Ładowanie alertów…" />
+        <ListSkeleton label="Loading alerts…" />
       ) : (
         <DynamicTable
-          label="Alerty"
+          label="Alerts"
           highlightedRowIndex={current >= 0 ? current : undefined}
-          emptyView={<EmptyList header="Brak aktywnych alertów" description="Wszystkie alerty są rozwiązane." />}
+          emptyView={<EmptyList header="No active alerts" description="All alerts have been resolved." />}
           head={{
             cells: [
-              { key: "severity", content: "Priorytet" },
+              { key: "severity", content: "Severity" },
               { key: "title", content: "Alert" },
-              { key: "last", content: "Kiedy" },
+              { key: "last", content: "Last seen" },
               { key: "actions", content: "" },
             ],
           }}

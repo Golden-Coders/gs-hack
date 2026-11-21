@@ -104,7 +104,7 @@ function editableToStep(es: EditableStep, idx: number, actions: ActionDef[]): St
   return {
     id: `s${idx + 1}`,
     type: action === "http_get" ? "check" : action ? "action" : "manual",
-    text: es.text.trim() || (action ? `Wykonaj ${action}` : `Krok ${idx + 1}`),
+    text: es.text.trim() || (action ? `Run ${action}` : `Step ${idx + 1}`),
     action: action || null,
     params,
     approval: es.approval,
@@ -201,21 +201,20 @@ export default function Runbooks() {
       <PageHeader
         actions={
           <Button appearance="primary" onClick={handleStartNew}>
-            + Nowy runbook
+            + New runbook
           </Button>
         }
       >
-        Runbooki
+        Runbooks
       </PageHeader>
 
       {listRes.error && <ErrorBox message={listRes.error} onRetry={listRes.reload} />}
 
       <div className="rb-layout">
-        {/* Lewa kolumna: lista runbooków */}
-        <aside className="rb-sidebar" aria-label="Lista runbooków">
+        <aside className="rb-sidebar" aria-label="Runbooks list">
           {listRes.loading && listRes.data === null && <Loading />}
           {!listRes.loading && runbooks.length === 0 && (
-            <Empty>Brak runbooków. Kliknij „+ Nowy runbook”.</Empty>
+            <Empty>No runbooks yet. Click "+ New runbook".</Empty>
           )}
           <ul className="rb-list">
             {runbooks.map((rb) => {
@@ -230,7 +229,7 @@ export default function Runbooks() {
                   >
                     <div className="rb-item-title">{rb.title}</div>
                     <div className="rb-item-sub">
-                      {stepsCount > 0 ? `Kroków: ${stepsCount}` : "Instrukcja tekstowa"}
+                      {stepsCount > 0 ? `Steps: ${stepsCount}` : "Manual guide"}
                     </div>
                   </button>
                 </li>
@@ -239,7 +238,6 @@ export default function Runbooks() {
           </ul>
         </aside>
 
-        {/* Prawa kolumna: edytor runbooka z AI */}
         <div className="rb-main">
           {isCreatingNew || activeRunbook ? (
             <RunbookEditor
@@ -253,7 +251,7 @@ export default function Runbooks() {
           ) : (
             <Card>
               <Heading size="small" as="h2">
-                Wybierz runbook z listy po lewej stronie
+                Select a runbook from the list on the left
               </Heading>
             </Card>
           )}
@@ -361,9 +359,9 @@ function RunbookEditor({
       if (data.draft.steps && data.draft.steps.length > 0) {
         setSteps(data.draft.steps.map((s) => stepToEditable(s, actions)));
       }
-      setAiInfo(`Wygenerowano kroków z AI: ${data.draft.steps?.length ?? 0}`);
+      setAiInfo(`Generated ${data.draft.steps?.length ?? 0} steps with AI`);
     } catch {
-      setAiError("Nie udało się połączyć z lokalnym modelem AI (Ollama).");
+      setAiError("Failed to connect to local AI model (Ollama).");
     } finally {
       setAiBusy(false);
     }
@@ -373,14 +371,14 @@ function RunbookEditor({
     setSaveError(null);
     const cleanTitle = title.trim();
     if (!cleanTitle) {
-      setSaveError("Podaj nazwę runbooka.");
+      setSaveError("Enter a runbook title.");
       return;
     }
     const builtSteps = steps
       .filter((s) => s.text.trim() !== "" || s.action.trim() !== "")
       .map((s, idx) => editableToStep(s, idx, actions));
     if (builtSteps.length === 0) {
-      setSaveError("Dodaj przynajmniej jeden krok runbooka.");
+      setSaveError("Add at least one runbook step.");
       return;
     }
 
@@ -425,7 +423,7 @@ function RunbookEditor({
       const saved = (await resp.json()) as Runbook;
       onSaved(saved);
     } catch {
-      setSaveError("Nie udało się połączyć z API.");
+      setSaveError("Cannot connect to API.");
     } finally {
       setSaving(false);
     }
@@ -436,12 +434,12 @@ function RunbookEditor({
     setSaving(true);
     setSaveError(null);
     const err = await onDelete(initial.id);
-    if (err) setSaveError(`Nie udało się usunąć runbooka: ${err}`);
+    if (err) setSaveError(`Failed to delete runbook: ${err}`);
     setSaving(false);
   }
 
   const actionOptions = [
-    { value: "", label: "Krok ręczny (bez automatyzacji)" },
+    { value: "", label: "Manual step (no automation)" },
     ...actions.map((a) => ({
       value: a.name,
       label: `${a.name}${a.description ? ` — ${a.description}` : ""}`,
@@ -452,16 +450,16 @@ function RunbookEditor({
     <div className="rb-editor">
       <header className="rb-editor-head">
         <Heading size="medium" as="h2">
-          {isNew ? "Nowy runbook" : title || initial.title}
+          {isNew ? "New runbook" : title || initial.title}
         </Heading>
       </header>
 
-      {/* 1. Asystent AI */}
-      <Card title="Asystent AI — wygeneruj runbook z opisu lub instrukcji">
+      {/* 1. AI Assistant */}
+      <Card title="AI Assistant — generate runbook from text or instructions">
         <div className="rb-ai-box">
           <Field
-            label="Wklej opis procedury lub napisz własnymi słowami, co ma robić runbook"
-            hint="AI automatycznie rozbije tekst na kroki i dobierze odpowiednie akcje z systemu (np. http_get, restart_service, retry_workflow, escalate)."
+            label="Paste a procedure or describe what this runbook should do"
+            hint="AI will automatically split the text into steps and map matching actions from the registry (e.g. http_get, restart_service, retry_workflow, escalate)."
           >
             {(f) => (
               <TextArea
@@ -472,7 +470,7 @@ function RunbookEditor({
                   setAiPrompt(e.currentTarget.value);
                   if (aiError) setAiError(null);
                 }}
-                placeholder="Np. 1. Sprawdź czy serwis płatności działa. 2. Zrestartuj usługę payments-api. 3. Jeśli nadal nie działa, eskaluj do zespołu payments."
+                placeholder="e.g. 1. Check health of payments-api. 2. Restart payments-api. 3. If it still fails, escalate to Team Payments."
               />
             )}
           </Field>
@@ -484,7 +482,7 @@ function RunbookEditor({
               isLoading={aiBusy}
               onClick={() => void handleAiGenerate()}
             >
-              Wygeneruj kroki z AI
+              Generate steps with AI
             </Button>
             {aiInfo && (
               <Text size="small" color="color.text.subtle">
@@ -496,15 +494,15 @@ function RunbookEditor({
         </div>
       </Card>
 
-      {/* 2. Nazwa i powiązane reguły */}
-      <Card title="1. Nazwa i powiązane reguły">
-        <Field label="Nazwa runbooka">
+      {/* 2. Title & linked rules */}
+      <Card title="1. Title & linked rules">
+        <Field label="Runbook title">
           {(f) => (
             <TextInput
               {...f}
               value={title}
               onChange={(e) => setTitle(e.currentTarget.value)}
-              placeholder="np. Procedura naprawy błędu płatności"
+              placeholder="e.g. Payments error recovery"
             />
           )}
         </Field>
@@ -512,7 +510,7 @@ function RunbookEditor({
         {rules.length > 0 && (
           <div className="rb-rules-box">
             <Text weight="semibold" size="small">
-              Dla jakich reguł uruchamiać ten runbook? (opcjonalnie)
+              Which rules should trigger this runbook? (optional)
             </Text>
             <div className="rb-rules-grid">
               {rules.map((r) => (
@@ -528,33 +526,33 @@ function RunbookEditor({
         )}
       </Card>
 
-      {/* 3. Lista kroków */}
-      <Card title="2. Kroki runbooka">
+      {/* 3. Steps */}
+      <Card title="2. Runbook steps">
         <div className="rb-steps-list">
           {steps.map((s, idx) => {
             const pKey = s.paramKey || defaultParamKeyForAction(s.action, actions);
             return (
               <div key={s.uid} className="rb-step-card">
                 <div className="rb-step-top">
-                  <span className="rb-step-num">Krok {idx + 1}</span>
+                  <span className="rb-step-num">Step {idx + 1}</span>
                   <Button appearance="subtle" onClick={() => removeStep(s.uid)}>
-                    Usuń krok
+                    Remove step
                   </Button>
                 </div>
 
                 <div className="rb-step-grid">
-                  <Field label="Co należy zrobić? (opis kroku)">
+                  <Field label="What should happen? (step description)">
                     {(f) => (
                       <TextInput
                         {...f}
                         value={s.text}
                         onChange={(e) => updateStep(s.uid, { text: e.currentTarget.value })}
-                        placeholder="np. Zrestartuj usługę lub sprawdź status"
+                        placeholder="e.g. Restart service or check health"
                       />
                     )}
                   </Field>
 
-                  <Field label="Akcja do wykonania">
+                  <Field label="Action to execute">
                     {(f) => (
                       <Select
                         {...f}
@@ -569,8 +567,8 @@ function RunbookEditor({
                 {s.action && (
                   <div className="rb-step-extra">
                     <Field
-                      label={`Parametr akcji (${pKey || "wartość"})`}
-                      hint="Np. nazwa usługi, adres URL, zespół lub zmienna {{raw.workflowId}}"
+                      label={`Action parameter (${pKey || "value"})`}
+                      hint="e.g. service name, URL, team ID, or template {{raw.workflowId}}"
                     >
                       {(f) => (
                         <TextInput
@@ -581,8 +579,8 @@ function RunbookEditor({
                             pKey === "url"
                               ? "http://mock-targets:8090/health"
                               : pKey === "team"
-                                ? "np. payments"
-                                : "np. {{service}}"
+                                ? "e.g. payments"
+                                : "e.g. {{service}}"
                           }
                         />
                       )}
@@ -596,7 +594,7 @@ function RunbookEditor({
                             approval: s.approval === "required" ? "none" : "required",
                           })
                         }
-                        label="Wymagaj zatwierdzenia człowieka przed wykonaniem tego kroku"
+                        label="Require human approval before running this step"
                       />
                     </div>
                   </div>
@@ -607,7 +605,7 @@ function RunbookEditor({
         </div>
 
         <div className="rb-add-btn">
-          <Button onClick={addStep}>+ Dodaj kolejny krok</Button>
+          <Button onClick={addStep}>+ Add step</Button>
         </div>
       </Card>
 
@@ -615,13 +613,13 @@ function RunbookEditor({
 
       <div className="rb-savebar">
         <Button appearance="primary" isLoading={saving} isDisabled={saving} onClick={() => void handleSave()}>
-          {isNew ? "Utwórz runbook" : "Zapisz runbook"}
+          {isNew ? "Create runbook" : "Save runbook"}
         </Button>
         {!isNew && (
           <ConfirmInline
-            label="Usuń runbook"
-            question={`Usunąć runbook „${initial.title}”?`}
-            confirmLabel="Tak, usuń"
+            label="Delete runbook"
+            question={`Delete runbook "${initial.title}"?`}
+            confirmLabel="Yes, delete"
             busy={saving}
             onConfirm={() => void handleConfirmDelete()}
           />

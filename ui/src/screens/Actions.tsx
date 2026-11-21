@@ -95,18 +95,17 @@ export default function Actions() {
       <PageHeader
         actions={
           <Button appearance="primary" onClick={() => handleStartNew("")}>
-            + Nowa akcja
+            + New action
           </Button>
         }
       >
-        Akcje
+        Actions
       </PageHeader>
 
       {resource.error && <ErrorBox message={resource.error} onRetry={resource.reload} />}
 
-      {/* Kompaktowy baner brakujących akcji w runbookach (tylko jeśli są jakieś nieobsłużone, z pominięciem demo `shell`) */}
       {visibleMissing.filter((m) => m.name !== "shell").length > 0 && (
-        <Card title="Brakujące akcje z runbooków">
+        <Card title="Missing actions referenced by runbooks">
           <ul className="act-missing-list">
             {visibleMissing
               .filter((m) => m.name !== "shell")
@@ -115,11 +114,11 @@ export default function Actions() {
                   <div>
                     <Text weight="semibold">{m.name}</Text>
                     <div className="muted act-small">
-                      Używana w runbookach: {m.runbook_ids.join(", ")}
+                      Used in runbooks: {m.runbook_ids.join(", ")}
                     </div>
                   </div>
                   <Button appearance="primary" onClick={() => handleStartNew(m.name)}>
-                    Skonfiguruj akcję
+                    Configure action
                   </Button>
                 </li>
               ))}
@@ -128,10 +127,9 @@ export default function Actions() {
       )}
 
       <div className="act-layout">
-        {/* Lewa kolumna: lista akcji */}
-        <aside className="act-sidebar" aria-label="Lista akcji">
+        <aside className="act-sidebar" aria-label="Actions list">
           {resource.loading && resource.data === null && <Loading />}
-          {!resource.loading && actions.length === 0 && <Empty>Brak akcji.</Empty>}
+          {!resource.loading && actions.length === 0 && <Empty>No actions yet.</Empty>}
           <ul className="act-list">
             {actions.map((a) => {
               const active = creatingName === null && a.name === selectedName;
@@ -145,11 +143,11 @@ export default function Actions() {
                   >
                     <div className="act-item-head">
                       <span className="act-item-title">{a.name}</span>
-                      <span className="act-item-kind">{isBuiltin ? "Wbudowana" : a.http?.method ?? "HTTP"}</span>
+                      <span className="act-item-kind">{isBuiltin ? "Built-in" : a.http?.method ?? "HTTP"}</span>
                     </div>
                     {a.description && <div className="act-item-desc">{a.description}</div>}
                     <div className="act-item-sub">
-                      {a.risk === "high" ? "Wymaga zatwierdzenia" : "Automatyczna (bez zatwierdzenia)"}
+                      {a.risk === "high" ? "Requires approval" : "Automatic (no approval)"}
                     </div>
                   </button>
                 </li>
@@ -158,7 +156,6 @@ export default function Actions() {
           </ul>
         </aside>
 
-        {/* Prawa kolumna: edytor lub podgląd */}
         <div className="act-main">
           {creatingName !== null ? (
             <ActionForm
@@ -170,11 +167,11 @@ export default function Actions() {
             />
           ) : selectedAction ? (
             selectedAction.kind === "builtin" ? (
-              <Card title={`Akcja wbudowana: ${selectedAction.name}`}>
+              <Card title={`Built-in action: ${selectedAction.name}`}>
                 <div className="act-builtin-box">
-                  <Text as="p">{selectedAction.description ?? "Akcja systemowa wbudowana w AlertHub."}</Text>
+                  <Text as="p">{selectedAction.description ?? "System action built into AlertHub."}</Text>
                   <Text as="p" size="small" color="color.text.subtle">
-                    Ta akcja jest wbudowana na stałe w system i działa automatycznie w runbookach — nie wymaga konfiguracji adresu URL.
+                    This action is built into the platform and runs automatically in runbooks — no HTTP URL configuration is needed.
                   </Text>
                 </div>
               </Card>
@@ -192,7 +189,7 @@ export default function Actions() {
           ) : (
             <Card>
               <Heading size="small" as="h2">
-                Wybierz akcję z listy po lewej stronie
+                Select an action from the list on the left
               </Heading>
             </Card>
           )}

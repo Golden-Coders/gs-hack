@@ -8,15 +8,15 @@ type Cond = Schemas["Condition"];
 const OP_LABEL: Record<NonNullable<Cond["op"]>, string> = {
   eq: "=",
   ne: "≠",
-  in: "należy do",
+  in: "in",
   gt: ">",
   gte: "≥",
   lt: "<",
   lte: "≤",
-  contains: "zawiera",
-  regex: "pasuje do regex",
-  exists: "istnieje",
-  glob: "pasuje do wzorca",
+  contains: "contains",
+  regex: "matches regex",
+  exists: "exists",
+  glob: "matches pattern",
 };
 
 const Op = ({ children }: { children: string }) => (
@@ -35,13 +35,13 @@ function Node({ cond }: { cond: Cond }) {
   if (cond.all) {
     items.push(
       <li key="all">
-        <Op>wszystkie z</Op>
+        <Op>all of</Op>
         <ul>
           {cond.all.length ? (
             cond.all.map((c, i) => <Node key={i} cond={c} />)
           ) : (
             <li>
-              <Muted>(pusta lista = prawda)</Muted>
+              <Muted>(empty list = true)</Muted>
             </li>
           )}
         </ul>
@@ -51,13 +51,13 @@ function Node({ cond }: { cond: Cond }) {
   if (cond.any) {
     items.push(
       <li key="any">
-        <Op>dowolny z</Op>
+        <Op>any of</Op>
         <ul>
           {cond.any.length ? (
             cond.any.map((c, i) => <Node key={i} cond={c} />)
           ) : (
             <li>
-              <Muted>(pusta lista = fałsz)</Muted>
+              <Muted>(empty list = false)</Muted>
             </li>
           )}
         </ul>
@@ -67,7 +67,7 @@ function Node({ cond }: { cond: Cond }) {
   if (cond.not) {
     items.push(
       <li key="not">
-        <Op>nie</Op>
+        <Op>not</Op>
         <ul>
           <Node cond={cond.not} />
         </ul>
@@ -89,7 +89,7 @@ function Node({ cond }: { cond: Cond }) {
 
 export default function ConditionView({ condition }: { condition?: Cond | null }) {
   const empty = !condition || (!condition.all && !condition.any && !condition.not && condition.field === undefined);
-  if (empty) return <Muted>brak warunku (pasuje do każdego alertu)</Muted>;
+  if (empty) return <Muted>no condition (matches every alert)</Muted>;
   return (
     <div className="condition">
       <ul>

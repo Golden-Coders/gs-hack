@@ -95,7 +95,7 @@ export default function People() {
       <PageHeader
         actions={
           <Button appearance="primary" onClick={handleStartNew}>
-            + Nowy team
+            + New team
           </Button>
         }
       >
@@ -105,10 +105,9 @@ export default function People() {
       {failure && <ErrorBox message={failure} onRetry={refresh} />}
 
       <div className="tm-layout">
-        {/* Lewa kolumna: lista zespołów */}
-        <aside className="tm-sidebar" aria-label="Lista zespołów">
+        <aside className="tm-sidebar" aria-label="Teams list">
           {(peopleRes.loading || teamsRes.loading) && teamsRes.data === null && <Loading />}
-          {!teamsRes.loading && teams.length === 0 && <Empty>Brak zespołów. Kliknij „+ Nowy team”.</Empty>}
+          {!teamsRes.loading && teams.length === 0 && <Empty>No teams yet. Click "+ New team".</Empty>}
           <ul className="tm-list">
             {teams.map((t) => {
               const active = !isCreatingNew && t.id === selectedId;
@@ -124,7 +123,7 @@ export default function People() {
                   >
                     <div className="tm-item-title">{t.name}</div>
                     <div className="tm-item-sub">
-                      {t.members.length > 0 ? `Osoby (${t.members.length}): ${memberNames}` : "Brak przypisanych osób"}
+                      {t.members.length > 0 ? `Members (${t.members.length}): ${memberNames}` : "No members assigned"}
                     </div>
                   </button>
                 </li>
@@ -133,7 +132,6 @@ export default function People() {
           </ul>
         </aside>
 
-        {/* Prawa kolumna: edytor zespołu i wybór osób z listy */}
         <div className="tm-main">
           {isCreatingNew || activeTeam ? (
             <TeamEditor
@@ -146,7 +144,7 @@ export default function People() {
           ) : (
             <Card>
               <Heading size="small" as="h2">
-                Wybierz team z listy po lewej stronie
+                Select a team from the list on the left
               </Heading>
             </Card>
           )}
@@ -181,7 +179,7 @@ function TeamEditor({
     setError(null);
     const cleanName = name.trim();
     if (!cleanName) {
-      setError("Podaj nazwę zespołu.");
+      setError("Enter a team name.");
       return;
     }
     const id = isNew ? slugify(cleanName) || `team-${Date.now()}` : initial.id;
@@ -220,7 +218,7 @@ function TeamEditor({
       const saved = (await resp.json()) as Team;
       onSaved(saved);
     } catch {
-      setError("Nie udało się połączyć z API.");
+      setError("Cannot connect to API.");
     } finally {
       setSaving(false);
     }
@@ -231,7 +229,7 @@ function TeamEditor({
     setSaving(true);
     setError(null);
     const err = await onDelete(initial.id);
-    if (err) setError(`Nie udało się usunąć zespołu: ${err}`);
+    if (err) setError(`Failed to delete team: ${err}`);
     setSaving(false);
   }
 
@@ -239,26 +237,26 @@ function TeamEditor({
     <div className="tm-editor">
       <header className="tm-editor-head">
         <Heading size="medium" as="h2">
-          {isNew ? "Nowy team" : name || initial.name}
+          {isNew ? "New team" : name || initial.name}
         </Heading>
       </header>
 
-      <Card title="1. Nazwa zespołu">
-        <Field label="Nazwa teamu">
+      <Card title="1. Team name">
+        <Field label="Team name">
           {(f) => (
             <TextInput
               {...f}
               value={name}
               onChange={(e) => setName(e.currentTarget.value)}
-              placeholder="np. Team Payments"
+              placeholder="e.g. Team Payments"
             />
           )}
         </Field>
       </Card>
 
-      <Card title="2. Osoby w zespole (zaznacz z listy)">
+      <Card title="2. Team members (select from list)">
         {people.length === 0 ? (
-          <Empty>Brak osób w systemie.</Empty>
+          <Empty>No people in directory.</Empty>
         ) : (
           <div className="tm-people-list">
             {people.map((p) => {
@@ -292,13 +290,13 @@ function TeamEditor({
 
       <div className="tm-savebar">
         <Button appearance="primary" isLoading={saving} isDisabled={saving} onClick={() => void handleSave()}>
-          {isNew ? "Utwórz team" : "Zapisz zmiany"}
+          {isNew ? "Create team" : "Save changes"}
         </Button>
         {!isNew && (
           <ConfirmInline
-            label="Usuń team"
-            question={`Usunąć team „${initial.name}”?`}
-            confirmLabel="Tak, usuń"
+            label="Delete team"
+            question={`Delete team "${initial.name}"?`}
+            confirmLabel="Yes, delete"
             busy={saving}
             onConfirm={() => void handleConfirmDelete()}
           />

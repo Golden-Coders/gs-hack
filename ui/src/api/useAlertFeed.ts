@@ -84,11 +84,11 @@ export function useAlertFeed() {
     api.GET("/alerts").then(
       ({ data, error }) => {
         if (data) replaceAll(data);
-        else setError(`Nie udało się pobrać alertów${error ? `: ${JSON.stringify(error)}` : ""}`);
+        else setError(`Failed to load alerts${error ? `: ${JSON.stringify(error)}` : ""}`);
         setLoading(false);
       },
       () => {
-        setError("Brak połączenia z backendem");
+        setError("Cannot connect to backend");
         setLoading(false);
       },
     );

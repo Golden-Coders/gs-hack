@@ -13,11 +13,11 @@ import "./Mappings.css";
 type Mapping = Schemas["MappingDef"];
 type Unmapped = Schemas["UnmappedSchema"];
 
-const SEVERITY_PL: Record<string, string> = {
-  critical: "Krytyczny",
-  error: "Błąd",
-  warning: "Ostrzeżenie",
-  info: "Informacja",
+const SEVERITY_LABEL: Record<string, string> = {
+  critical: "Critical",
+  error: "Error",
+  warning: "Warning",
+  info: "Info",
 };
 
 function newMapping(schema: string): Mapping {
@@ -32,15 +32,15 @@ function newMapping(schema: string): Mapping {
 }
 
 function cleanPath(p: string | null | undefined): string {
-  if (!p) return "Domyślny (nazwa schematu)";
+  if (!p) return "Default (schema name)";
   return p.startsWith("$.") ? p.slice(2) : p;
 }
 
 function severitySummary(m: Mapping): string {
   const s = m.severity;
-  if (s.type === "const") return `Stały: ${SEVERITY_PL[s.value ?? "warning"] ?? s.value}`;
-  if (s.type === "path") return `Z pola: ${cleanPath(s.path)}`;
-  return `Według warunku (${s.rules?.length ?? 0})`;
+  if (s.type === "const") return `Fixed: ${SEVERITY_LABEL[s.value ?? "warning"] ?? s.value}`;
+  if (s.type === "path") return `From field: ${cleanPath(s.path)}`;
+  return `By condition (${s.rules?.length ?? 0})`;
 }
 
 export default function Mappings() {
@@ -126,29 +126,28 @@ export default function Mappings() {
       <PageHeader
         actions={
           <Button appearance="primary" onClick={handleCreateBlank}>
-            + Nowy mapping
+            + New mapping
           </Button>
         }
       >
-        Mappingi
+        Mappings
       </PageHeader>
 
       {mappingsRes.error && <ErrorBox message={mappingsRes.error} onRetry={refresh} />}
 
-      {/* Baner z nowymi nieobsłużonymi typami zdarzeń (tylko gdy faktycznie jakieś czekają) */}
       {unmapped.length > 0 && (
-        <Card title={`Nowe nieobsłużone typy zdarzeń (${unmapped.length})`}>
+        <Card title={`New unmapped event schemas (${unmapped.length})`}>
           <ul className="mp-unmapped-list">
             {unmapped.map((u) => (
               <li key={u.schema} className="mp-unmapped-item">
                 <div>
                   <Text weight="semibold">{u.schema}</Text>
                   <div className="muted mp-small">
-                    Oczekujących zdarzeń: {u.count}
+                    Pending events: {u.count}
                   </div>
                 </div>
                 <Button appearance="primary" onClick={() => handleSelectUnmapped(u)}>
-                  Skonfiguruj
+                  Configure
                 </Button>
               </li>
             ))}
@@ -157,11 +156,10 @@ export default function Mappings() {
       )}
 
       <div className="mp-layout">
-        {/* Lewa kolumna: lista skonfigurowanych schematów */}
-        <aside className="mp-sidebar" aria-label="Lista mappingów">
+        <aside className="mp-sidebar" aria-label="Mappings list">
           {mappingsRes.loading && mappingsRes.data === null && <Loading />}
           {!mappingsRes.loading && mappings.length === 0 && (
-            <Empty>Brak mappingów. Kliknij „+ Nowy mapping”.</Empty>
+            <Empty>No mappings yet. Click "+ New mapping".</Empty>
           )}
           <ul className="mp-list">
             {mappings.map((m) => {
@@ -175,7 +173,7 @@ export default function Mappings() {
                   >
                     <div className="mp-item-title">{m.schema}</div>
                     <div className="mp-item-sub">
-                      Tytuł: <strong>{cleanPath(m.title)}</strong>
+                      Title: <strong>{cleanPath(m.title)}</strong>
                     </div>
                     <div className="mp-item-sub">{severitySummary(m)}</div>
                   </button>
@@ -185,7 +183,6 @@ export default function Mappings() {
           </ul>
         </aside>
 
-        {/* Prawa kolumna: prosty edytor wybranego mappingu */}
         <div className="mp-main">
           {activeMapping ? (
             <MappingEditor
@@ -199,7 +196,7 @@ export default function Mappings() {
           ) : (
             <Card>
               <Heading size="small" as="h2">
-                Wybierz mapping z listy po lewej stronie
+                Select a mapping from the list on the left
               </Heading>
             </Card>
           )}
