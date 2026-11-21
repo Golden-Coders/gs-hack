@@ -60,7 +60,7 @@ pub fn consumer(brokers: &str, group: &str, topics: &[&str]) -> anyhow::Result<S
 }
 
 /// Dekoduje payload wiadomości z JSON.
-pub fn decode<T: DeserializeOwned>(message: &BorrowedMessage<'_>) -> anyhow::Result<T> {
+pub fn decode<T: DeserializeOwned>(message: &impl Message) -> anyhow::Result<T> {
     let payload = message.payload().context("empty kafka message")?;
     serde_json::from_slice(payload).with_context(|| format!("decoding message from {}", message.topic()))
 }

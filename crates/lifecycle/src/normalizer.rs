@@ -1,12 +1,9 @@
 //! Normalizer: `events.raw` -> `events.normalized` (albo UNMAPPED) + replay UNMAPPED po zmianie mappingów.
 
-use std::time::Duration;
-
 use common::db::sqlx::{PgPool, Row};
-use common::kafka::rdkafka::consumer::CommitMode;
-use common::kafka::rdkafka::consumer::Consumer;
-use common::kafka::rdkafka::message::BorrowedMessage;
+use common::kafka::rdkafka::message::OwnedMessage;
 use common::kafka::rdkafka::producer::FutureProducer;
+use common::kafka::{ConcurrentConfig, LaneHandler};
 use contracts::{topics, Envelope, UiEvent, UiEventKind};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -27,6 +24,11 @@ pub async fn run_normalizer(
 }
 
 /// Jak `run_normalizer`, ale z podaną grupą i topikami (testy używają własnych, izolowanych).
+///
+/// Przetwarzanie jest współbieżne (`common::kafka::run_concurrent`): pas = hash klucza (`event_id`,
+/// unikalny, więc praktycznie pełna równoległość), commit offsetu dopiero po potwierdzeniu publikacji.
+/// Env: `NORMALIZER_LANES` (domyślnie 32 – praca jest I/O-bound: acks=all + ewentualny INSERT),
+/// `NORMALIZER_MAX_IN_FLIGHT` i pozostałe z `ConcurrentConfig::from_env`.
 pub async fn run_normalizer_with(
     group: &str,
     topics: Topics,
@@ -34,39 +36,31 @@ pub async fn run_normalizer_with(
     pool: PgPool,
     producer: FutureProducer,
     store: MappingStore,
-    mut shutdown: Shutdown,
+    shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let consumer = common::kafka::consumer(&brokers, group, &[topics.events_raw.as_str()])?;
-    loop {
-        let msg = tokio::select! {
-            _ = shutdown.changed() => return Ok(()),
-            m = consumer.recv() => match m {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::warn!(error = %e, "normalizer: kafka error");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-            },
-        };
-        // At-least-once: ponawiamy do skutku, offset commitujemy dopiero po zapisie skutków.
-        loop {
-            match handle(&msg, &pool, &producer, &store, &topics).await {
-                Ok(()) => break,
-                Err(e) => {
-                    tracing::warn!(error = %e, "normalizer: processing failed, retrying");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-        }
-        if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
-            tracing::warn!(error = %e, "normalizer: commit failed");
-        }
+    let consumer = common::kafka::concurrent_consumer(&brokers, group, &[topics.events_raw.as_str()])?;
+    let config = ConcurrentConfig::from_env("NORMALIZER", 32);
+    let handler = NormalizerHandler { pool, producer, store, topics };
+    common::kafka::run_concurrent(consumer, config, shutdown, move |_| handler.clone()).await
+}
+
+/// Bezstanowy handler pasa: współdzielone zasoby są tanie w klonowaniu (Arc w środku).
+#[derive(Clone)]
+struct NormalizerHandler {
+    pool: PgPool,
+    producer: FutureProducer,
+    store: MappingStore,
+    topics: Topics,
+}
+
+impl LaneHandler for NormalizerHandler {
+    async fn handle(&mut self, msg: &OwnedMessage) -> anyhow::Result<()> {
+        handle(msg, &self.pool, &self.producer, &self.store, &self.topics).await
     }
 }
 
 async fn handle(
-    msg: &BorrowedMessage<'_>,
+    msg: &OwnedMessage,
     pool: &PgPool,
     producer: &FutureProducer,
     store: &MappingStore,
@@ -109,14 +103,17 @@ async fn handle(
                 .fetch_one(pool)
                 .await?
                 .get("n");
-            common::kafka::publish(producer, &topics.events_unmapped, &env.schema, &env).await?;
             let ui = UiEvent {
                 alert_id: None,
                 kind: UiEventKind::Unmapped,
                 payload: json!({"schema": env.schema, "count": count}),
                 at: chrono::Utc::now(),
             };
-            common::kafka::publish(producer, &topics.ui_events, "unmapped", &ui).await?;
+            // Dwie niezależne publikacje: oba ack-i przed `Ok` (warunek commitu offsetu).
+            tokio::try_join!(
+                common::kafka::publish(producer, &topics.events_unmapped, &env.schema, &env),
+                common::kafka::publish(producer, &topics.ui_events, "unmapped", &ui),
+            )?;
         }
     }
     Ok(())
