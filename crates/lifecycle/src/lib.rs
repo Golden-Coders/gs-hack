@@ -77,6 +77,76 @@ pub(crate) fn is_permanent_pg_error(err: &anyhow::Error) -> bool {
     false
 }
 
+/// Opakowuje handler pasa: po `MAX_PERMANENT_RETRIES` trwałych błędach Postgresa dla tej samej
+/// wiadomości pomija ją (poison pill), zamiast blokować pas w nieskończoność.
+pub(crate) struct Guarded<H> {
+    inner: H,
+    label: &'static str,
+    current: Option<(i32, i64)>,
+    failures: u32,
+}
+
+impl<H> Guarded<H> {
+    pub(crate) fn new(inner: H, label: &'static str) -> Self {
+        Self {
+            inner,
+            label,
+            current: None,
+            failures: 0,
+        }
+    }
+}
+
+impl<H: Clone> Clone for Guarded<H> {
+    fn clone(&self) -> Self {
+        Self::new(self.inner.clone(), self.label)
+    }
+}
+
+impl<H: common::kafka::LaneHandler> common::kafka::LaneHandler for Guarded<H> {
+    async fn handle(
+        &mut self,
+        msg: &common::kafka::rdkafka::message::OwnedMessage,
+    ) -> anyhow::Result<()> {
+        use common::kafka::rdkafka::message::Message;
+        let id = (msg.partition(), msg.offset());
+        if self.current != Some(id) {
+            self.current = Some(id);
+            self.failures = 0;
+        }
+        match self.inner.handle(msg).await {
+            Ok(()) => {
+                self.failures = 0;
+                Ok(())
+            }
+            Err(e) if is_permanent_pg_error(&e) => {
+                self.failures += 1;
+                if self.failures >= MAX_PERMANENT_RETRIES {
+                    tracing::error!(
+                        error = %e,
+                        retries = self.failures,
+                        "{}: permanent postgres error, skipping message",
+                        self.label
+                    );
+                    self.failures = 0;
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn on_tick(&mut self) {
+        self.inner.on_tick().await
+    }
+
+    async fn on_revoke(&mut self) {
+        self.inner.on_revoke().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

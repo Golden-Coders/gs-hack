@@ -147,19 +147,28 @@ impl Engine {
     /// Offset commitowany po zapisaniu skutków; błąd bazy = ponowienie tej samej wiadomości.
     /// Kroki wykonują się w osobnych zadaniach, żeby wolna akcja nie blokowała partycji.
     pub async fn consume(self: Arc<Self>, brokers: String) -> anyhow::Result<()> {
-        let consumer = kafka::consumer(
+        self.consume_on(
             &brokers,
             topics::groups::RUNBOOKS,
-            &[topics::ALERTS_CHANGED, topics::RUNBOOKS_COMMANDS],
-        )?;
-        tracing::info!(
-            "consuming {} and {}",
             topics::ALERTS_CHANGED,
-            topics::RUNBOOKS_COMMANDS
-        );
+            topics::RUNBOOKS_COMMANDS,
+        )
+        .await
+    }
+
+    /// Jak `consume`, ale z jawną grupą i topikami (izolowane testy integracyjne i benchmark).
+    pub async fn consume_on(
+        self: Arc<Self>,
+        brokers: &str,
+        group: &str,
+        changed: &str,
+        commands: &str,
+    ) -> anyhow::Result<()> {
+        let consumer = kafka::consumer(brokers, group, &[changed, commands])?;
+        tracing::info!("consuming {changed} and {commands}");
         loop {
             let msg = consumer.recv().await.context("receiving from kafka")?;
-            let runs = if msg.topic() == topics::RUNBOOKS_COMMANDS {
+            let runs = if msg.topic() == commands {
                 match kafka::decode::<RunbookCommand>(&msg) {
                     Ok(cmd) => self
                         .retrying("applying command", || self.apply_command(&cmd))

@@ -8,7 +8,7 @@ publish.workspace = true
 [features]
 default = ["db", "kafka"]
 db = ["dep:sqlx"]
-kafka = ["dep:rdkafka", "dep:chrono"]
+kafka = ["dep:rdkafka", "dep:chrono", "dep:futures"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -21,3 +21,4 @@ serde_json = { workspace = true }
 sqlx = { workspace = true, optional = true }
 rdkafka = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }

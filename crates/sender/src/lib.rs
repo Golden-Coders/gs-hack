@@ -5,7 +5,6 @@ pub mod adapters;
 pub mod engine;
 pub mod store;
 
-use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,42 +40,7 @@ fn compute_retry_wait(not_before: chrono::DateTime<Utc>, now: chrono::DateTime<U
     }
 }
 
-/// Śledzi offsety w locie per partycja i wyznacza najwyższy ciągły offset gotowy do commitu.
-/// Gwarantuje commitowanie ściśle w kolejności (bez przeskakiwania nieukończonych wiadomości — at-least-once).
-#[derive(Debug, Default)]
-pub struct OffsetTracker {
-    partitions: HashMap<i32, BTreeMap<i64, bool>>,
-}
-
-impl OffsetTracker {
-    pub fn track(&mut self, partition: i32, offset: i64) {
-        self.partitions
-            .entry(partition)
-            .or_default()
-            .insert(offset, false);
-    }
-
-    /// Oznacza offset jako przetworzony i zwraca najwyższy ciągły ukończony offset tej partycji (jeśli okno się przesunęło).
-    pub fn mark_done(&mut self, partition: i32, offset: i64) -> Option<i64> {
-        let map = self.partitions.entry(partition).or_default();
-        if let Some(done) = map.get_mut(&offset) {
-            *done = true;
-        }
-        let mut commit_offset = None;
-        while let Some((&first_off, &is_done)) = map.iter().next() {
-            if !is_done {
-                break;
-            }
-            map.remove(&first_off);
-            commit_offset = Some(first_off);
-        }
-        commit_offset
-    }
-
-    pub fn in_flight(&self) -> usize {
-        self.partitions.values().map(BTreeMap::len).sum()
-    }
-}
+pub use common::kafka::OffsetTracker;
 
 fn sender_concurrency() -> usize {
     std::env::var("SENDER_CONCURRENCY")

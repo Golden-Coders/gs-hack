@@ -1,9 +1,14 @@
 //! Dedup i cykl życia alertów (design D4): single writer per fingerprint.
 //!
-//! Jeden konsument czyta `events.normalized` i `alerts.commands` (oba z kluczem = fingerprint,
-//! więc dany fingerprint trafia do jednej instancji). Stan trzymamy w cache; przejścia stanu
-//! zapisujemy do Postgresa synchronnie (przed publikacją i commitem), a samo zliczanie
-//! duplikatów jest wsadowe (flush co ~1 s, inkrement jako delta).
+//! Konsument czyta `events.normalized` i `alerts.commands` (oba z kluczem = fingerprint,
+//! więc dany fingerprint trafia do jednej instancji) i przetwarza je współbieżnie
+//! (`common::kafka::run_concurrent`): pas = hash fingerprintu (niezależnie od topiku), więc wszystko,
+//! co dotyczy jednego fingerprintu, idzie sekwencyjnie przez jeden pas, a pasy pracują równolegle.
+//! Każdy pas ma WŁASNĄ instancję [`Dedup`] (własny cache, `&mut self` bez synchronizacji) – single
+//! writer per fingerprint zostaje zachowany, bo fingerprint jest przypięty do jednego pasa.
+//! Stan trzymamy w cache; przejścia stanu zapisujemy do Postgresa synchronnie (przed publikacją
+//! i commitem), a samo zliczanie duplikatów jest wsadowe (flush co ~1 s w `on_tick`, inkrement jako delta).
+//! Przed oddaniem partycji i przy shutdownie moduł współbieżny woła `on_revoke` (flush + czyszczenie cache).
 //!
 //! Znane ograniczenie (akceptowane w D4): niezflushowane inkrementy licznika giną przy awarii
 //! procesu, a powtórne dostarczenie komendy ack/resolve po awarii między zapisem a publikacją
@@ -11,19 +16,13 @@
 //! porównaniem `event_id` z ostatnim zdarzeniem alertu).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use common::db::sqlx::{PgPool, Row};
-use common::kafka::rdkafka::config::ClientConfig;
-use common::kafka::rdkafka::consumer::{
-    BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer,
-};
-use common::kafka::rdkafka::message::{BorrowedMessage, Message};
+use common::kafka::rdkafka::message::{Message, OwnedMessage};
 use common::kafka::rdkafka::producer::FutureProducer;
-use common::kafka::rdkafka::ClientContext;
+use common::kafka::{ConcurrentConfig, LaneHandler};
 use contracts::{
     topics, Actor, AlertChanged, AlertCommand, AlertCommandKind, AlertState, CanonicalEvent,
     Severity, Timestamp, Transition, UiEvent, UiEventKind,
@@ -34,19 +33,6 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{Shutdown, Topics};
-
-/// Po przejęciu/utracie partycji ustawia flagę; pętla flushuje i czyści cache.
-struct RebalanceContext {
-    rebalanced: Arc<AtomicBool>,
-}
-
-impl ClientContext for RebalanceContext {}
-
-impl ConsumerContext for RebalanceContext {
-    fn post_rebalance(&self, _base_consumer: &BaseConsumer<Self>, _rebalance: &Rebalance<'_>) {
-        self.rebalanced.store(true, Ordering::SeqCst);
-    }
-}
 
 const MAX_PERMANENT_FLUSH_FAILURES: u32 = 5;
 
@@ -106,11 +92,20 @@ fn enum_parse<T: DeserializeOwned>(s: &str) -> Result<T> {
         .with_context(|| format!("unknown enum value `{s}`"))
 }
 
+/// Domyślna liczba pasów dedupa (`DEDUP_LANES`). Pas trzyma połączenie PG tylko w trakcie zapisu
+/// (duplikat = sam inkrement w pamięci), więc 16 pasów przy puli 16 połączeń nie głodzi normalizera.
+const DEFAULT_LANES: usize = 16;
+
+/// Łączny limit wpisów cache (dzielony po równo między pasy).
+const CACHE_LIMIT_TOTAL: usize = 50_000;
+
+/// Stan jednego pasa: cache alertów fingerprintów przypiętych do tego pasa.
 struct Dedup {
     pool: PgPool,
     producer: FutureProducer,
     topics: Topics,
     cache: HashMap<String, AlertEntry>,
+    cache_limit: usize,
 }
 
 impl Dedup {
@@ -519,7 +514,7 @@ impl Dedup {
             .await
     }
 
-    async fn handle(&mut self, msg: &BorrowedMessage<'_>) -> Result<()> {
+    async fn handle_message(&mut self, msg: &OwnedMessage) -> Result<()> {
         if msg.topic() == self.topics.alerts_commands {
             match common::kafka::decode::<AlertCommand>(msg) {
                 Ok(c) => self.handle_command(c).await,
@@ -538,10 +533,24 @@ impl Dedup {
             }
         }
     }
+}
 
-    /// Po zmianie przypisania partycji: najpierw flush, potem czyszczenie cache
+impl LaneHandler for Dedup {
+    async fn handle(&mut self, msg: &OwnedMessage) -> Result<()> {
+        self.handle_message(msg).await
+    }
+
+    /// Flush wsadowy liczników + prosty limit pamięci (usuwamy wpisy bez zaległych inkrementów).
+    async fn on_tick(&mut self) {
+        self.flush_all().await;
+        if self.cache.len() > self.cache_limit {
+            self.cache.retain(|_, e| e.dirty);
+        }
+    }
+
+    /// Przed oddaniem partycji i przy shutdownie: najpierw flush, potem czyszczenie cache
     /// (stan dla przejętych partycji doczytujemy leniwie z Postgresa).
-    async fn on_rebalance(&mut self) {
+    async fn on_revoke(&mut self) {
         self.flush_all().await;
         self.cache.clear();
     }
@@ -566,94 +575,41 @@ pub async fn run_dedup(
 }
 
 /// Jak `run_dedup`, ale z podaną grupą i topikami (testy używają własnych, izolowanych).
+///
+/// Env: `DEDUP_LANES` (domyślnie 16) oraz pozostałe z `ConcurrentConfig::from_env` (prefiks `DEDUP`).
 pub async fn run_dedup_with(
     group: &str,
     topics: Topics,
     brokers: String,
     pool: PgPool,
     producer: FutureProducer,
-    mut shutdown: Shutdown,
+    shutdown: Shutdown,
 ) -> Result<()> {
-    let rebalanced = Arc::new(AtomicBool::new(false));
-    let consumer: StreamConsumer<RebalanceContext> = ClientConfig::new()
-        .set("bootstrap.servers", &brokers)
-        .set("group.id", group)
-        .set("enable.auto.commit", "false")
-        .set("auto.offset.reset", "earliest")
-        .set("session.timeout.ms", "10000")
-        .create_with_context(RebalanceContext {
-            rebalanced: rebalanced.clone(),
-        })
-        .context("creating dedup consumer")?;
-    consumer.subscribe(&[
-        topics.events_normalized.as_str(),
-        topics.alerts_commands.as_str(),
-    ])?;
-
-    let mut d = Dedup {
-        pool,
-        producer,
-        topics,
-        cache: HashMap::new(),
-    };
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    loop {
-        if rebalanced.swap(false, Ordering::SeqCst) {
-            d.on_rebalance().await;
-        }
-        tokio::select! {
-            _ = shutdown.changed() => {
-                d.flush_all().await;
-                return Ok(());
-            }
-            _ = tick.tick() => {
-                d.flush_all().await;
-                if d.cache.len() > 50_000 {
-                    d.cache.retain(|_, e| e.dirty);
-                }
-            }
-            m = consumer.recv() => {
-                let msg = match m {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "dedup: kafka error");
-                        tokio::select! {
-                            _ = shutdown.changed() => {
-                                d.flush_all().await;
-                                return Ok(());
-                            }
-                            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                        }
-                        continue;
-                    }
-                };
-                if rebalanced.swap(false, Ordering::SeqCst) {
-                    d.on_rebalance().await;
-                }
-                let mut permanent_failures = 0u32;
-                while let Err(e) = d.handle(&msg).await {
-                    if crate::is_permanent_pg_error(&e) {
-                        permanent_failures += 1;
-                        if permanent_failures >= crate::MAX_PERMANENT_RETRIES {
-                            tracing::error!(error = %e, retries = permanent_failures, "dedup: permanent postgres error, skipping message");
-                            break;
-                        }
-                    }
-                    tracing::warn!(error = %e, "dedup: processing failed, retrying");
-                    tokio::select! {
-                        _ = shutdown.changed() => {
-                            d.flush_all().await;
-                            return Ok(());
-                        }
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                    }
-                }
-                if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
-                    tracing::warn!(error = %e, "dedup: commit failed");
-                }
-            }
-        }
-    }
+    let consumer = common::kafka::concurrent_consumer(
+        &brokers,
+        group,
+        &[
+            topics.events_normalized.as_str(),
+            topics.alerts_commands.as_str(),
+        ],
+    )
+    .context("creating dedup consumer")?;
+    let config =
+        ConcurrentConfig::from_env("DEDUP", DEFAULT_LANES).with_tick(Duration::from_secs(1));
+    let cache_limit = (CACHE_LIMIT_TOTAL / config.lanes.max(1)).max(1);
+    common::kafka::run_concurrent(consumer, config, shutdown, move |_| {
+        crate::Guarded::new(
+            Dedup {
+                pool: pool.clone(),
+                producer: producer.clone(),
+                topics: topics.clone(),
+                cache: HashMap::new(),
+                cache_limit,
+            },
+            "dedup",
+        )
+    })
+    .await
 }
 
 #[cfg(test)]
