@@ -100,31 +100,31 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 - [x] 14.1 Feed alertów na żywo z filtrem „mój zespół / wszystkie”; weryfikacja: nowy alert pojawia się bez odświeżania
 - [x] 14.2 Szczegóły alertu: prezentacja wg reguły, licznik, epizody, ack/resolve, runbooki ze statusem kroków i akcjami (zrobione, ponów, pomiń, tryb ręczny), dostarczenia z zakładką nieudanych i „wyślij ponownie”, dziennik; weryfikacja: scenariusz alertu Settlements z wyróżnieniem na czerwono
-- [ ] 14.3 Kolejka zatwierdzeń; weryfikacja: zatwierdzenie usuwa krok z kolejki i aktualizuje szczegóły alertu
-- [ ] 14.4 Podgląd symulowanych SMS/telefonów z przełącznikiem dostępności kanału; weryfikacja: wyłączenie SMS pokazuje fallback w szczegółach alertu
+- [ ] 14.3 Kolejka zatwierdzeń; weryfikacja: zatwierdzenie usuwa krok z kolejki i aktualizuje szczegóły alertu _(ekran `Approvals` zmergowany w PR #9; weryfikacja na prawdziwym backendzie razem z 18.3)_
+- [ ] 14.4 Podgląd symulowanych SMS/telefonów z przełącznikiem dostępności kanału; weryfikacja: wyłączenie SMS pokazuje fallback w szczegółach alertu _(`MockOutbox` w PR #9; łańcuch fallbacku w szczegółach alertu w otwartym PR #29)_
 
 ## 15. UI — ekrany konfiguracji (P4)
 
-- [ ] 15.1 Edytor reguł: kreator drzewa warunków ↔ YAML, podpowiedzi pól, odbiorcy, prezentacja, „testuj na zdarzeniu”; weryfikacja: osoba spoza zespołu tworzy regułę w kreatorze bez pisania YAML
-- [ ] 15.2 Mappingi i UNMAPPED: lista, przykładowy payload, tworzenie mappingu przez wybór pól, podgląd wyniku; weryfikacja: nowy schemat → alert w feedzie w < 2 min
-- [ ] 15.3 Formularz akcji HTTP i lista brakujących akcji z „Dodaj”; weryfikacja: dodanie `flush_cdn` zmienia krok runbooka na automatyczny
+- [ ] 15.1 Edytor reguł: kreator drzewa warunków ↔ YAML, podpowiedzi pól, odbiorcy, prezentacja, „testuj na zdarzeniu”; weryfikacja: osoba spoza zespołu tworzy regułę w kreatorze bez pisania YAML _(zmergowane w PR #10; weryfikacja do przećwiczenia w 18.6)_
+- [ ] 15.2 Mappingi i UNMAPPED: lista, przykładowy payload, tworzenie mappingu przez wybór pól, podgląd wyniku; weryfikacja: nowy schemat → alert w feedzie w < 2 min _(zmergowane w PR #10; weryfikacja w 19.H1 / 18.6)_
+- [ ] 15.3 Formularz akcji HTTP i lista brakujących akcji z „Dodaj”; weryfikacja: dodanie `flush_cdn` zmienia krok runbooka na automatyczny _(zmergowane w PR #10; weryfikacja w 18.6)_
 - [x] 15.4 Widoki tylko do odczytu: runbooki oraz osoby/zespoły/preferencje ze ścieżką pliku; weryfikacja: widoki pokazują dane z seedu
 
 ## 16. Dokumentacja (P4, z wkładem właścicieli)
 
-- [ ] 16.1 `README.md`: uruchomienie w ≤ 2 komendach, architektura (diagram z design), jak dodać źródło, schemat, regułę, kanał, akcję, runbook; weryfikacja: osoba spoza strumienia uruchamia demo ze świeżego klona wg README
+- [ ] 16.1 `README.md`: uruchomienie w ≤ 2 komendach, architektura (diagram z design), jak dodać źródło, schemat, regułę, kanał, akcję, runbook; weryfikacja: osoba spoza strumienia uruchamia demo ze świeżego klona wg README _(wersja bazowa w PR #11; uzupełnienia — kanał, runbook, AI, token API, `make demo` — w otwartym PR #29)_
 - [x] 16.2 `docs/MOCKS.md` (co jest symulowane i jak podmienić na prawdziwe) oraz sekcja o bezpieczeństwie i użyciu AI w zgłoszeniu; weryfikacja: każdy mock z compose jest opisany
 
 ## 17. Dane i skrypt demo (P4, z wkładem właścicieli)
 
-- [ ] 17.1 `make demo`: seed + generator przykładowych zdarzeń dla scenariusza (3 schematy, ×500 duplikatów, runbook z zatwierdzeniem, awaria kanału, nieznany schemat, runbook z nieznaną akcją); weryfikacja: komenda przechodzi na czystym środowisku
-- [ ] 17.2 Scenariusz nagrania wideo (≤ 5 min) z kolejnością kroków i oczekiwanymi efektami; weryfikacja: próba generalna przechodzi 2× bez ingerencji
+- [ ] 17.1 `make demo`: seed + generator przykładowych zdarzeń dla scenariusza (3 schematy, ×500 duplikatów, runbook z zatwierdzeniem, awaria kanału, nieznany schemat, runbook z nieznaną akcją); weryfikacja: komenda przechodzi na czystym środowisku _(`Makefile`, `scripts/demo/run.sh` zmergowane w PR #28, sprawdzone 3× na żywym stacku; brakuje przebiegu na czystym klonie i seedu runbooka z nieznaną akcją od P3)_
+- [ ] 17.2 Scenariusz nagrania wideo (≤ 5 min) z kolejnością kroków i oczekiwanymi efektami; weryfikacja: próba generalna przechodzi 2× bez ingerencji _(`docs/DEMO.md` w PR #28; próby generalne przed nami)_
 
 ## 18. Integracja end-to-end (wszyscy)
 
 - [x] 18.1 Pierwszy przepływ: zdarzenie WORKFLOW_FAILED przez HTTP → alert → reguła Settlements → SMS (mock) i UI; weryfikacja: dostarczenie widoczne w UI z poprawnym `received_at`/`delivered_at`
 - [x] 18.2 Wszystkie trzy zdarzenia z Appendix A dają alerty i dostarczenia zgodnie z czterema regułami z zadania; weryfikacja: test integracyjny w compose
-- [ ] 18.3 Runbooki end-to-end: Settlements (auto-retry + eskalacja z zatwierdzeniem), payments (MANUAL w emailu), pricing (MANUAL z linkiem w SMS); weryfikacja: kroki i dziennik widoczne w UI
+- [ ] 18.3 Runbooki end-to-end: Settlements (auto-retry + eskalacja z zatwierdzeniem), payments (MANUAL w emailu), pricing (MANUAL z linkiem w SMS); weryfikacja: kroki i dziennik widoczne w UI _(części gotowe: runbooki P3 + escalate/notify przez sender (PR #17, #22), MANUAL w powiadomieniach (8.3); brak przebiegu end-to-end)_
 - [ ] 18.4 Odporność: wyłączenie Mailpit i symulowanego SMS, restart każdej binarki w trakcie ruchu; weryfikacja: brak utraconych alertów i zdublowanych powiadomień
 - [ ] 18.5 Skalowanie: 2 instancje `lifecycle` i `sender` pod obciążeniem; weryfikacja: poprawny dedup i pomiar w `docs/LOADTEST.md`
 - [ ] 18.6 Kryteria demo: nowy schemat w < 2 min z UI, nowa akcja HTTP w < 1 min, zmiana reguły bez restartu, runbook z poleceniem shell niczego nie wykonuje; weryfikacja: każdy punkt przećwiczony na czystym klonie
@@ -142,10 +142,12 @@ Jedna kolejka zamiast dwóch strumieni: domyka otwarte zadania P1 (3.4, 5.2, 5.3
 
 **Stan na start (2026-11-21):** sekcje 2, 4, 6–9 zrobione; 3.1–3.2 zweryfikowane (testy `lifecycle` zielone, w tym 2 testy `#[ignore]` czekające na już gotowe `condition`); 3.4 zmergowane (PR #14); `/stream` w `api` to nadal szkielet z Fazy 0 (tylko `hello`), więc feed UI nie dostaje zdarzeń na żywo; `lifecycle` w compose był zatrzymany; PR #17 (P3, runbooki ↔ router) zmergowany — 19.A3 to przegląd po fakcie na `main`.
 
+**Stan po aktualizacji (2026-11-21, `main` @ PR #28):** etapy A, B, C, D zielone (PR #18–#20, #25). Poza planem zmergowane: izolacja testów `lifecycle`/`ingest` od działającego compose (PR #21, #23), token API dla wszystkich tras `api` poza `/health` (PR #26), poprawki SSE/`latency.sql`/`lag.sh` z testów (PR #24), `first_seen`/`opened_at` przy reopen (PR #27). Do zrobienia: E1 (pomiar 1 — tabela w `docs/LOADTEST.md` pusta; testowy odczyt `latency.sql`: p50 ≈ 32 ms, p99 ≈ 67 ms na 108 dostarczeniach, bez obciążenia), F1, G1, H1, H2. Otwarte poza pipeline'em: `rule_ids`/`teams`/`color` w `GET /alerts` (design, Open Questions).
+
 ### Etap A — domknięcie i merge (start od razu)
 - [x] 19.A1 Merge `p1/mapping-preview` (`POST /mappings/preview`, walidacja kompilacji w `PUT`) do `main`; bramka: bazowa ⇒ odhaczyć 3.4
 - [x] 19.A2 Usunąć `#[ignore]` z `trade_fixture_severity_rules` i `alertmanager_resolved_condition` w `crates/lifecycle/src/mapping.rs`; bramka: `cargo test -p lifecycle --lib` bez ignorowanych
-- [ ] 19.A3 Przegląd PR #17 (P3) pod kątem routera i `rule_ids` (otwarta kwestia D10): router/sender nie zmieniają kontraktu, `deliveries.requested` z `escalate`/`notify` przechodzi przez sender; bramka: komentarz w PR + zielona bramka bazowa na gałęzi PR
+- [x] 19.A3 Przegląd PR #17 (P3) pod kątem routera i `rule_ids` (otwarta kwestia D10): router/sender nie zmieniają kontraktu, `deliveries.requested` z `escalate`/`notify` przechodzi przez sender; bramka: komentarz w PR + zielona bramka bazowa na gałęzi PR (przegląd zrobiony: kontrakt bez zmian, `rule_ids` rozwiązane w definicji runbooka — design D10; znalezisko o mylącym dzienniku `escalate`/`notify` poprawione w PR #22)
 
 ### Etap B ∥ — SSE `/stream` (design D13; równolegle z A i C)
 - [x] 19.B1 `crates/api/src/stream.rs`: konsument `alerts.changed` i `ui.events` (grupa `api-sse-<instancja>`, start od końca topiku), `tokio::sync::broadcast` do klientów, `event: alert_changed` / `event: ui_event` wg `openapi.yaml`, heartbeat; wolny klient nie blokuje innych (lagged ⇒ pominięcie); bramka: `curl -N :8080/stream` pokazuje `alert_changed` po `rpk topic produce alerts.changed < crates/contracts/fixtures/topics/alerts.changed.json` + test jednostkowy formatu zdarzeń
@@ -177,6 +179,8 @@ A1 ─ A2 ─ A3 ──┬─ C1 ─ C2 ─┬─ D1 ─ D2 ─ F1 ─ G1 ─ H1
                │           └─ E1 ∥ ───────────┘
 B1 ─ B2 ∥ ─────┴──────────── (wymagane przed H1: feed na żywo)
 ```
+
+Postęp: A1–A3, B1–B2, C1–C2, D1–D2 ✔ · następne: E1 ∥ F1 → G1 → H1 → H2.
 
 ## Workflow follow-up
 
