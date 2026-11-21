@@ -2,8 +2,10 @@
 // a gdy backend nie ma jeszcze podglądu (501) – przybliżony wynik liczony lokalnie, wyraźnie oznaczony.
 import { useEffect, useRef, useState } from "react";
 import { api, type Schemas } from "../../api/client";
+import { describeError } from "../../api/request";
 import { SeverityBadge } from "../../components/Badges";
 import { formatValue } from "../../components/Presentation";
+import { ErrorBox } from "../../ui/primitives";
 import type { Mapping } from "./draft";
 import { localPreview, type PreviewResult } from "./localPreview";
 
@@ -52,7 +54,7 @@ export default function PreviewPanel({
         const { data, error, response } = await api.POST("/mappings/preview", { body: { mapping, payload } });
         if (data) next = { kind: "ok", result: fromServer(data) };
         else if (response.status === 400) {
-          next = { kind: "error", message: [error?.error, error?.detail].filter(Boolean).join(": ") || "Mapping odrzucony przez serwer (400)." };
+          next = { kind: "error", message: describeError(error, response) };
         } else {
           // 501 (podgląd niezaimplementowany), 404/405 albo inny błąd serwera – zostaje wynik lokalny
           next = { kind: "ok", result: localPreview(mapping, payload) };
@@ -83,7 +85,7 @@ export default function PreviewPanel({
               Odśwież podgląd
             </button>
           </div>
-          {state.kind === "error" && <p className="error-box">{state.message}</p>}
+          {state.kind === "error" && <ErrorBox message={state.message} />}
           {shown && state.kind !== "error" && (
             <>
               {shown.origin === "local" && (

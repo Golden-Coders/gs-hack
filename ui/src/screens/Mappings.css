@@ -1,10 +1,7 @@
 .mp h1 { margin: 0 0 var(--space-1); }
-.mp h2 { font-size: 16px; margin: 0 0 var(--space-2); }
-.mp h3 { font-size: 14px; margin: 0; display: flex; align-items: baseline; gap: var(--space-2); }
 .mp-head, .mp-editor-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3); }
 .mp-head p, .mp-editor-head p { margin: 0; max-width: 72ch; }
 .mp-small { font-size: 12px; }
-.mp-block { margin-bottom: var(--space-6); }
 
 .mp-success { color: var(--green); background: var(--green-bg); border-radius: var(--radius); padding: var(--space-2) var(--space-3); }
 .mp-success a { color: inherit; font-weight: 600; }
@@ -23,48 +20,37 @@
 .mp-sample-view pre { margin: var(--space-2) 0 0; max-height: 180px; overflow: auto; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 6px; padding: var(--space-2); font-size: 12px; }
 .mp-manual { max-width: 520px; }
 
-/* tabela mappingów */
-.mp-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.mp-table { width: 100%; border-collapse: collapse; }
-.mp-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--text-muted); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); white-space: nowrap; }
-.mp-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); vertical-align: middle; }
-.mp-table tbody tr:last-child td { border-bottom: 0; }
-.mp-actions-cell { text-align: right; white-space: nowrap; }
-.mp-actions-cell button + button { margin-left: var(--space-2); }
-.mp-confirm { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; white-space: normal; }
+/* tabela mappingów (styl tabeli: .data-table) */
+.mp-actions-cell { text-align: right; }
+.mp-row-actions { display: flex; gap: var(--space-2); align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 
-/* formularze */
-.mp-lbl { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-muted); margin-bottom: var(--space-2); min-width: 0; }
-.mp-lbl input, .mp-lbl select, .mp-lbl textarea, .mp-row select, .mp-inline input { padding: 5px var(--space-2); min-height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; min-width: 0; }
-.mp-lbl textarea { resize: vertical; width: 100%; box-sizing: border-box; }
+/* formularze (pola: Field z ui.css) */
+.mp-inline input { min-height: 32px; font-size: 13px; min-width: 0; }
 .mp-inline { display: flex; gap: var(--space-2); align-items: center; }
 .mp-grow { flex: 1 1 160px; }
 .mp-check, .mp-radios label { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .mp-radios { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .mp-rows { list-style: none; margin: 0 0 var(--space-2); padding: 0; }
 .mp-row { display: flex; gap: var(--space-2); align-items: flex-end; flex-wrap: wrap; }
+.mp-row .field, .mp-leaf .field { margin-bottom: var(--space-2); min-width: 0; }
 .mp-row > button { margin-bottom: var(--space-2); }
 .mp-leaf { display: flex; gap: var(--space-2); flex-wrap: wrap; flex: 1 1 320px; }
-.mp-leaf .mp-lbl:first-child { flex: 1 1 140px; }
+.mp-leaf .field:first-child { flex: 1 1 140px; }
 .mp-row-rule { padding-bottom: var(--space-1); border-bottom: 1px dashed var(--border); margin-bottom: var(--space-2); }
 .mp-actions { display: flex; gap: var(--space-2); }
 
 /* edytor */
-.mp-editor h2 { font-size: 18px; margin: 0 0 var(--space-1); }
+.mp-editor-head h2 { font-size: 18px; margin: 0 0 var(--space-1); }
 .mp-grid { display: grid; grid-template-columns: minmax(300px, 5fr) minmax(360px, 6fr); gap: var(--space-4); align-items: start; }
 .mp-left { position: sticky; top: var(--space-3); max-height: calc(100vh - 24px); overflow: auto; }
-.mp-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3); }
-.mp-section > header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-.mp-step { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
-.mp-modes { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
-.mp-modes button { border: 0; border-radius: 0; background: transparent; }
-.mp-modes button + button { border-left: 1px solid var(--border); }
-.mp-modes button[aria-pressed="true"], .mp-modes button[aria-pressed="true"]:hover:not(:disabled) { background: var(--text); color: var(--surface); }
+.mp-step { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); margin-right: var(--space-2); }
+.mp-left .segmented { flex-wrap: wrap; max-width: 100%; }
 .mp-pick-btn { font-size: 12px; min-height: 28px; padding: 2px var(--space-2); white-space: nowrap; }
 .mp-pick-btn[aria-pressed="true"], .mp-pick-btn[aria-pressed="true"]:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--blue-bg); }
 .mp-card-top button { white-space: nowrap; }
 .mp-tree-box { border: 1px solid var(--border); border-radius: 6px; padding: var(--space-2); background: var(--surface-muted); max-height: 52vh; overflow: auto; }
 .mp-sample { margin-top: var(--space-3); }
+.mp-sample textarea { resize: vertical; }
 .mp-sample summary { cursor: pointer; font-size: 12px; color: var(--text-muted); margin-bottom: var(--space-2); }
 
 /* podgląd */

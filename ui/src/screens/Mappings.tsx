@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
-import { useStream } from "../api/stream";
+import { send } from "../api/request";
+import { usePollWhenQuiet, useStream } from "../api/stream";
+import { useResource } from "../api/useResource";
+import { Card, ConfirmInline, Empty, ErrorBox, Field, Loading } from "../ui/primitives";
+import { formatTime } from "../ui/format";
 import MappingEditor from "./mappings/MappingEditor";
 import { parseSample } from "./mappings/sample";
 import "./Mappings.css";
@@ -36,43 +40,36 @@ function SampleView({ sample }: { sample: unknown }) {
 }
 
 export default function Mappings() {
-  const [unmapped, setUnmapped] = useState<Unmapped[]>([]);
-  const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const unmappedRes = useResource(() => api.GET("/unmapped"));
+  const mappingsRes = useResource(() => api.GET("/mappings"));
+  const unmapped: Unmapped[] = unmappedRes.data ?? [];
+  const mappings: Mapping[] = mappingsRes.data ?? [];
   const [editing, setEditing] = useState<Editing | null>(null);
   const [notice, setNotice] = useState<{ schema: string; version?: number } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const timers = useRef<number[]>([]);
 
-  const load = useCallback(async () => {
-    try {
-      const [u, m] = await Promise.all([api.GET("/unmapped"), api.GET("/mappings")]);
-      if (u.data) setUnmapped(u.data);
-      if (m.data) setMappings(m.data);
-      const failed = !u.data ? u : !m.data ? m : null;
-      setError(failed ? `Nie udało się pobrać danych (${failed.response.status}).` : null);
-    } catch (e) {
-      setError(`Brak połączenia z serwerem: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Ciche odświeżenie obu list (bez wskaźnika ładowania).
+  const { refresh: refreshUnmapped } = unmappedRes;
+  const { refresh: refreshMappings } = mappingsRes;
+  const refresh = useCallback(() => {
+    refreshUnmapped();
+    refreshMappings();
+  }, [refreshUnmapped, refreshMappings]);
 
   useEffect(() => {
-    void load();
     const pending = timers.current;
     return () => pending.forEach((t) => window.clearTimeout(t));
-  }, [load]);
+  }, []);
 
   // Nowe UNMAPPED i zmiany konfiguracji przychodzą na żywo (na mocku SSE jest wyłączone – służy przycisk „Odśwież”).
   useStream((msg) => {
-    if (msg.type === "ui_event" && (msg.data.kind === "unmapped" || msg.data.kind === "config_changed")) void load();
+    if (msg.type === "ui_event" && (msg.data.kind === "unmapped" || msg.data.kind === "config_changed")) refresh();
   });
+  usePollWhenQuiet(refresh);
 
   function startNew(u: Unmapped) {
     setNotice(null);
@@ -101,25 +98,18 @@ export default function Mappings() {
   function saved(m: Mapping) {
     setEditing(null);
     setNotice({ schema: m.schema, version: m.version });
-    void load();
+    refresh();
     // Ponowne przetworzenie UNMAPPED dzieje się asynchronicznie – odświeżamy listę jeszcze dwa razy.
-    timers.current.push(window.setTimeout(() => void load(), 2_000), window.setTimeout(() => void load(), 5_000));
+    timers.current.push(window.setTimeout(refresh, 2_000), window.setTimeout(refresh, 5_000));
   }
 
   async function remove(schema: string) {
     setDeleting(true);
     setDeleteError(null);
-    try {
-      const { response } = await api.DELETE("/mappings/{schema}", { params: { path: { schema } } });
-      if (response.ok) {
-        setConfirmDelete(null);
-        await load();
-      } else setDeleteError(`Nie udało się usunąć mappingu ${schema} (${response.status}).`);
-    } catch (e) {
-      setDeleteError(`Brak połączenia z serwerem: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setDeleting(false);
-    }
+    const failure = await send(() => api.DELETE("/mappings/{schema}", { params: { path: { schema } } }));
+    if (failure) setDeleteError(`Nie udało się usunąć mappingu ${schema}: ${failure}`);
+    else refresh();
+    setDeleting(false);
   }
 
   if (editing) {
@@ -148,12 +138,11 @@ export default function Mappings() {
             przykładowym payloadzie – zdarzenia zostaną przetworzone i pojawią się w feedzie.
           </p>
         </div>
-        <button type="button" onClick={() => void load()}>
+        <button type="button" onClick={refresh}>
           Odśwież
         </button>
       </header>
 
-      {error && <p className="error-box" role="alert">{error}</p>}
       {notice && (
         <p className="mp-success" role="status">
           Zapisano mapping <strong className="mono">{notice.schema}</strong>
@@ -162,12 +151,11 @@ export default function Mappings() {
         </p>
       )}
 
-      <section className="mp-block" aria-labelledby="mp-unmapped-h">
-        <h2 id="mp-unmapped-h">Krok 1. Wybierz schemat bez mappingu (UNMAPPED)</h2>
-        {loading ? (
-          <p className="loading">Ładowanie…</p>
+      <Card title="Krok 1. Wybierz schemat bez mappingu (UNMAPPED)" error={unmappedRes.error} onRetry={unmappedRes.reload} loading={unmappedRes.loading && unmappedRes.data !== null}>
+        {unmappedRes.loading && unmappedRes.data === null ? (
+          <Loading />
         ) : unmapped.length === 0 ? (
-          <p className="empty">Brak zdarzeń UNMAPPED. Gdy przyjdzie zdarzenie nieznanego schematu, pojawi się tutaj.</p>
+          <Empty>Brak zdarzeń UNMAPPED. Gdy przyjdzie zdarzenie nieznanego schematu, pojawi się tutaj.</Empty>
         ) : (
           <ul className="mp-cards">
             {unmapped.map((u) => (
@@ -176,7 +164,7 @@ export default function Mappings() {
                   <div>
                     <div className="mono mp-schema">{u.schema}</div>
                     <div className="muted mp-small">
-                      {u.count} {u.count === 1 ? "zdarzenie" : "zdarzeń"} · ostatnie {new Date(u.last_seen).toLocaleString()}
+                      {u.count} {u.count === 1 ? "zdarzenie" : "zdarzeń"} · ostatnie {formatTime(u.last_seen)}
                     </div>
                   </div>
                   <button type="button" className="primary" onClick={() => startNew(u)}>
@@ -189,34 +177,32 @@ export default function Mappings() {
           </ul>
         )}
         <form className="mp-manual" onSubmit={startManual} noValidate>
-          <div className="mp-lbl">
-            <label htmlFor="mp-manual">Albo nowy schemat ręcznie (wkleisz własny payload)</label>
-            <div className="mp-inline">
-              <input
-                id="mp-manual"
-                className="mono"
-                value={manual}
-                onChange={(e) => setManual(e.target.value)}
-                placeholder="np. judges.custom.v1"
-                aria-invalid={manualError ? true : undefined}
-              />
-              <button type="submit">Utwórz</button>
-            </div>
-          </div>
-          {manualError && <p className="mp-err" role="alert">{manualError}</p>}
+          <Field label="Albo nowy schemat ręcznie (wkleisz własny payload)" error={manualError}>
+            {(field) => (
+              <div className="mp-inline">
+                <input
+                  {...field}
+                  className="mono"
+                  value={manual}
+                  onChange={(e) => setManual(e.target.value)}
+                  placeholder="np. judges.custom.v1"
+                />
+                <button type="submit">Utwórz</button>
+              </div>
+            )}
+          </Field>
         </form>
-      </section>
+      </Card>
 
-      <section className="mp-block" aria-labelledby="mp-existing-h">
-        <h2 id="mp-existing-h">Istniejące mappingi</h2>
-        {deleteError && <p className="error-box" role="alert">{deleteError}</p>}
-        {loading ? (
-          <p className="loading">Ładowanie…</p>
+      <Card title="Istniejące mappingi" error={mappingsRes.error} onRetry={mappingsRes.reload} loading={mappingsRes.loading && mappingsRes.data !== null}>
+        {deleteError && <ErrorBox message={deleteError} />}
+        {mappingsRes.loading && mappingsRes.data === null ? (
+          <Loading />
         ) : mappings.length === 0 ? (
-          <p className="empty">Brak mappingów.</p>
+          <Empty>Brak mappingów.</Empty>
         ) : (
-          <div className="mp-table-wrap">
-            <table className="mp-table">
+          <div className="table-wrap">
+            <table className="data-table">
               <thead>
                 <tr>
                   <th scope="col">Schemat</th>
@@ -238,34 +224,18 @@ export default function Mappings() {
                     <td>{m.resolved ? "tak" : <span className="muted">brak</span>}</td>
                     <td>{m.version ?? "—"}</td>
                     <td className="mp-actions-cell">
-                      {confirmDelete === m.schema ? (
-                        <span className="mp-confirm" role="group" aria-label={`Potwierdź usunięcie ${m.schema}`}>
-                          <span>Usunąć? Nowe zdarzenia tego schematu trafią do UNMAPPED.</span>
-                          <button type="button" className="danger" disabled={deleting} onClick={() => void remove(m.schema)}>
-                            {deleting ? "Usuwanie…" : "Tak, usuń"}
-                          </button>
-                          <button type="button" disabled={deleting} onClick={() => setConfirmDelete(null)}>
-                            Anuluj
-                          </button>
-                        </span>
-                      ) : (
-                        <>
-                          <button type="button" onClick={() => startEdit(m)} aria-label={`Edytuj mapping ${m.schema}`}>
-                            Edytuj
-                          </button>
-                          <button
-                            type="button"
-                            className="danger"
-                            onClick={() => {
-                              setDeleteError(null);
-                              setConfirmDelete(m.schema);
-                            }}
-                            aria-label={`Usuń mapping ${m.schema}`}
-                          >
-                            Usuń
-                          </button>
-                        </>
-                      )}
+                      <div className="mp-row-actions">
+                        <button type="button" onClick={() => startEdit(m)} aria-label={`Edytuj mapping ${m.schema}`}>
+                          Edytuj
+                        </button>
+                        <ConfirmInline
+                          label={<>Usuń<span className="sr-only"> mapping {m.schema}</span></>}
+                          question="Usunąć? Nowe zdarzenia tego schematu trafią do UNMAPPED."
+                          confirmLabel="Tak, usuń"
+                          busy={deleting}
+                          onConfirm={() => void remove(m.schema)}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -273,7 +243,7 @@ export default function Mappings() {
             </table>
           </div>
         )}
-      </section>
+      </Card>
     </section>
   );
 }

@@ -1,9 +1,10 @@
 // Osoby, zespoły i preferencje powiadomień (tylko do odczytu) – tasks.md 15.4.
 // Reguła wskazuje KTO, a JAK (kanały) wynika z preferencji osoby; zespół daje domyślne preferencje.
-import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
+import { useResource } from "../api/useResource";
 import { SeverityBadge } from "../components/Badges";
 import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
+import { Card, Empty, ErrorBox, Loading } from "../ui/primitives";
 import "./People.css";
 
 type Person = Schemas["PersonDef"];
@@ -112,30 +113,17 @@ function TeamCard({ team, people }: { team: Team; people: Map<string, Person> })
 }
 
 export default function People() {
-  const [people, setPeople] = useState<Person[] | null>(null);
-  const [sourceFile, setSourceFile] = useState<string | null>(null);
-  const [teams, setTeams] = useState<Team[] | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const peopleRes = useResource(() => api.GET("/people"));
+  const teamsRes = useResource(() => api.GET("/teams"));
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [p, t] = await Promise.all([api.GET("/people"), api.GET("/teams")]);
-        if (cancelled) return;
-        if (p.error || !p.data) throw new Error("GET /people nie powiodło się");
-        if (t.error || !t.data) throw new Error("GET /teams nie powiodło się");
-        setPeople(p.data.people);
-        setSourceFile(p.data.source_file);
-        setTeams(t.data);
-      } catch (e) {
-        if (!cancelled) setFailure(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const people = peopleRes.data?.people ?? null;
+  const sourceFile = peopleRes.data?.source_file ?? null;
+  const teams = teamsRes.data;
+  const failure = peopleRes.error ?? teamsRes.error;
+  const reload = () => {
+    peopleRes.reload();
+    teamsRes.reload();
+  };
 
   const byId = new Map((people ?? []).map((p) => [p.id, p]));
   const loading = !failure && (people === null || teams === null);
@@ -151,23 +139,18 @@ export default function People() {
         domyślnych preferencji zespołu. UI jest zawsze ostatnim kanałem zapasowym.
       </p>
 
-      {failure && (
-        <div className="error-box" role="alert">
-          Nie udało się pobrać danych: {failure}
-        </div>
-      )}
-      {loading && <p className="loading">Ładowanie osób i zespołów…</p>}
+      {failure && <ErrorBox message={`Nie udało się pobrać danych: ${failure}`} onRetry={reload} />}
+      {loading && <Loading>Ładowanie osób i zespołów…</Loading>}
 
       {people && teams && (
         <>
-          <div className="people-section">
-            <h2>Osoby ({people.length})</h2>
+          <Card title={`Osoby (${people.length})`}>
             <SourceFile path={sourceFile} />
             {people.length === 0 ? (
-              <p className="empty">Brak osób w pliku konfiguracyjnym.</p>
+              <Empty>Brak osób w pliku konfiguracyjnym.</Empty>
             ) : (
               <div className="table-wrap">
-                <table className="people-table">
+                <table className="data-table people-table">
                   <thead>
                     <tr>
                       <th scope="col">Osoba</th>
@@ -185,14 +168,13 @@ export default function People() {
                 </table>
               </div>
             )}
-          </div>
+          </Card>
 
-          <div className="people-section">
-            <h2>Zespoły ({teams.length})</h2>
+          <Card title={`Zespoły (${teams.length})`}>
             <SourceFile path={sourceFile} label="Edytuj w (wg planu ten sam plik):" />
             <p className="muted">GET /teams nie zwraca ścieżki pliku – powyżej plik osób, w którym według planu są też zespoły.</p>
             {teams.length === 0 ? (
-              <p className="empty">Brak zespołów w pliku konfiguracyjnym.</p>
+              <Empty>Brak zespołów w pliku konfiguracyjnym.</Empty>
             ) : (
               <div className="team-grid">
                 {teams.map((t) => (
@@ -200,7 +182,7 @@ export default function People() {
                 ))}
               </div>
             )}
-          </div>
+          </Card>
         </>
       )}
     </section>
