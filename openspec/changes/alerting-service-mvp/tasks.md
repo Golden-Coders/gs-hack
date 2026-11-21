@@ -160,7 +160,7 @@ Jedna kolejka zamiast dwóch strumieni: domyka otwarte zadania P1 (3.4, 5.2, 5.3
 - [x] 19.D2 Dedup i reopen end-to-end: 500 duplikatów ⇒ 1 alert z licznikiem 500 i jedno powiadomienie na odbiorcę; resolve + nowe zdarzenie ⇒ reopen tego samego alertu i ponowne powiadomienie; bramka: krok w `appendix-a.sh`
 
 ### Etap E ∥ — pomiar wydajności #1 (po C; równolegle z D)
-- [ ] 19.E1 `loadgen` (np. `RATE=500 DURATION_SECS=60 DUP_RATIO=0.5 MODE=both`) + `latency.sql` + `lag.sh`; wpis „Pomiar 1” w `docs/LOADTEST.md`; decyzja, co optymalizować (wąskie gardło = grupa z największym lagiem); bramka: wiersz w tabeli wyników z komendą do powtórzenia
+- [x] 19.E1 `loadgen` (np. `RATE=500 DURATION_SECS=60 DUP_RATIO=0.5 MODE=both`) + `latency.sql` + `lag.sh`; wpis „Pomiar 1” w `docs/LOADTEST.md`; decyzja, co optymalizować (wąskie gardło = grupa z największym lagiem); bramka: wiersz w tabeli wyników z komendą do powtórzenia
 
 ### Etap F — odporność (po D)
 - [ ] 19.F1 `scripts/e2e/resilience.sh`: ruch z `loadgen`, w trakcie `docker compose stop mailpit`, wyłączenie SMS przez `PUT /mock/channels/sms`, restart kolejno `ingest`, `lifecycle`, `router`, `sender`; bramka: liczba alertów = liczba unikalnych fingerprintów, brak duplikatów kluczy idempotencji w `deliveries`, fallback i DLQ widoczne w API ⇒ odhaczyć część P1/P2 z 18.4

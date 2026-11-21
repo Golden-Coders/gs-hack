@@ -80,13 +80,48 @@ Lag zapisujemy w trakcie przebiegu (największa wartość na grupę) i po nim (m
 
 | Pomiar | Data | msg/s (wysłane / osiągnięte) | p50 [ms] | p99 [ms] | Max lag (grupa) | Konfiguracja | Komenda |
 |---|---|---|---|---|---|---|---|
-| Pomiar 1 (po 18.1) | | | | | | | |
+| Pomiar 1 (po 18.1) | 2026-11-21 02:10:49 CET | 500 / 499.9 (29 995 wysłanych, 0 błędów) | 26 070 (tylko email) | 40 163 (tylko email) | 9 954 (`sender`); `lifecycle-normalizer` 569, `lifecycle-dedup` 174, `router` 2 | commit `7b50707`; obrazy ingest/lifecycle/router/sender/api z 2026-11-21 00:30:10 UTC (sprzed PR #26 – api bez wymogu tokenu); 12 partycji/topik, po 1 instancji; `DUP_RATIO=0.5 MODE=both`; `RATE=500 DURATION_SECS=60` | `RATE=500 DURATION_SECS=60 DUP_RATIO=0.5 MODE=both INGEST_URL=http://localhost:8081 cargo run --release -p loadgen`; `latency.sql` z `since='2026-11-21 01:10:49+00'` |
+| Pomiar 1 – rozgrzewka | 2026-11-21 02:10:07 CET | 100 / 99.9 (1 999, 0 błędów) | — (nie mierzono osobno) | — | 0 (wszystkie grupy po przebiegu) | commit `7b50707`; obrazy ingest/lifecycle/router/sender/api z 2026-11-21 00:30:10 UTC (sprzed PR #26 – api bez wymogu tokenu); 12 partycji/topik, po 1 instancji; `DUP_RATIO=0.5 MODE=both`; `RATE=100 DURATION_SECS=20` | `RATE=100 DURATION_SECS=20 DUP_RATIO=0.5 MODE=both INGEST_URL=http://localhost:8081 cargo run --release -p loadgen` |
 | Pomiar końcowy | | | | | | | |
 
 <!-- P2 6.4 Benchmark ewaluacji warunków (crates/condition, 100 reguł × zdarzenie, 1000 zdarzeń = 100 000 ewaluacji):
      Release: 10.76 ms łącznie | 10.76 µs / zdarzenie (100 reguł) | 107.6 ns / reguła (~92 900 zdarzeń/s przy 100 regułach)
      Debug (opt-level=1): 13.03 ms łącznie | 13.03 µs / zdarzenie (100 reguł) | 130.3 ns / reguła (~76 700 zdarzeń/s przy 100 regułach)
      Komenda: cargo test -p condition benchmark_100_rules_evaluation -- --nocapture -->
+
+### Wnioski z pomiaru 1
+
+Przebieg główny: 500 msg/s przez 60 s osiągnięte bez błędów po stronie `ingest`/Kafki. Lag (próbki co ~10 s, `lag.sh`):
+
+| Czas | normalizer | dedup | router | runbooks | sender | ingest-source-trades |
+|---|---|---|---|---|---|---|
+| 02:11:00 | 569 | 11 | 2 | 0 | 1 412 | 215 |
+| 02:11:13 | 454 | 28 | 2 | 3 | 3 954 | 2 |
+| 02:11:25 | 4 | 3 | 0 | 1 | 6 264 | 3 |
+| 02:11:36 | 5 | 4 | 1 | 1 | 8 103 | 3 |
+| 02:11:47 (koniec ruchu) | 14 | 174 | 2 | 2 | 9 954 | 2 |
+| 02:11:58 | 0 | 0 | 0 | 0 | 8 587 | 0 |
+| 02:12:31 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+- **Wąskie gardło: `sender`.** Lag rośnie liniowo przez cały przebieg (~170 wiad./s) i spada do zera dopiero ~45 s po końcu ruchu
+  (opróżnianie ~260 wiad./s). Lifecycle i router nadążają (chwilowy lag normalizera na starcie, potem ~0).
+  `sender` przetwarza `deliveries.requested` ściśle sekwencyjnie (`crates/sender/src/lib.rs:40-70`: `recv` → `process_request(...).await` → commit),
+  a każdy e-mail to nowe połączenie TCP i pełna sesja SMTP do Mailpit (`crates/sender/src/adapters.rs:292`, `run_smtp_client_session` :369)
+  plus zapisy do PG i publikacje statusu. Przepustowość ≈ 200–260 dostarczeń/s na instancję niezależnie od 12 partycji.
+- **Latencja:** wszystkie 22 483 dostarczenia z okna to `email` (reguły kierują ruch z `loadgen` na e-mail), więc wiersz
+  „bez email” z `latency.sql` jest pusty; p50/p99 w tabeli to kanał email i są zdominowane przez kolejkę w `sender`
+  (p50 26 s, p99 40 s), nie przez sam SMTP. Na pustym systemie (first-flow, sms/phone) e2e to ~30 ms.
+- **Dedup poprawny:** suma liczników w `alerts` wzrosła dokładnie o liczbę wysłanych zdarzeń (2 582 → 4 581 → 34 576 = +1 999 +29 995),
+  nowych alertów w przebiegu głównym 14 928 przy 14 931 unikalnych fingerprintach z `loadgen` (rozgrzewka: 1 019 vs 1 022) —
+  różnica 3 na przebieg, prawdopodobnie liczenie po stronie generatora (kolizja fingerprintów np. w `alertmanager`), do wyjaśnienia
+  w F1. Brak duplikatów `idempotency_key` w `deliveries`.
+- **Ruch obcy:** równolegle na stosie chodziły pojedyncze testy e2e innej sesji (pomijalne wobec 30 tys. zdarzeń).
+- **Rekomendacja:** optymalizować `sender`: (1) przetwarzanie współbieżne — np. `split_partition_queue` / zadanie per partycja albo
+  ograniczona współbieżność (`buffer_unordered`) z commitem offsetu po kolei; (2) pula/ponowne użycie połączeń SMTP zamiast
+  połączenia na wiadomość; (3) na krótko `--scale sender=2..4` (19.G1) — grupa ma 12 partycji, więc skaluje się liniowo.
+  Drugorzędnie: normalizer/dedup czekają na potwierdzenie każdej publikacji (`crates/lifecycle/src/normalizer.rs:93`,
+  `crates/lifecycle/src/dedup.rs:464-485`) — przy wyższym RATE mogą być następne. Pomiarów 1000–2000 msg/s nie robiono
+  (sender i tak się nie mieści przy 500).
 
 Kolumny: msg/s z wyjścia `loadgen` (`osiągnięte msg/s`), p50/p99 z `latency.sql`, lag z `lag.sh`.
 W „Konfiguracja” wpisz wartości `RATE`, `DURATION_SECS`, `DUP_RATIO`, `MODE` oraz wersję commita.
