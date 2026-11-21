@@ -11,6 +11,16 @@ Kontekst: `proposal.md` (co i dlaczego), `design.md` (jak), `specs/` (zachowanie
 
 **Aktualizacja 2026-11-21:** P1 i P2 mają zrobione rdzenie (sekcje 2, 4, 6–9), więc pozostała praca obu strumieni idzie **jednym pipeline'em P1+P2** (`tasks.md`, sekcja 19) z etapami A–H i bramkami testowymi. Pipeline może pisać w katalogach P1 i P2 oraz w `crates/api/src/stream.rs` (SSE, wcześniej „domyślnie P1”) i `scripts/e2e/`. Tabele, topiki i zasada single writer bez zmian — `lifecycle` nadal jedynym pisarzem stanu alertu.
 
+**Stan strumieni (aktualizacja 2026-11-21, `main` @ PR #28):**
+
+| Strumień | Zrobione | Zostało |
+|---|---|---|
+| P1+P2 pipeline (sekcja 19) | etapy A–D: SSE `/stream` z filtrem po zespole, `scripts/e2e/first-flow.sh` i `appendix-a.sh` (18.1, 18.2, dedup 500 + reopen); token API w `api` | E1 pomiar 1, F1 odporność, G1 skalowanie, H1–H2 kryteria demo i pomiar końcowy (5.3, 18.4–18.6) |
+| P3 | sekcje 10–12 w całości; integracja z routerem i przypięcie do reguły (PR #17), uczciwy dziennik `escalate`/`notify` (PR #22) | seed runbooka z nieznaną akcją do demo (17.1 f), udział w 18.3–18.6 |
+| P4 | 13.x, 14.1–14.2, 15.4, 16.2; ekrany 14.3, 14.4, 15.1–15.3 zmergowane (PR #9, #10); `make demo` + `docs/DEMO.md` (PR #28) | PR #29 (fallback w szczegółach alertu, README); weryfikacje 14.3–15.3 na prawdziwym backendzie; próby generalne (17.1, 17.2) |
+
+Otwarta kwestia międzystrumieniowa: `rule_ids`/`teams`/`color` w `GET /alerts` są puste (design, Open Questions) — kandydat do pipeline'u P1+P2 przed H1.
+
 Damian nie zna Rusta, więc dostaje strumień w całości po stronie TypeScript (UI + dokumentacja + demo) i nie dotyka crate'ów. Przydział P1–P3 między osoby znające Rusta jest umowny — zamieńcie się, jeśli ktoś woli inny obszar.
 
 Sekcja 1 (Faza 0) robią wszyscy razem, sekcja 18 (integracja) wszyscy razem.

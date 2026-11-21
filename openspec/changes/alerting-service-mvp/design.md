@@ -135,7 +135,7 @@ config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (se
 
 ### D10. Runbooki: wykonanie sekwencyjne jako maszyna stanów w Postgresie
 
-- Runbooks konsumuje `alerts.changed {opened|reopened}`, dopasowuje runbooki (`matches` przez crate `condition`; skrót „przypięty do reguły” = warunek na `rule_ids` w `AlertChanged`) i tworzy `runbook_runs` dla każdego dopasowanego.
+- Runbooks konsumuje `alerts.changed {opened|reopened}`, dopasowuje runbooki (`matches` przez crate `condition`; skrót „przypięty do reguły” = pole `rule_ids` w definicji runbooka: `runbooks` ewaluuje warunki tych reguł z tabeli `rules` tylko do odczytu, bo `AlertChanged` nie niesie `rule_ids` — lifecycle nie zna reguł) i tworzy `runbook_runs` dla każdego dopasowanego. Runbook pasuje, gdy spełniony jest jego `matches` albo pasuje któraś z przypiętych reguł.
 - Runbook MANUAL: nie ma wykonania. Dołączenie do powiadomień (link w SMS, pełna treść w email) robi router: sam ewaluuje `matches` runbooków (tabela `runbooks` tylko do odczytu, ten sam crate `condition`), bo router i runbooks konsumują `alerts.changed` równolegle i nie czekają na siebie. Właścicielem definicji runbooków pozostaje P3.
 - Runbook AUTOMATIC: kroki wykonywane po kolei. Stan kroku: `pending → running → succeeded | failed | waiting_approval | waiting_manual | skipped`.
   - `waiting_approval` / `waiting_manual` / `failed` zatrzymują sekwencję; wznowienie przez `runbooks.commands` (`approve`, `reject`, `done{note}`, `retry`, `skip`).
@@ -160,9 +160,9 @@ config/        sources/, mappings/, rules/, runbooks/, actions/, people.yaml (se
 
 - Jedna binarka `api` (axum): REST + SSE `/stream`. Kod podzielony na moduły per strumień (`p1.rs`, `p2.rs`, `p3.rs`); w `main.rs` lista `merge(...)` zamrożona w Fazie 0.
 - Odczyty: bezpośrednio z Postgresa (tabele wszystkich strumieni, tylko odczyt). Zapisy domenowe stanu alertu i runbooka: przez `alerts.commands` / `runbooks.commands` (single writer). Zapisy konfiguracji (reguły, mappingi, akcje): bezpośrednio do tabel właściciela przez jego moduł + `NOTIFY`.
-- SSE: `api` konsumuje `alerts.changed` i `ui.events` (grupa per instancja, czyli każda instancja dostaje wszystko) i rozsyła do podłączonych klientów, filtrując po zespole.
+- SSE: `api` konsumuje `alerts.changed` i `ui.events` (grupa per instancja, czyli każda instancja dostaje wszystko, start od końca topiku) i rozsyła przez `tokio::sync::broadcast` do podłączonych klientów, filtrując po zespole (`?team=`); wolny klient gubi zdarzenia (lagged), zamiast blokować innych; strumień kończy się przy zamykaniu `api`. Zrealizowane w `crates/api/src/stream.rs` (sekcja 19.B).
 - Kontrakt REST jako OpenAPI w `contracts/openapi.yaml`; P4 do czasu gotowości backendu używa mocka generowanego z tego pliku.
-- Uwierzytelnianie: statyczny token API + wybór „kim jestem” w UI (bez prawdziwego logowania).
+- Uwierzytelnianie: statyczny token API (`API_TOKEN`) wymagany przez `api` dla wszystkich tras poza `/health` — nagłówek `Authorization: Bearer`, a dla SSE także `?token=` (EventSource nie ustawia nagłówków); `ingest` przyjmuje zdarzenia bez tokenu. Do tego wybór „kim jestem” w UI (`X-Person-Id`, bez prawdziwego logowania).
 
 ### D14. Pomiar przepustowości i latencji
 
@@ -209,5 +209,6 @@ Nowy system, brak migracji danych. Start: `docker compose up` (migracje i seed z
 - Eskalacja / ponowne powiadomienie przy braku ack (odłożone funkcjonalnie; jeśli wejdzie, to jako timer w `runbooks` lub `router`).
 - Konkretny model lokalny i dostawca API dla `RunbookAuthor` (poza MVP).
 - Docelowa liczba partycji i parametry producenta — do ustalenia po pierwszym pomiarze.
-- `POST /mappings/preview` wymaga zależności `api -> lifecycle` (biblioteka mappingu) w `crates/api/Cargo.toml`, czyli pliku wspólnym; do czasu uzgodnienia endpoint zwraca 501 (zadanie 3.4).
-- `rule_ids`, `teams`, `color` i prezentacja w `GET /alerts` / `GET /alerts/{id}` wymagają reguł P2 (tabela `rules` + `condition`); lifecycle ich nie zna. Propozycja: `api/p1.rs` ewaluuje reguły tylko do odczytu przy odczycie alertu — do ustalenia przy integracji (sekcja 18).
+- ~~`POST /mappings/preview` wymaga zależności `api -> lifecycle`~~ — rozstrzygnięte: zależność dodana za akceptacją (PR #14), endpoint działa.
+- `rule_ids`, `teams`, `color` i prezentacja w `GET /alerts` / `GET /alerts/{id}` wymagają reguł P2 (tabela `rules` + `condition`); lifecycle ich nie zna i `api/p1.rs` nadal zwraca puste wartości. Propozycja: `api/p1.rs` ewaluuje reguły tylko do odczytu przy odczycie alertu (tak jak robi to `runbooks` dla przypiętych reguł) — otwarte, do zrobienia przy integracji (sekcja 18).
+- ~~`rule_ids` w `AlertChanged` (D10)~~ — rozstrzygnięte: `rule_ids` jest polem definicji runbooka, a `runbooks` czyta tabelę `rules` tylko do odczytu (PR #17, przegląd 19.A3).
