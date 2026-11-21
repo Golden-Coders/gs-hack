@@ -12,7 +12,8 @@ use common::db::sqlx::{
     types::{chrono::DateTime, chrono::Utc, Json as SqlJson, Uuid},
     Row,
 };
-use contracts::{topics, Actor, AlertCommand, AlertCommandKind, MappingDef};
+use contracts::{formats, topics, Actor, AlertCommand, AlertCommandKind, CanonicalEvent, Envelope, MappingDef};
+use lifecycle::mapping::{parse_payload, CompiledMapping};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -234,6 +235,8 @@ async fn put_mapping(
     if def.schema != schema {
         return Err(err(StatusCode::BAD_REQUEST, "schema mismatch", "schema w body różni się od ścieżki"));
     }
+    // Ta sama kompilacja co w lifecycle: mapping, który się nie kompiluje, nie trafia do bazy.
+    CompiledMapping::compile(def.clone(), 0).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", format!("{e:#}")))?;
     let stored = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", e))?;
     let mut tx = st.db.begin().await.map_err(db_err)?;
     let version: i64 = sqlx::query(
@@ -261,12 +264,30 @@ async fn delete_mapping(State(st): State<AppState>, Path(schema): Path<String>) 
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn preview() -> (StatusCode, Json<Value>) {
-    err(
-        StatusCode::NOT_IMPLEMENTED,
-        "not implemented",
-        "preview wymaga zależności api -> lifecycle (zmiana crates/api/Cargo.toml do uzgodnienia)",
-    )
+#[derive(Deserialize)]
+struct PreviewReq {
+    mapping: MappingDef,
+    payload: Value,
+}
+
+/// Podgląd zdarzenia kanonicznego: ten sam kod co normalizer w lifecycle, bez zapisu.
+/// Payload-string traktujemy jako YAML (przykład wklejony w UI), resztę jako JSON.
+async fn preview(body: Result<Json<PreviewReq>, JsonRejection>) -> ApiResult<Json<CanonicalEvent>> {
+    let bad = |e: String| err(StatusCode::BAD_REQUEST, "invalid preview", e);
+    let Json(req) = body.map_err(|e| bad(e.body_text()))?;
+    let format = if req.payload.is_string() { formats::YAML } else { formats::JSON };
+    let raw = parse_payload(format, &req.payload).map_err(|e| bad(format!("{e:#}")))?;
+    let version = req.mapping.version;
+    let mapping = CompiledMapping::compile(req.mapping, version).map_err(|e| bad(format!("{e:#}")))?;
+    let env = Envelope {
+        event_id: Uuid::now_v7(),
+        format: format.into(),
+        schema: mapping.def.schema.clone(),
+        payload: req.payload,
+        source: "preview".into(),
+        received_at: Utc::now(),
+    };
+    Ok(Json(mapping.normalize(&env, raw)))
 }
 
 async fn unmapped(State(st): State<AppState>) -> ApiResult<Json<Value>> {
