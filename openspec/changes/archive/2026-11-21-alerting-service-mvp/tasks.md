@@ -1,5 +1,7 @@
 # Tasks
 
+> **Zarchiwizowane 2026-11-21** (70/87 zadań). Główne specyfikacje: `openspec/specs/`. Otwarte zadania (5.3, 14.3, 14.4, 15.1–15.3, 16.1, 17.1, 17.2, 18.3–18.6, 19.F1, 19.G1, 19.H1, 19.H2) przeniesione do change'a `alerting-service-hardening`.
+
 Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma jednego właściciela (w nawiasie); wykonuje się ją przez `/openspec-apply-change alerting-service-mvp`, wskazując agentowi numer sekcji. Sekcja 1 jest wspólna i blokuje resztę; sekcje 2–17 idą równolegle w ramach strumieni; sekcja 18 to integracja. **Od 2026-11-21 pozostała praca P1 i P2 (otwarte zadania z sekcji 3, 5 i ich część sekcji 18) idzie jednym pipeline'em w sekcji 19** — sekcje 2–9 zostają jako historia i źródło weryfikacji.
 
 ## 1. Faza 0 — kontrakty i szkielet (wszyscy, ~1 h)

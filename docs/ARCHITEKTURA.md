@@ -22,7 +22,7 @@ Spis treści:
 
 ## 1. Stan prac
 
-Liczby to zadania odhaczone w `openspec/changes/alerting-service-mvp/tasks.md`. Zadanie odhacza się dopiero wtedy, gdy przeszła opisana przy nim weryfikacja.
+Liczby to zadania odhaczone w `openspec/changes/archive/2026-11-21-alerting-service-mvp/tasks.md`. Zadanie odhacza się dopiero wtedy, gdy przeszła opisana przy nim weryfikacja.
 
 | Strumień | Osoba | Sekcje | Zrobione |
 |---|---|---|---|
@@ -350,7 +350,7 @@ Do tabeli pisze tylko jej właściciel. Inne programy mogą ją czytać (na przy
 
 ## 9. Technologie
 
-Kolumna „Dlaczego” odwołuje się do decyzji D1–D15 w `openspec/changes/alerting-service-mvp/design.md`.
+Kolumna „Dlaczego” odwołuje się do decyzji D1–D15 w `openspec/changes/archive/2026-11-21-alerting-service-mvp/design.md`.
 
 | Technologia | Czym jest | Gdzie w repozytorium | Dlaczego |
 |---|---|---|---|
