@@ -2,7 +2,7 @@
 // nie jest dostępny (backend zwraca 501). Źródłem prawdy jest backend (crate lifecycle); tu tylko prosta ścieżka
 // i warunki-liście, więc wynik jest oznaczany w UI jako „lokalny”.
 import type { Mapping, Cond, Severity } from "./draft";
-import { getAt, parseConditionField, parseJsonPath } from "./paths";
+import { getAt, parseConditionField, parseJsonPath } from "../../lib/paths";
 
 export type PreviewResult = {
   severity: Severity;

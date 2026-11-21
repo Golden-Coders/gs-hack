@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
 import Markdown from "../components/Markdown";
-import ConditionView from "./ConditionView";
-import SourceFile, { ReadOnlyNote } from "./SourceFile";
+import ConditionView from "../components/ConditionView";
+import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
 import "./Runbooks.css";
 
 type Runbook = Schemas["RunbookDef"];

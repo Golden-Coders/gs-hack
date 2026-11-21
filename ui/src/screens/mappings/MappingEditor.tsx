@@ -2,8 +2,8 @@
 // Kliknięcie w drzewie payloadu dodaje pole do aktualnie wybranego celu (pola, tytuł, fingerprint, severity, resolved).
 import { useMemo, useState } from "react";
 import { api } from "../../api/client";
-import ConditionView from "../ConditionView";
-import PayloadTree from "../PayloadTree";
+import ConditionView from "../../components/ConditionView";
+import PayloadTree from "../../components/PayloadTree";
 import PreviewPanel from "./PreviewPanel";
 import {
   OP_LABEL,
@@ -31,7 +31,7 @@ import {
   toConditionField,
   toJsonPath,
   type PathSeg,
-} from "./paths";
+} from "../../lib/paths";
 import { parseSample } from "./sample";
 
 type Mode = "fields" | "title" | "fingerprint" | "severity" | "resolved";

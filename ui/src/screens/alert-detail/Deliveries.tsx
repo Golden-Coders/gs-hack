@@ -4,7 +4,9 @@ import { api, asPerson, type Schemas } from "../../api/client";
 import { usePersonId } from "../../api/session";
 import { DeliveryStatusBadge } from "../../components/Badges";
 import Section from "./Section";
-import { formatTime, send, type Resource } from "./util";
+import { send } from "../../api/request";
+import type { Resource } from "../../api/useResource";
+import { formatTime } from "../../ui/format";
 
 const CHANNEL: Record<Schemas["Channel"], string> = { ui: "UI", email: "e-mail", sms: "SMS", phone: "telefon" };
 const isFailed = (d: Schemas["Delivery"]) => d.status === "failed" || d.status === "dlq";

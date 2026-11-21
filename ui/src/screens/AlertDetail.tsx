@@ -10,7 +10,9 @@ import Audit from "./alert-detail/Audit";
 import Deliveries from "./alert-detail/Deliveries";
 import Episodes from "./alert-detail/Episodes";
 import Runbooks from "./alert-detail/Runbooks";
-import { actorLabel, formatTime, send, useResource } from "./alert-detail/util";
+import { send } from "../api/request";
+import { useResource } from "../api/useResource";
+import { actorLabel, formatTime } from "../ui/format";
 import "./AlertDetail.css";
 
 // Komendy trafiają do Kafki asynchronicznie – po przyjęciu odświeżamy od razu i jeszcze raz chwilę później

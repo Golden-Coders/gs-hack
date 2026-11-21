@@ -7,7 +7,9 @@ import { usePersonId } from "../../api/session";
 import { StepStatusBadge } from "../../components/Badges";
 import Markdown from "../../components/Markdown";
 import Section from "./Section";
-import { formatTime, send, type Resource } from "./util";
+import { send } from "../../api/request";
+import type { Resource } from "../../api/useResource";
+import { formatTime } from "../../ui/format";
 
 type Command = "done" | "retry" | "skip" | "manual_mode";
 

@@ -1,6 +1,7 @@
 import type { Schemas } from "../../api/client";
 import Section from "./Section";
-import { actorLabel, formatTime, type Resource } from "./util";
+import type { Resource } from "../../api/useResource";
+import { actorLabel, formatTime } from "../../ui/format";
 
 export default function Audit({ resource }: { resource: Resource<Schemas["AuditEntry"][]> }) {
   const entries = resource.data ?? [];

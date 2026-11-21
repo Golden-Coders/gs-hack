@@ -1,6 +1,6 @@
 // Ramka sekcji z nagłówkiem, stanem ładowania i błędem widocznym przy samej sekcji.
 import type { ReactNode } from "react";
-import type { Resource } from "./util";
+import type { Resource } from "../../api/useResource";
 
 export default function Section({
   title,

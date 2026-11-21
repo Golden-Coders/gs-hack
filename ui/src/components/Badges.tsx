@@ -1,10 +1,10 @@
 // Badge severity, stanu alertu oraz statusów dostarczeń i kroków runbooka.
 import type { Schemas } from "../api/client";
 
-type Tone = "red" | "orange" | "yellow" | "green" | "blue" | "gray";
+export type Tone = "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "gray";
 
-function Badge({ tone, children }: { tone: Tone; children: string }) {
-  return <span className={`badge badge-${tone}`}>{children}</span>;
+export function Badge({ tone, outline, children }: { tone: Tone; outline?: boolean; children: string }) {
+  return <span className={`badge badge-${tone}${outline ? " badge-outline" : ""}`}>{children}</span>;
 }
 
 const SEVERITY: Record<Schemas["Severity"], Tone> = {
@@ -58,4 +58,15 @@ const STEP: Record<Schemas["StepStatus"], [Tone, string]> = {
 export function StepStatusBadge({ status }: { status: Schemas["StepStatus"] }) {
   const [tone, label] = STEP[status] ?? ["gray", status];
   return <Badge tone={tone}>{label}</Badge>;
+}
+
+/** Ryzyko akcji: wysokie zawsze wymaga zatwierdzenia człowieka, więc jest wyraźnie obramowane. */
+export function RiskBadge({ risk }: { risk: "low" | "high" }) {
+  return risk === "high" ? (
+    <Badge tone="red" outline>
+      Ryzyko: WYSOKIE
+    </Badge>
+  ) : (
+    <Badge tone="green">Ryzyko: niskie</Badge>
+  );
 }

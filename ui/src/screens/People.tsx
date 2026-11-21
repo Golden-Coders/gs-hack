@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
 import { SeverityBadge } from "../components/Badges";
-import SourceFile, { ReadOnlyNote } from "./SourceFile";
+import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
 import "./People.css";
 
 type Person = Schemas["PersonDef"];
