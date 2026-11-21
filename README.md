@@ -2,7 +2,7 @@
 
 Serwis alertingowy: przyjmuje zdarzenia w dowolnym schemacie, skleja duplikaty w jeden alert z licznikiem, dopasowuje reguły zespołów, powiadamia właściwe osoby na preferowanych kanałach i prowadzi przez runbooki z akcjami, które wymagają zatwierdzenia człowieka.
 
-Zadanie: [`docs/exercise.md`](docs/exercise.md). Plan i decyzje techniczne: [`openspec/changes/alerting-service-mvp/`](openspec/changes/alerting-service-mvp/) (`proposal.md`, `design.md`, `specs/`).
+Zadanie: [`docs/exercise.md`](docs/exercise.md). Plan i decyzje techniczne: [`openspec/changes/archive/2026-11-21-alerting-service-mvp/`](openspec/changes/archive/2026-11-21-alerting-service-mvp/) (`proposal.md`, `design.md`, `specs/`).
 
 ## Uruchomienie
 
@@ -190,7 +190,7 @@ SMS i telefon, serwer SMTP (Mailpit), usługi, na których działają akcje runb
 ## Użycie AI
 
 - **Narzędzia:** zespół użył agentów Claude Code z workflow OpenSpec (propose, apply, każdy strumień w osobnym worktree) do planowania i implementacji.
-- **Planowanie:** wymagania, decyzje techniczne i zadania powstały jako change [OpenSpec](openspec/changes/alerting-service-mvp/) z pomocą Claude Code. Każde wymaganie ma scenariusze, które służą jako przypadki testowe, a każde zadanie ma kryterium weryfikacji.
+- **Planowanie:** wymagania, decyzje techniczne i zadania powstały jako change [OpenSpec](openspec/changes/archive/2026-11-21-alerting-service-mvp/) z pomocą Claude Code. Każde wymaganie ma scenariusze, które służą jako przypadki testowe, a każde zadanie ma kryterium weryfikacji.
 - **Implementacja:** Claude Code pracował w strumieniach z jawną własnością katalogów ([`CLAUDE.md`](CLAUDE.md)). Agent edytuje tylko katalogi swojego strumienia, a kontrakty (`crates/contracts`, `contracts/openapi.yaml`) są zamrożone i zmieniane wyłącznie addytywnie po uzgodnieniu z zespołem. Część ekranów UI zbudowali równolegle subagenci w osobnych worktree. Każdą zmianę przeglądał człowiek przed merge'em, a typecheck i testy crate'ów musiały przechodzić.
 - **Bezpieczeństwo i prywatność:** do narzędzi AI trafiały wyłącznie kod tego repozytorium i syntetyczne dane z `crates/contracts/fixtures/`, bez danych produkcyjnych, klientów ani prawdziwych sekretów (jedyny token to `dev-token`). Kod wygenerowany przez AI przechodził te same reguły co ręczny: allowlista hostów, approval dla `risk: high`, brak sekretów w plikach.
 - **AI w produkcie:** w MVP nie ma wywołań LLM. Jest tylko interfejs `RunbookAuthor` z implementacją `none`, przygotowany pod tworzenie runbooków z opisu. Zasady na przyszłość (design D12): do modelu trafia tylko opis runbooka po redakcji hostów, IP, e-maili i URL, nigdy dane alertów. Odpowiedź jest ograniczona schematem z akcjami z rejestru, a wynik zawsze wymaga akceptacji człowieka.

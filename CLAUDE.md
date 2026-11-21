@@ -4,17 +4,15 @@ Serwis alertingowy: zdarzenia w dowolnym schemacie → alerty z deduplikacją �
 
 ## Źródła prawdy (czytaj przed pracą)
 
-Cały plan to change OpenSpec `alerting-service-mvp` w `openspec/changes/alerting-service-mvp/`:
+Specyfikacja systemu i plan w OpenSpec:
 
-| Plik | Co zawiera |
+| Gdzie | Co zawiera |
 |---|---|
-| `proposal.md` | co budujemy i dlaczego, zakres MVP, co odłożone |
-| `design.md` | decyzje techniczne D1–D15 (topologia Kafki, single writer, idempotencja, bezpieczeństwo akcji) |
-| `specs/<capability>/spec.md` | wymagania i scenariusze (= przypadki testowe) |
-| `tasks.md` | lista zadań w sekcjach; **każda sekcja ma jednego właściciela** |
-| `team.md` | kto co robi, jakie katalogi/tabele/topiki są czyje, harmonogram, plan awaryjny |
+| `openspec/specs/<capability>/spec.md` | **aktualne wymagania i scenariusze** (= przypadki testowe) dla 10 capabilities |
+| `openspec/changes/alerting-service-hardening/` | **aktywny change**: pozostała praca po MVP (odporność, skalowanie, pomiar końcowy, weryfikacja UI, demo, otwarte kwestie) |
+| `openspec/changes/archive/2026-11-21-alerting-service-mvp/` | zarchiwizowane MVP: `proposal.md` (zakres, co odłożone), `design.md` (decyzje D1–D15: topologia Kafki, single writer, idempotencja, bezpieczeństwo akcji), `tasks.md` (historia 87 zadań, sekcja 19 = pipeline P1+P2), `team.md` (własność katalogów/tabel/topików) |
 
-Implementację prowadź przez `/openspec-apply-change alerting-service-mvp`, ograniczając się do sekcji swojego strumienia. Odhaczaj zadania w `tasks.md` (`- [x]`) dopiero po spełnieniu weryfikacji opisanej w zadaniu.
+Implementację prowadź przez `/openspec-apply-change alerting-service-hardening`, ograniczając się do sekcji swojego strumienia. Odhaczaj zadania w `tasks.md` (`- [x]`) dopiero po spełnieniu weryfikacji opisanej w zadaniu. Zmiana zachowania systemu = delta spec w change'u, a po zakończeniu `/openspec-archive-change`.
 
 ## Zespół i własność
 
@@ -22,11 +20,11 @@ Implementację prowadź przez `/openspec-apply-change alerting-service-mvp`, ogr
 |---|---|---|---|
 | P1 Ingest i cykl życia | Krzysztof Jet | 2, 3, 4, 5 | `crates/ingest`, `crates/lifecycle`, `crates/loadgen`, `crates/api/src/p1.rs`, `migrations/1xxx_p1_*`, `config/p1/`, `docs/LOADTEST.md` |
 | P2 Reguły, routing, dostarczanie | Krzysztof Wojt | 6, 7, 8, 9 | `crates/condition`, `crates/router`, `crates/sender`, `crates/api/src/p2.rs`, `migrations/2xxx_p2_*`, `config/p2/` |
-| **P1+P2 pipeline** (od 2026-11-21) | Krzysztof Jet, Krzysztof Wojt | 19 | katalogi P1 i P2 + `crates/api/src/stream.rs`, `scripts/e2e/` |
+| **P1+P2 pipeline** (od 2026-11-21) | Krzysztof Jet, Krzysztof Wojt | MVP 19 → hardening 2, 3, 6 | katalogi P1 i P2 + `crates/api/src/stream.rs`, `scripts/e2e/` |
 | P3 Runbooki i akcje | Kostek | 10, 11, 12 | `crates/runbooks`, `crates/mock-targets`, `crates/api/src/p3.rs`, `migrations/3xxx_p3_*`, `config/p3/` |
 | P4 UI, dokumentacja, demo | Damian (TypeScript, bez Rusta) | 13–17 | `ui/`, `README.md`, `docs/MOCKS.md`, `docs/DEMO.md`, `config/demo/`, cel `demo` w `Makefile` |
 
-Sekcja 1 (Faza 0) jest zrobiona. Sekcja 18 (integracja) — wszyscy razem.
+Numery sekcji w tabeli dotyczą zarchiwizowanego MVP. W `alerting-service-hardening`: sekcje 1 i 5 — wszyscy, 2, 3, 6 — P1+P2, 4 — P4.
 
 **Jeśli nie wiesz, czyj jest strumień, w którym pracujesz — zapytaj użytkownika, zanim cokolwiek zmienisz.**
 
