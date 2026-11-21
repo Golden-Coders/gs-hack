@@ -61,7 +61,11 @@ fn check_auth(headers: &HeaderMap, expected: Option<&str>) -> Result<(), ApiErro
         .and_then(|v| v.strip_prefix("Bearer "));
     match provided {
         Some(token) if ct_eq(token.as_bytes(), expected.as_bytes()) => Ok(()),
-        _ => Err(ApiError(StatusCode::UNAUTHORIZED, "unauthorized".into(), None)),
+        _ => Err(ApiError(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized".into(),
+            None,
+        )),
     }
 }
 
@@ -76,7 +80,11 @@ impl ApiError {
 impl From<ParseError> for ApiError {
     fn from(e: ParseError) -> Self {
         match e {
-            ParseError::Unsupported(f) => Self(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("unsupported format: {f}"), Some("supported: json, yaml".into())),
+            ParseError::Unsupported(f) => Self(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                format!("unsupported format: {f}"),
+                Some("supported: json, yaml".into()),
+            ),
             ParseError::Invalid(d) => Self::bad("invalid payload", Some(d)),
         }
     }
@@ -92,41 +100,88 @@ impl IntoResponse for ApiError {
     }
 }
 
-async fn publish_raw(state: &InnerState, format: &str, schema: &str, payload: Value, source: String) -> Result<Response, ApiError> {
+async fn publish_raw(
+    state: &InnerState,
+    format: &str,
+    schema: &str,
+    payload: Value,
+    source: String,
+) -> Result<Response, ApiError> {
     let payload = parse_payload(format, &payload)?;
     match accept(&state.producer, format, schema, payload, source).await {
         Ok(id) => Ok((StatusCode::ACCEPTED, Json(json!({"event_id": id}))).into_response()),
         Err(e) => {
             tracing::error!(error = %e, "publishing to events.raw failed");
-            Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "event bus unavailable".into(), Some(e.to_string())))
+            Err(ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "event bus unavailable".into(),
+                Some(e.to_string()),
+            ))
         }
     }
 }
 
 fn str_field<'a>(body: &'a Value, name: &str) -> Result<&'a str, ApiError> {
-    body.get(name).and_then(Value::as_str).ok_or_else(|| ApiError::bad(format!("missing field: {name}"), Some(format!("`{name}` must be a string"))))
+    body.get(name).and_then(Value::as_str).ok_or_else(|| {
+        ApiError::bad(
+            format!("missing field: {name}"),
+            Some(format!("`{name}` must be a string")),
+        )
+    })
 }
 
-async fn ingest(State(state): State<InnerState>, headers: HeaderMap, body: Bytes) -> Result<Response, ApiError> {
+async fn ingest(
+    State(state): State<InnerState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
     check_auth(&headers, state.token.as_deref())?;
-    let body: Value = serde_json::from_slice(&body).map_err(|e| ApiError::bad("invalid json body", Some(e.to_string())))?;
+    let body: Value = serde_json::from_slice(&body)
+        .map_err(|e| ApiError::bad("invalid json body", Some(e.to_string())))?;
     let format = str_field(&body, "format")?;
     let schema = str_field(&body, "schema")?;
-    let payload = body.get("payload").cloned().ok_or_else(|| ApiError::bad("missing field: payload", None))?;
+    let payload = body
+        .get("payload")
+        .cloned()
+        .ok_or_else(|| ApiError::bad("missing field: payload", None))?;
     publish_raw(&state, format, schema, payload, "http".into()).await
 }
 
-async fn ingest_schema(State(state): State<InnerState>, Path(schema): Path<String>, headers: HeaderMap, body: Bytes) -> Result<Response, ApiError> {
+async fn ingest_schema(
+    State(state): State<InnerState>,
+    Path(schema): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
     check_auth(&headers, state.token.as_deref())?;
-    let ctype = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let ctype = ctype.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let ctype = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let ctype = ctype
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     let (format, payload) = match ctype.as_str() {
-        "application/json" => ("json", serde_json::from_slice(&body).map_err(|e| ApiError::bad("invalid json body", Some(e.to_string())))?),
+        "application/json" => (
+            "json",
+            serde_json::from_slice(&body)
+                .map_err(|e| ApiError::bad("invalid json body", Some(e.to_string())))?,
+        ),
         "application/yaml" | "application/x-yaml" | "text/yaml" => {
-            let text = String::from_utf8(body.to_vec()).map_err(|e| ApiError::bad("body is not utf-8", Some(e.to_string())))?;
+            let text = String::from_utf8(body.to_vec())
+                .map_err(|e| ApiError::bad("body is not utf-8", Some(e.to_string())))?;
             ("yaml", Value::String(text))
         }
-        other => return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, format!("unsupported content type: {other}"), Some("supported: application/json, application/yaml".into()))),
+        other => {
+            return Err(ApiError(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                format!("unsupported content type: {other}"),
+                Some("supported: application/json, application/yaml".into()),
+            ))
+        }
     };
     publish_raw(&state, format, &schema, payload, format!("http:{schema}")).await
 }
@@ -145,18 +200,42 @@ mod tests {
     #[test]
     fn auth_enabled_requires_exact_bearer_token() {
         let mut headers = HeaderMap::new();
-        assert_eq!(check_auth(&headers, Some("secret-token")).unwrap_err().0, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            check_auth(&headers, Some("secret-token")).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
 
-        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic secret-token"));
-        assert_eq!(check_auth(&headers, Some("secret-token")).unwrap_err().0, StatusCode::UNAUTHORIZED);
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Basic secret-token"),
+        );
+        assert_eq!(
+            check_auth(&headers, Some("secret-token")).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
 
-        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer wrong-token"));
-        assert_eq!(check_auth(&headers, Some("secret-token")).unwrap_err().0, StatusCode::UNAUTHORIZED);
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer wrong-token"),
+        );
+        assert_eq!(
+            check_auth(&headers, Some("secret-token")).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
 
-        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer secret-toke"));
-        assert_eq!(check_auth(&headers, Some("secret-token")).unwrap_err().0, StatusCode::UNAUTHORIZED);
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-toke"),
+        );
+        assert_eq!(
+            check_auth(&headers, Some("secret-token")).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
 
-        headers.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer secret-token"));
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-token"),
+        );
         assert!(check_auth(&headers, Some("secret-token")).is_ok());
     }
 }

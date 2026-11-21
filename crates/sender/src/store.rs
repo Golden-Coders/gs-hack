@@ -125,7 +125,10 @@ pub trait DeliveryBackend: Send + Sync {
     fn is_channel_available(&self, channel: Channel) -> BoxFuture<'_, anyhow::Result<bool>>;
 
     /// Pobiera dostarczenie po kluczu idempotencji (`delivery:{alert_id}:{episode}:{person_id}:{channel}`).
-    fn get_delivery_by_key(&self, idempotency_key: &str) -> BoxFuture<'_, anyhow::Result<Option<DeliveryRecord>>>;
+    fn get_delivery_by_key(
+        &self,
+        idempotency_key: &str,
+    ) -> BoxFuture<'_, anyhow::Result<Option<DeliveryRecord>>>;
 
     /// Pobiera dostarczenie wraz z zapisanym `DeliveryRequest` po identyfikatorze `id` (do `resend`).
     fn get_delivery_with_request(
@@ -134,10 +137,16 @@ pub trait DeliveryBackend: Send + Sync {
     ) -> BoxFuture<'_, anyhow::Result<Option<(DeliveryRecord, DeliveryRequest)>>>;
 
     /// Atomowo przejmuje klucz idempotencji do wysyłki (chroni przed podwójną wysyłką przy wyścigu `sender`/`sender-retry`).
-    fn claim_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>>;
+    fn claim_delivery<'a>(
+        &'a self,
+        params: UpsertDelivery<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>>;
 
     /// Tworzy lub aktualizuje wiersz w `deliveries` (z zachowaniem istniejącego `id` przy konflikcie klucza idempotencji).
-    fn upsert_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>>;
+    fn upsert_delivery<'a>(
+        &'a self,
+        params: UpsertDelivery<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>>;
 
     /// Zapisuje wiadomość w `mock_outbox` (dla symulowanych kanałów SMS / telefon).
     fn insert_mock_outbox<'a>(
@@ -157,15 +166,14 @@ pub trait DeliveryBackend: Send + Sync {
     fn publish_dlq<'a>(&'a self, req: &'a DeliveryRequest) -> BoxFuture<'a, anyhow::Result<()>>;
 
     /// Publikuje zlecenie na topik `deliveries.requested` (np. przy `POST /deliveries/{id}/resend`).
-    fn publish_requested<'a>(&'a self, req: &'a DeliveryRequest) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn publish_requested<'a>(
+        &'a self,
+        req: &'a DeliveryRequest,
+    ) -> BoxFuture<'a, anyhow::Result<()>>;
 
     /// Publikuje zdarzenie na topik `ui.events` (klucz = `alert_id`).
     fn publish_ui_event<'a>(&'a self, event: &'a UiEvent) -> BoxFuture<'a, anyhow::Result<()>>;
 }
-
-// ============================================================================
-// Implementacja Postgres + Kafka (produkcyjna)
-// ============================================================================
 
 #[derive(Clone)]
 pub struct PgKafkaBackend {
@@ -175,12 +183,18 @@ pub struct PgKafkaBackend {
 
 impl PgKafkaBackend {
     pub fn new(pool: PgPool, producer: FutureProducer) -> Self {
-        Self { pool, producer: Some(producer) }
+        Self {
+            pool,
+            producer: Some(producer),
+        }
     }
 
     /// Wariant bez producenta Kafki (np. do testów integracyjnych z samym Postgresem).
     pub fn with_pool_only(pool: PgPool) -> Self {
-        Self { pool, producer: None }
+        Self {
+            pool,
+            producer: None,
+        }
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -243,7 +257,10 @@ pub mod db {
         Ok(MockChannelState { channel, available })
     }
 
-    pub async fn get_delivery_by_key(pool: &PgPool, idempotency_key: &str) -> anyhow::Result<Option<DeliveryRecord>> {
+    pub async fn get_delivery_by_key(
+        pool: &PgPool,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Option<DeliveryRecord>> {
         let row = sqlx::query(
             "SELECT id, alert_id, episode, person_id, channel, status, attempts, last_error, received_at, delivered_at, updated_at
              FROM deliveries
@@ -274,14 +291,18 @@ pub mod db {
             Some(r) => {
                 let record = row_to_delivery(&r)?;
                 let req_val: serde_json::Value = r.try_get("request")?;
-                let req: DeliveryRequest = serde_json::from_value(req_val).context("deserializing delivery request")?;
+                let req: DeliveryRequest =
+                    serde_json::from_value(req_val).context("deserializing delivery request")?;
                 Ok(Some((record, req)))
             }
             None => Ok(None),
         }
     }
 
-    pub async fn list_deliveries_for_alert(pool: &PgPool, alert_id: Uuid) -> anyhow::Result<Vec<DeliveryRecord>> {
+    pub async fn list_deliveries_for_alert(
+        pool: &PgPool,
+        alert_id: Uuid,
+    ) -> anyhow::Result<Vec<DeliveryRecord>> {
         let rows = sqlx::query(
             "SELECT id, alert_id, episode, person_id, channel, status, attempts, last_error, received_at, delivered_at, updated_at
              FROM deliveries
@@ -295,9 +316,13 @@ pub mod db {
         rows.iter().map(row_to_delivery).collect()
     }
 
-    pub async fn claim_delivery(pool: &PgPool, params: UpsertDelivery<'_>) -> anyhow::Result<ClaimOutcome> {
+    pub async fn claim_delivery(
+        pool: &PgPool,
+        params: UpsertDelivery<'_>,
+    ) -> anyhow::Result<ClaimOutcome> {
         let ch = channel_to_str(params.channel);
-        let req_json = serde_json::to_value(params.request).context("serializing DeliveryRequest")?;
+        let req_json =
+            serde_json::to_value(params.request).context("serializing DeliveryRequest")?;
         let now = Utc::now();
         let lease_cutoff = now - chrono::Duration::seconds(PENDING_LEASE_SECS);
 
@@ -343,7 +368,12 @@ pub mod db {
 
         let existing = get_delivery_by_key(pool, params.idempotency_key)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("delivery disappeared during claim: {}", params.idempotency_key))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "delivery disappeared during claim: {}",
+                    params.idempotency_key
+                )
+            })?;
         if existing.status == DeliveryStatus::Delivered {
             Ok(ClaimOutcome::AlreadyDelivered(existing))
         } else {
@@ -351,10 +381,14 @@ pub mod db {
         }
     }
 
-    pub async fn upsert_delivery(pool: &PgPool, params: UpsertDelivery<'_>) -> anyhow::Result<DeliveryRecord> {
+    pub async fn upsert_delivery(
+        pool: &PgPool,
+        params: UpsertDelivery<'_>,
+    ) -> anyhow::Result<DeliveryRecord> {
         let ch = channel_to_str(params.channel);
         let st = status_to_str(params.status);
-        let req_json = serde_json::to_value(params.request).context("serializing DeliveryRequest")?;
+        let req_json =
+            serde_json::to_value(params.request).context("serializing DeliveryRequest")?;
         let now = Utc::now();
 
         let row = sqlx::query(
@@ -464,7 +498,10 @@ impl DeliveryBackend for PgKafkaBackend {
         Box::pin(db::is_channel_available(&self.pool, channel))
     }
 
-    fn get_delivery_by_key(&self, idempotency_key: &str) -> BoxFuture<'_, anyhow::Result<Option<DeliveryRecord>>> {
+    fn get_delivery_by_key(
+        &self,
+        idempotency_key: &str,
+    ) -> BoxFuture<'_, anyhow::Result<Option<DeliveryRecord>>> {
         let key = idempotency_key.to_string();
         Box::pin(async move { db::get_delivery_by_key(&self.pool, &key).await })
     }
@@ -476,11 +513,17 @@ impl DeliveryBackend for PgKafkaBackend {
         Box::pin(db::get_delivery_with_request(&self.pool, delivery_id))
     }
 
-    fn claim_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>> {
+    fn claim_delivery<'a>(
+        &'a self,
+        params: UpsertDelivery<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>> {
         Box::pin(async move { db::claim_delivery(&self.pool, params).await })
     }
 
-    fn upsert_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>> {
+    fn upsert_delivery<'a>(
+        &'a self,
+        params: UpsertDelivery<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>> {
         Box::pin(db::upsert_delivery(&self.pool, params))
     }
 
@@ -493,7 +536,9 @@ impl DeliveryBackend for PgKafkaBackend {
         body: &'a str,
         alert_id: Option<Uuid>,
     ) -> BoxFuture<'a, anyhow::Result<MockMessage>> {
-        Box::pin(db::insert_mock_outbox(&self.pool, channel, to, person_id, title, body, alert_id))
+        Box::pin(db::insert_mock_outbox(
+            &self.pool, channel, to, person_id, title, body, alert_id,
+        ))
     }
 
     fn publish_retry<'a>(&'a self, req: &'a DeliveryRequest) -> BoxFuture<'a, anyhow::Result<()>> {
@@ -516,7 +561,10 @@ impl DeliveryBackend for PgKafkaBackend {
         })
     }
 
-    fn publish_requested<'a>(&'a self, req: &'a DeliveryRequest) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn publish_requested<'a>(
+        &'a self,
+        req: &'a DeliveryRequest,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             if let Some(producer) = &self.producer {
                 let key = req.alert_id.to_string();
@@ -539,10 +587,6 @@ impl DeliveryBackend for PgKafkaBackend {
         })
     }
 }
-
-// ============================================================================
-// Implementacja In-Memory (do szybkich testów jednostkowych i deterministycznych symulacji)
-// ============================================================================
 
 #[derive(Debug, Default)]
 struct InMemoryState {
@@ -622,11 +666,21 @@ impl InMemoryBackend {
 
 impl DeliveryBackend for InMemoryBackend {
     fn is_channel_available(&self, channel: Channel) -> BoxFuture<'_, anyhow::Result<bool>> {
-        let avail = self.state.lock().unwrap().channels.get(&channel).copied().unwrap_or(true);
+        let avail = self
+            .state
+            .lock()
+            .unwrap()
+            .channels
+            .get(&channel)
+            .copied()
+            .unwrap_or(true);
         Box::pin(async move { Ok(avail) })
     }
 
-    fn get_delivery_by_key(&self, idempotency_key: &str) -> BoxFuture<'_, anyhow::Result<Option<DeliveryRecord>>> {
+    fn get_delivery_by_key(
+        &self,
+        idempotency_key: &str,
+    ) -> BoxFuture<'_, anyhow::Result<Option<DeliveryRecord>>> {
         let rec = self
             .state
             .lock()
@@ -652,7 +706,10 @@ impl DeliveryBackend for InMemoryBackend {
         Box::pin(async move { Ok(found) })
     }
 
-    fn claim_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>> {
+    fn claim_delivery<'a>(
+        &'a self,
+        params: UpsertDelivery<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>> {
         let mut s = self.state.lock().unwrap();
         let now = Utc::now();
         let lease_cutoff = now - chrono::Duration::seconds(PENDING_LEASE_SECS);
@@ -663,7 +720,10 @@ impl DeliveryBackend for InMemoryBackend {
                 let rec = existing.clone();
                 return Box::pin(async move { Ok(ClaimOutcome::AlreadyDelivered(rec)) });
             }
-            if existing.status == DeliveryStatus::Pending && existing.attempts > 0 && existing.updated_at >= lease_cutoff {
+            if existing.status == DeliveryStatus::Pending
+                && existing.attempts > 0
+                && existing.updated_at >= lease_cutoff
+            {
                 let rec = existing.clone();
                 return Box::pin(async move { Ok(ClaimOutcome::InProgress(rec)) });
             }
@@ -698,7 +758,10 @@ impl DeliveryBackend for InMemoryBackend {
         Box::pin(async move { Ok(ClaimOutcome::Claimed(record)) })
     }
 
-    fn upsert_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>> {
+    fn upsert_delivery<'a>(
+        &'a self,
+        params: UpsertDelivery<'a>,
+    ) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>> {
         let mut s = self.state.lock().unwrap();
         let now = Utc::now();
         let key = params.idempotency_key.to_string();
@@ -768,7 +831,10 @@ impl DeliveryBackend for InMemoryBackend {
         Box::pin(async { Ok(()) })
     }
 
-    fn publish_requested<'a>(&'a self, req: &'a DeliveryRequest) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn publish_requested<'a>(
+        &'a self,
+        req: &'a DeliveryRequest,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
         self.state.lock().unwrap().requested_queue.push(req.clone());
         Box::pin(async { Ok(()) })
     }

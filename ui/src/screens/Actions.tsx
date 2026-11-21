@@ -1,7 +1,3 @@
-// Przejrzysty, maksymalnie prosty ekran Akcji:
-// - Lewa kolumna: czytelna lista wszystkich akcji (HTTP oraz wbudowanych)
-// - Prawa kolumna: czysty formularz edycji / tworzenia akcji HTTP
-// - Góra (tylko gdy potrzebne): kompaktowy baner z brakującymi akcjami z runbooków
 import { useEffect, useRef, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
@@ -48,7 +44,6 @@ export default function Actions() {
     if (msg.type === "ui_event" && msg.data.kind === "config_changed") resource.refresh();
   });
 
-  // Domyślnie wybierz pierwszą akcję HTTP (lub pierwszą z brzegu)
   useEffect(() => {
     if (selectedName !== null || creatingName !== null) return;
     if (actions.length > 0) {

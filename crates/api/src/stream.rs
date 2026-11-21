@@ -80,7 +80,10 @@ fn shutdown_rx() -> watch::Receiver<bool> {
 }
 
 /// Kończy strumień, gdy `shutdown` przejdzie na `true` (albo nadawca zniknie).
-fn until_shutdown<S: Stream>(s: S, mut shutdown: watch::Receiver<bool>) -> impl Stream<Item = S::Item> {
+fn until_shutdown<S: Stream>(
+    s: S,
+    mut shutdown: watch::Receiver<bool>,
+) -> impl Stream<Item = S::Item> {
     s.take_until(async move {
         let _ = shutdown.wait_for(|v| *v).await;
     })
@@ -94,8 +97,7 @@ pub async fn sse(
     let rx = HUB.get_or_init(|| start(st)).subscribe();
     let hello = stream::once(async { Ok(Event::default().event("hello").data("{}")) });
     let events = hello.chain(client_stream(rx, q.team.filter(|t| !t.is_empty())));
-    Sse::new(until_shutdown(events, shutdown))
-        .keep_alive(KeepAlive::new().interval(HEARTBEAT))
+    Sse::new(until_shutdown(events, shutdown)).keep_alive(KeepAlive::new().interval(HEARTBEAT))
 }
 
 /// Strumień jednego klienta: filtr po zespole, pominięcie zaległych przy `Lagged`.
@@ -145,8 +147,14 @@ fn decode(topic: &str, payload: &[u8]) -> anyhow::Result<Decoded> {
 /// Nazwa zdarzenia SSE i dane JSON zgodnie z `contracts/openapi.yaml`.
 fn render(d: &Decoded) -> (&'static str, String) {
     match d {
-        Decoded::Alert(a) => ("alert_changed", serde_json::to_string(a).expect("AlertChanged serializes")),
-        Decoded::Ui(u) => ("ui_event", serde_json::to_string(u).expect("UiEvent serializes")),
+        Decoded::Alert(a) => (
+            "alert_changed",
+            serde_json::to_string(a).expect("AlertChanged serializes"),
+        ),
+        Decoded::Ui(u) => (
+            "ui_event",
+            serde_json::to_string(u).expect("UiEvent serializes"),
+        ),
     }
 }
 
@@ -170,8 +178,6 @@ async fn run_consumer(
     tx: &broadcast::Sender<Arc<Item>>,
     teams: &mut TeamResolver,
 ) -> anyhow::Result<()> {
-    // Własna konfiguracja zamiast `common::kafka::consumer`: tu chcemy `latest`
-    // i nie commitujemy offsetów (grupa jest jednorazowa, per instancja).
     let group = format!("api-sse-{}", Uuid::new_v4());
     let consumer: StreamConsumer = ClientConfig::new()
         .set("bootstrap.servers", brokers)
@@ -184,7 +190,9 @@ async fn run_consumer(
     tracing::info!(%group, "sse consumer started");
     loop {
         let msg = consumer.recv().await?;
-        let Some(payload) = msg.payload() else { continue };
+        let Some(payload) = msg.payload() else {
+            continue;
+        };
         let decoded = match decode(msg.topic(), payload) {
             Ok(d) => d,
             Err(e) => {
@@ -194,8 +202,11 @@ async fn run_consumer(
         };
         let (name, data) = render(&decoded);
         let item_teams = teams.resolve(&decoded).await;
-        // Błąd = brak podłączonych klientów; to nie problem.
-        let _ = tx.send(Arc::new(Item { name, data, teams: item_teams }));
+        let _ = tx.send(Arc::new(Item {
+            name,
+            data,
+            teams: item_teams,
+        }));
     }
 }
 
@@ -208,7 +219,12 @@ struct TeamResolver {
 
 impl TeamResolver {
     fn new(db: PgPool) -> Self {
-        Self { db, rules: Vec::new(), loaded_at: None, alerts: HashMap::new() }
+        Self {
+            db,
+            rules: Vec::new(),
+            loaded_at: None,
+            alerts: HashMap::new(),
+        }
     }
 
     async fn refresh_rules(&mut self) {
@@ -248,9 +264,10 @@ impl TeamResolver {
                     .await
                     .ok()
                     .flatten();
-                let event = row.and_then(|r| serde_json::from_value::<CanonicalEvent>(r.get("last_event")).ok());
+                let event = row.and_then(|r| {
+                    serde_json::from_value::<CanonicalEvent>(r.get("last_event")).ok()
+                });
                 let Some(event) = event else {
-                    // Nie zapamiętujemy: alert może pojawić się w bazie za chwilę.
                     return Some(Vec::new());
                 };
                 self.refresh_rules().await;
@@ -287,7 +304,9 @@ mod tests {
         drop(tx);
         let resp = Sse::new(client_stream(rx, team.map(String::from))).into_response();
         assert_eq!(resp.headers()["content-type"], "text/event-stream");
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
@@ -297,7 +316,10 @@ mod tests {
         let (name, data) = render(&d);
         assert_eq!(name, "alert_changed");
         let back: AlertChanged = serde_json::from_str(&data).unwrap();
-        assert_eq!(back.fingerprint, "workflow.v1|order-settlement|validate-counterparty|TIMEOUT");
+        assert_eq!(
+            back.fingerprint,
+            "workflow.v1|order-settlement|validate-counterparty|TIMEOUT"
+        );
         assert!(!data.contains('\n'), "dane SSE w jednej linii");
 
         let d = decode(topics::UI_EVENTS, UI.as_bytes()).unwrap();
@@ -311,8 +333,18 @@ mod tests {
 
     #[tokio::test]
     async fn sse_wire_format() {
-        let out = body(vec![item("alert_changed", r#"{"a":1}"#, None), item("ui_event", r#"{"b":2}"#, None)], None).await;
-        assert_eq!(out, "event: alert_changed\ndata: {\"a\":1}\n\nevent: ui_event\ndata: {\"b\":2}\n\n");
+        let out = body(
+            vec![
+                item("alert_changed", r#"{"a":1}"#, None),
+                item("ui_event", r#"{"b":2}"#, None),
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(
+            out,
+            "event: alert_changed\ndata: {\"a\":1}\n\nevent: ui_event\ndata: {\"b\":2}\n\n"
+        );
     }
 
     #[tokio::test]
@@ -341,22 +373,33 @@ mod tests {
             tx.send(item("ui_event", &i.to_string(), None)).unwrap();
         }
         drop(tx);
-        let bytes = axum::body::to_bytes(Sse::new(client_stream(rx, None)).into_response().into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = axum::body::to_bytes(
+            Sse::new(client_stream(rx, None))
+                .into_response()
+                .into_body(),
+            usize::MAX,
+        )
+        .await
+        .unwrap();
         let out = String::from_utf8(bytes.to_vec()).unwrap();
-        assert_eq!(out, "event: ui_event\ndata: 3\n\nevent: ui_event\ndata: 4\n\n");
+        assert_eq!(
+            out,
+            "event: ui_event\ndata: 3\n\nevent: ui_event\ndata: 4\n\n"
+        );
     }
 
     #[tokio::test]
     async fn stream_ends_on_shutdown() {
         let (_hub, rx) = broadcast::channel::<Arc<Item>>(4);
         let (stop, shutdown) = watch::channel(false);
-        // Bez sygnału strumień wisi (nadawca hub żyje).
         let mut s = Box::pin(until_shutdown(client_stream(rx, None), shutdown));
-        assert!(tokio::time::timeout(Duration::from_millis(50), s.next()).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(50), s.next())
+            .await
+            .is_err());
         stop.send(true).unwrap();
-        let end = tokio::time::timeout(Duration::from_secs(1), s.next()).await.expect("koniec po sygnale");
+        let end = tokio::time::timeout(Duration::from_secs(1), s.next())
+            .await
+            .expect("koniec po sygnale");
         assert!(end.is_none());
     }
 
@@ -371,12 +414,20 @@ mod tests {
         u.alert_id = Some(Uuid::new_v4());
         let teams = resolver.resolve(&Decoded::Ui(u.clone())).await;
         assert_eq!(teams, Some(Vec::new()));
-        let it = Item { name: "ui_event", data: "x".into(), teams };
+        let it = Item {
+            name: "ui_event",
+            data: "x".into(),
+            teams,
+        };
         assert!(!visible(&it, Some("nobody")));
         assert!(visible(&it, None));
 
         u.alert_id = None;
-        assert_eq!(resolver.resolve(&Decoded::Ui(u)).await, None, "bez alert_id: dla wszystkich");
+        assert_eq!(
+            resolver.resolve(&Decoded::Ui(u)).await,
+            None,
+            "bez alert_id: dla wszystkich"
+        );
     }
 
     #[test]
@@ -393,8 +444,14 @@ mod tests {
             "recipients": []
         }))
         .unwrap();
-        let rules: Vec<CompiledRule> = [rule, other].into_iter().filter_map(CompiledRule::from_def).collect();
+        let rules: Vec<CompiledRule> = [rule, other]
+            .into_iter()
+            .filter_map(CompiledRule::from_def)
+            .collect();
         let a: AlertChanged = serde_json::from_str(ALERT).unwrap();
-        assert_eq!(teams_for_event(&rules, &a.event), vec!["settlements", "ops"]);
+        assert_eq!(
+            teams_for_event(&rules, &a.event),
+            vec!["settlements", "ops"]
+        );
     }
 }

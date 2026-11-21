@@ -107,8 +107,13 @@ async fn list_people(State(st): State<AppState>) -> ApiResult<Json<Value>> {
         .map_err(db_err)?;
     let mut people = Vec::with_capacity(rows.len());
     for r in &rows {
-        let p: PersonDef = serde_json::from_value(opt_json(r, "def"))
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid stored person", e))?;
+        let p: PersonDef = serde_json::from_value(opt_json(r, "def")).map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid stored person",
+                e,
+            )
+        })?;
         people.push(p);
     }
     Ok(Json(json!({
@@ -134,13 +139,21 @@ async fn list_teams(State(st): State<AppState>) -> ApiResult<Json<Vec<TeamDef>>>
 
 async fn upsert_team(db: &PgPool, old_id: Option<&str>, team: TeamDef) -> ApiResult<TeamDef> {
     if team.id.trim().is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "invalid team", "id zespołu nie może być puste"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid team",
+            "id zespołu nie może być puste",
+        ));
     }
     if team.name.trim().is_empty() {
-        return Err(err(StatusCode::BAD_REQUEST, "invalid team", "nazwa zespołu nie może być pusta"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid team",
+            "nazwa zespołu nie może być pusta",
+        ));
     }
-    let def_val = serde_json::to_value(&team)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e))?;
+    let def_val =
+        serde_json::to_value(&team).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e))?;
 
     let mut tx = db.begin().await.map_err(db_err)?;
     if let Some(prev) = old_id {
@@ -198,7 +211,8 @@ async fn create_team(
     body: Result<Json<TeamDef>, JsonRejection>,
 ) -> ApiResult<(StatusCode, Json<TeamDef>)> {
     ensure_people_seeded(&st.db, &st.config.config_dir).await;
-    let Json(team) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e.body_text()))?;
+    let Json(team) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e.body_text()))?;
     let saved = upsert_team(&st.db, None, team).await?;
     Ok((StatusCode::CREATED, Json(saved)))
 }
@@ -209,15 +223,13 @@ async fn put_team(
     body: Result<Json<TeamDef>, JsonRejection>,
 ) -> ApiResult<Json<TeamDef>> {
     ensure_people_seeded(&st.db, &st.config.config_dir).await;
-    let Json(team) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e.body_text()))?;
+    let Json(team) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e.body_text()))?;
     let saved = upsert_team(&st.db, Some(&id), team).await?;
     Ok(Json(saved))
 }
 
-async fn delete_team(
-    State(st): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
+async fn delete_team(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<StatusCode> {
     ensure_people_seeded(&st.db, &st.config.config_dir).await;
     let mut tx = st.db.begin().await.map_err(db_err)?;
     sqlx::query("DELETE FROM team_members WHERE team_id = $1")

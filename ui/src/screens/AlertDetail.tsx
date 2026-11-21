@@ -1,7 +1,3 @@
-// Maksymalnie uproszczony widok szczegółów alertu:
-// - kafel alertu (tytuł, opis, najważniejsze pola) + przycisk Rozwiąż alert
-// - po kliknięciu Rozwiąż (lub gdy alert zostanie rozwiązany) natychmiast wraca do listy i znika z panelu
-// - sekcja Runbooki (z bezpośrednim przejściem do odpowiedniego kafelka w zatwierdzeniach)
 import { Text } from "@atlaskit/primitives/compiled";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";

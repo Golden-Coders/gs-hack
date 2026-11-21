@@ -1,6 +1,3 @@
-// Prymitywy UI wspólne dla wszystkich ekranów (bez wiedzy o domenie), na komponentach ADS (design.md D5).
-// API eksportów sprzed migracji zachowane, żeby ekrany zmieniały się minimalnie. Kolory/odstępy tylko z tokenów.
-// Klasy `card`, `field`, `segmented` zostają jako zaczepy układu dla CSS ekranów (usuwane w fazie 3).
 import { forwardRef, useEffect, useId, useReducer, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import Button from "@atlaskit/button/new";
@@ -136,7 +133,6 @@ export function useRerenderOnMount(onSettled?: () => void) {
   const settled = useRef(onSettled);
   settled.current = onSettled;
   useEffect(() => {
-    // po zamontowaniu samego Portalu (jego efekt uruchamia się w osobnym renderze)
     const t = setTimeout(() => {
       flushSync(rerender);
       settled.current?.();
@@ -385,7 +381,6 @@ type TextfieldProps = Parameters<typeof Textfield>[0];
 type TextAreaProps = Parameters<typeof AdsTextArea>[0];
 
 /** Pole tekstowe (Textfield); przyjmuje propsy natywnego `<input>`, `aria-invalid` z `Field` zaznacza błąd. */
-// forwardRef: ekrany ustawiają fokus przez ref (ActionForm → pole „Nazwa”).
 export const TextInput = forwardRef<HTMLInputElement, TextfieldProps & { disabled?: boolean }>(function TextInput({ disabled, ...props }, ref) {
   // eslint-disable-next-line @atlaskit/design-system/no-readonly-or-disabled-inputs -- prymityw przekazuje `disabled` z ekranu
   return <Textfield {...props} ref={ref} isDisabled={props.isDisabled ?? disabled} isInvalid={props.isInvalid ?? props["aria-invalid"] === true} />;

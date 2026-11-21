@@ -1,5 +1,3 @@
-// Ekran Teams: przejrzysta lista zespołów po lewej stronie oraz prosty edytor zespołu po prawej,
-// w którym dodajemy/usuwamy osoby z listy checkboxami.
 import { useEffect, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";

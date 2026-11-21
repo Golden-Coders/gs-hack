@@ -1,4 +1,3 @@
-// Stan połączenia na żywo; trzyma subskrypcję, więc strumień działa przez całą sesję.
 import { useStream, useStreamStatus } from "../api/stream";
 import { StatusLozenge } from "../ui/primitives";
 

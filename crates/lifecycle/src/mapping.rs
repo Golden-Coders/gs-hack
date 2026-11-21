@@ -9,8 +9,15 @@ use serde_json_path::JsonPath;
 
 enum SeverityCompiled {
     Const(Severity),
-    Path { path: JsonPath, map: BTreeMap<String, Severity>, default: Severity },
-    Rules { rules: Vec<(condition::Compiled, Severity)>, default: Severity },
+    Path {
+        path: JsonPath,
+        map: BTreeMap<String, Severity>,
+        default: Severity,
+    },
+    Rules {
+        rules: Vec<(condition::Compiled, Severity)>,
+        default: Severity,
+    },
 }
 
 enum TitleSpec {
@@ -79,7 +86,9 @@ fn has_yaml_anchor_or_alias(s: &str) -> bool {
             }
             b'&' | b'*' if prev_is_boundary => {
                 if let Some(&next) = bytes.get(i + 1) {
-                    if !next.is_ascii_whitespace() && !matches!(next, b',' | b']' | b'}' | b'[' | b'{') {
+                    if !next.is_ascii_whitespace()
+                        && !matches!(next, b',' | b']' | b'}' | b'[' | b'{')
+                    {
                         return true;
                     }
                 }
@@ -229,9 +238,11 @@ impl CompiledMapping {
         };
         let severity = match &def.severity {
             SeveritySpec::Const { value } => SeverityCompiled::Const(*value),
-            SeveritySpec::Path { path, map, default } => {
-                SeverityCompiled::Path { path: parse_path(path)?, map: map.clone(), default: *default }
-            }
+            SeveritySpec::Path { path, map, default } => SeverityCompiled::Path {
+                path: parse_path(path)?,
+                map: map.clone(),
+                default: *default,
+            },
             SeveritySpec::Rules { rules, default } => SeverityCompiled::Rules {
                 rules: rules
                     .iter()
@@ -240,16 +251,31 @@ impl CompiledMapping {
                 default: *default,
             },
         };
-        let fingerprint = def.fingerprint.iter().map(|p| parse_path(p)).collect::<Result<Vec<_>>>()?;
+        let fingerprint = def
+            .fingerprint
+            .iter()
+            .map(|p| parse_path(p))
+            .collect::<Result<Vec<_>>>()?;
         let resolved = def.resolved.as_ref().map(condition::compile).transpose()?;
-        Ok(Self { def, version, fields, title, severity, fingerprint, resolved })
+        Ok(Self {
+            def,
+            version,
+            fields,
+            title,
+            severity,
+            fingerprint,
+            resolved,
+        })
     }
 
     /// Zamienia (już sparsowany) payload na zdarzenie kanoniczne. Brak pola = `null`, nie błąd.
     pub fn normalize(&self, env: &Envelope, raw: Value) -> CanonicalEvent {
         let mut fields = Map::new();
         for (name, path) in &self.fields {
-            fields.insert(name.clone(), first(path, &raw).cloned().unwrap_or(Value::Null));
+            fields.insert(
+                name.clone(),
+                first(path, &raw).cloned().unwrap_or(Value::Null),
+            );
         }
         let mut event = CanonicalEvent {
             event_id: env.event_id,
@@ -264,7 +290,6 @@ impl CompiledMapping {
             received_at: env.received_at,
             mapping_version: self.version,
         };
-        // Kontekst dla warunków i szablonów: pola kanoniczne + `raw.*` (zob. condition::event_context).
         let ctx = condition::event_context(&event);
 
         event.title = match &self.title {
@@ -281,14 +306,20 @@ impl CompiledMapping {
             SeverityCompiled::Path { path, map, default } => as_text(first(path, &event.raw))
                 .and_then(|v| {
                     map.get(&v)
-                        .or_else(|| map.iter().find(|(k, _)| k.eq_ignore_ascii_case(&v)).map(|(_, s)| s))
+                        .or_else(|| {
+                            map.iter()
+                                .find(|(k, _)| k.eq_ignore_ascii_case(&v))
+                                .map(|(_, s)| s)
+                        })
                         .copied()
                         .or_else(|| scale(&v))
                 })
                 .unwrap_or(*default),
-            SeverityCompiled::Rules { rules, default } => {
-                rules.iter().find(|(c, _)| c.evaluate(&ctx)).map(|(_, s)| *s).unwrap_or(*default)
-            }
+            SeverityCompiled::Rules { rules, default } => rules
+                .iter()
+                .find(|(c, _)| c.evaluate(&ctx))
+                .map(|(_, s)| *s)
+                .unwrap_or(*default),
         };
 
         let fp = if self.fingerprint.is_empty() {
@@ -367,7 +398,10 @@ mod tests {
         let ev = run("workflow.v1", "workflow_failed");
         assert_eq!(ev.severity, Severity::Error);
         assert_eq!(ev.title, "Counterparty service did not respond in 5000 ms");
-        assert_eq!(ev.fingerprint, "workflow.v1|order-settlement|validate-counterparty|TIMEOUT");
+        assert_eq!(
+            ev.fingerprint,
+            "workflow.v1|order-settlement|validate-counterparty|TIMEOUT"
+        );
         assert_eq!(ev.raw, fixture("workflow_failed").payload);
         assert_eq!(ev.fields["workflowName"], "order-settlement");
         assert_eq!(ev.mapping_version, 1);
@@ -379,7 +413,10 @@ mod tests {
         assert_eq!(ev.fields["service"], "payments-api");
         assert_eq!(ev.severity, Severity::Critical);
         assert_eq!(ev.title, "Error rate 12% over the last 5 minutes");
-        assert_eq!(ev.fingerprint, "alertmanager|HighErrorRate|payments-api|eu-west");
+        assert_eq!(
+            ev.fingerprint,
+            "alertmanager|HighErrorRate|payments-api|eu-west"
+        );
     }
 
     #[test]
@@ -387,13 +424,15 @@ mod tests {
         let ev = run("trade.rejected.v2", "trade_rejected");
         assert_eq!(ev.fingerprint, "trade.rejected.v2|T-998877");
         assert_eq!(ev.fields["desk"], "rates");
-        // brak title w mappingu -> nazwa schematu
         assert_eq!(ev.title, "trade.rejected.v2");
     }
 
     #[test]
     fn trade_fixture_severity_rules() {
-        assert_eq!(run("trade.rejected.v2", "trade_rejected").severity, Severity::Critical);
+        assert_eq!(
+            run("trade.rejected.v2", "trade_rejected").severity,
+            Severity::Critical
+        );
     }
 
     #[test]
@@ -430,7 +469,6 @@ mod tests {
         assert_eq!(sev(&m, &i), Severity::Warning);
         i.payload["severity"] = json!("bogus");
         assert_eq!(sev(&m, &i), Severity::Warning); // default
-        // `critical` bez wpisu w mapie (alertmanager ma pustą mapę) -> nazwa skali
         let am = CompiledMapping::compile(seed_def("alertmanager"), 1).unwrap();
         let mut a = fixture("alertmanager_high_error_rate");
         assert_eq!(sev(&am, &a), Severity::Critical);
@@ -456,7 +494,10 @@ mod tests {
         def.fingerprint.clear();
         let m = CompiledMapping::compile(def, 1).unwrap();
         let fp = |payload: Value| {
-            let env = Envelope { payload: payload.clone(), ..env_of(&fixture("workflow_failed")) };
+            let env = Envelope {
+                payload: payload.clone(),
+                ..env_of(&fixture("workflow_failed"))
+            };
             m.normalize(&env, payload).fingerprint
         };
         let a = fp(json!({"a": 1}));
@@ -475,8 +516,13 @@ mod tests {
         assert!(parse_payload("xml", &json!("<a/>")).is_err());
 
         let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
-        let yaml = "workflowName: wf\nstep: s\nseverity: INFO\nerror:\n  code: E1\n  message: boom\n";
-        let env = Envelope { format: "yaml".into(), payload: json!(yaml), ..env_of(&fixture("workflow_failed")) };
+        let yaml =
+            "workflowName: wf\nstep: s\nseverity: INFO\nerror:\n  code: E1\n  message: boom\n";
+        let env = Envelope {
+            format: "yaml".into(),
+            payload: json!(yaml),
+            ..env_of(&fixture("workflow_failed"))
+        };
         let ev = m.normalize(&env, parse_payload(&env.format, &env.payload).unwrap());
         assert_eq!(ev.fingerprint, "workflow.v1|wf|s|E1");
         assert_eq!(ev.title, "boom");
@@ -487,7 +533,10 @@ mod tests {
     fn changed_title_path_recompiles() {
         let mut def = seed_def("workflow.v1");
         let env = env_of(&fixture("workflow_failed"));
-        let t1 = CompiledMapping::compile(def.clone(), 1).unwrap().normalize(&env, env.payload.clone()).title;
+        let t1 = CompiledMapping::compile(def.clone(), 1)
+            .unwrap()
+            .normalize(&env, env.payload.clone())
+            .title;
         def.title = Some("$.workflowName".into());
         let m2 = CompiledMapping::compile(def, 2).unwrap();
         let ev = m2.normalize(&env, env.payload.clone());
@@ -530,9 +579,18 @@ mod tests {
             m.normalize(&env, env.payload.clone()).fingerprint
         };
 
-        assert_ne!(fp(Some("A|B"), Some("C"), Some("D")), fp(Some("A"), Some("B|C"), Some("D")));
-        assert_ne!(fp(Some(""), Some("C"), Some("D")), fp(None, Some("C"), Some("D")));
-        assert_ne!(fp(Some("\\N"), Some("C"), Some("D")), fp(None, Some("C"), Some("D")));
+        assert_ne!(
+            fp(Some("A|B"), Some("C"), Some("D")),
+            fp(Some("A"), Some("B|C"), Some("D"))
+        );
+        assert_ne!(
+            fp(Some(""), Some("C"), Some("D")),
+            fp(None, Some("C"), Some("D"))
+        );
+        assert_ne!(
+            fp(Some("\\N"), Some("C"), Some("D")),
+            fp(None, Some("C"), Some("D"))
+        );
     }
 
     #[test]
@@ -547,7 +605,6 @@ mod tests {
         assert_eq!(ev1.title, "badmsg");
         assert!(!ev1.raw["error"]["message"].as_str().unwrap().contains('\0'));
 
-        // Different tail beyond 512 bytes must still produce distinct bounded fingerprints.
         i.payload["workflowName"] = json!(format!("{}b", "a".repeat(999)));
         let env2 = env_of(&i);
         let ev2 = m.normalize(&env2, env2.payload.clone());

@@ -1,4 +1,3 @@
-// Ścieżka pliku konfiguracyjnego, który trzeba edytować (UI jest tylko do odczytu), z przyciskiem kopiowania.
 import { Code } from "@atlaskit/code";
 import Lozenge from "@atlaskit/lozenge";
 import { Box, Inline, Text } from "@atlaskit/primitives/compiled";

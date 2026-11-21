@@ -1,5 +1,3 @@
-// Badge severity, stanu alertu oraz statusów dostarczeń i kroków runbooka.
-// API eksportów bez zmian; etykiety, kolory i ikony pochodzą z jednego źródła: ui/status.ts (design.md D6).
 import Lozenge, { type ThemeAppearance } from "@atlaskit/lozenge";
 import type { Schemas } from "../api/client";
 import { StatusLozenge } from "../ui/primitives";

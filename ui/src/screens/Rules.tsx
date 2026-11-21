@@ -1,4 +1,3 @@
-// Reguły — maksymalnie przejrzysta lista + prosty edytor z panelem AI.
 import { useCallback, useEffect, useState } from "react";
 import Button from "@atlaskit/button/new";
 import { Text } from "@atlaskit/primitives/compiled";

@@ -307,7 +307,6 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             if sa == sb {
                 return true;
             }
-            // Also match normalized severity aliases if both are severity strings (e.g. "warn" == "warning")
             if let (Some(ra), Some(rb)) = (severity_rank(sa), severity_rank(sb)) {
                 return ra == rb;
             }
@@ -476,14 +475,16 @@ fn validate_interpolation_expr(expr: &str) -> Result<(), Error> {
         return Err(Error::InvalidTemplate("empty interpolation `{{}}`".into()));
     }
 
-    if trimmed.contains("..") || trimmed.contains("__") || trimmed.contains('/') || trimmed.contains('\\') {
+    if trimmed.contains("..")
+        || trimmed.contains("__")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
         return Err(Error::InvalidTemplate(format!(
             "forbidden path or dunder in template expression `{trimmed}`"
         )));
     }
 
-    // Disallow function calls, pipes/filters with parens, indexing with brackets, quotes, etc.
-    // Templates in alerting-service only allow dot-separated field paths (`{{pole.zagnieżdżone}}`).
     for ch in trimmed.chars() {
         if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-') {
             return Err(Error::InvalidTemplate(format!(
@@ -549,7 +550,6 @@ fn parse_template_tokens(template: &str) -> Result<Vec<TemplateToken<'_>>, Error
         )));
     }
 
-    // Reject block tags `{%` and comment tags `{#`
     if template.contains("{%") || template.contains("%}") {
         return Err(Error::InvalidTemplate(
             "control block tags `{% ... %}` are not allowed in templates".into(),
@@ -592,8 +592,6 @@ fn parse_template_tokens(template: &str) -> Result<Vec<TemplateToken<'_>>, Error
         tokens.push(TemplateToken::Literal(rest));
     }
 
-    // Additional verification using an empty sandboxed minijinja environment for valid expressions
-    // (Note: minijinja syntax rejects hyphens in identifiers, so only run minijinja compile check if no hyphen)
     if !template.contains('-') {
         let mut env = minijinja::Environment::empty();
         env.set_recursion_limit(16);
@@ -797,7 +795,6 @@ all:
             compile(&cond).unwrap().evaluate(&ctx)
         };
 
-        // Eq & Ne (including numeric int/float equivalence)
         assert!(check("count", Op::Eq, json!(42)));
         assert!(check("count", Op::Eq, json!(42.0)));
         assert!(check("ratio", Op::Eq, json!(42)));
@@ -805,12 +802,18 @@ all:
         assert!(check("count", Op::Ne, json!(43)));
         assert!(!check("count", Op::Ne, json!(42)));
 
-        // In
-        assert!(check("schema", Op::In, json!(["workflow.v1", "trade.rejected.v2"])));
-        assert!(!check("schema", Op::In, json!(["workflow.v1", "alertmanager"])));
+        assert!(check(
+            "schema",
+            Op::In,
+            json!(["workflow.v1", "trade.rejected.v2"])
+        ));
+        assert!(!check(
+            "schema",
+            Op::In,
+            json!(["workflow.v1", "alertmanager"])
+        ));
         assert!(check("tags", Op::In, json!(["rates", "equities"])));
 
-        // Gt, Gte, Lt, Lte (numeric)
         assert!(check("count", Op::Gt, json!(41)));
         assert!(!check("count", Op::Gt, json!(42)));
         assert!(check("count", Op::Gte, json!(42)));
@@ -818,7 +821,6 @@ all:
         assert!(!check("count", Op::Lt, json!(42)));
         assert!(check("count", Op::Lte, json!(42)));
 
-        // Gt, Gte, Lt, Lte (severity ordering: info < warning < error < critical)
         assert!(check("severity", Op::Gte, json!("warning")));
         assert!(check("severity", Op::Gte, json!("WARN")));
         assert!(check("severity", Op::Gt, json!("warning")));
@@ -827,27 +829,22 @@ all:
         assert!(check("severity", Op::Lt, json!("critical")));
         assert!(!check("severity", Op::Gte, json!("critical")));
 
-        // Contains (string and array)
         assert!(check("message", Op::Contains, json!("5000 ms")));
         assert!(!check("message", Op::Contains, json!("9999 ms")));
         assert!(check("tags", Op::Contains, json!("urgent")));
         assert!(!check("tags", Op::Contains, json!("missing")));
 
-        // Regex
         assert!(check("message", Op::Regex, json!(r"respond in \d+ ms$")));
         assert!(!check("message", Op::Regex, json!(r"^respond")));
 
-        // Glob
         assert!(check("schema", Op::Glob, json!("trade.rejected.*")));
         assert!(check("service", Op::Glob, json!("pricing-engine-*")));
         assert!(!check("service", Op::Glob, json!("payments-*")));
 
-        // Exists
         assert!(check("service", Op::Exists, Value::Null));
         assert!(check("service", Op::Exists, json!(true)));
         assert!(!check("service", Op::Exists, json!(false)));
 
-        // Dotted key fallback & array index resolution
         assert!(check("raw.dotted.key", Op::Eq, json!("direct_hit")));
         assert!(check("raw.items.1.name", Op::Eq, json!("second")));
     }
@@ -898,7 +895,6 @@ all:
         };
         assert!(!compile(&cond_in).unwrap().evaluate(&ctx));
 
-        // Exists on missing / null field
         let exists_true = Condition::Leaf {
             field: "nonexistent".into(),
             op: Op::Exists,
@@ -923,23 +919,26 @@ all:
 
     #[test]
     fn compile_rejects_invalid_conditions() {
-        // Invalid regex
         let bad_regex = Condition::Leaf {
             field: "title".into(),
             op: Op::Regex,
             value: json!("[unclosed"),
         };
-        assert!(matches!(compile(&bad_regex), Err(Error::InvalidCondition(_))));
+        assert!(matches!(
+            compile(&bad_regex),
+            Err(Error::InvalidCondition(_))
+        ));
 
-        // Invalid glob
         let bad_glob = Condition::Leaf {
             field: "schema".into(),
             op: Op::Glob,
             value: json!("[unclosed"),
         };
-        assert!(matches!(compile(&bad_glob), Err(Error::InvalidCondition(_))));
+        assert!(matches!(
+            compile(&bad_glob),
+            Err(Error::InvalidCondition(_))
+        ));
 
-        // `in` without array
         let bad_in = Condition::Leaf {
             field: "schema".into(),
             op: Op::In,
@@ -947,7 +946,6 @@ all:
         };
         assert!(matches!(compile(&bad_in), Err(Error::InvalidCondition(_))));
 
-        // `gt` with boolean
         let bad_gt = Condition::Leaf {
             field: "count".into(),
             op: Op::Gt,
@@ -955,13 +953,15 @@ all:
         };
         assert!(matches!(compile(&bad_gt), Err(Error::InvalidCondition(_))));
 
-        // Empty field
         let empty_field = Condition::Leaf {
             field: "   ".into(),
             op: Op::Eq,
             value: json!("x"),
         };
-        assert!(matches!(compile(&empty_field), Err(Error::InvalidCondition(_))));
+        assert!(matches!(
+            compile(&empty_field),
+            Err(Error::InvalidCondition(_))
+        ));
     }
 
     #[test]
@@ -1015,7 +1015,8 @@ all:
     fn scenario_title_template_rendering() {
         let ev = sample_trade_event(25_000_000);
         let ctx = event_context(&ev);
-        let tpl = "Rejected {{raw.payload.currency}} {{raw.payload.notional}} — {{raw.payload.reason}}";
+        let tpl =
+            "Rejected {{raw.payload.currency}} {{raw.payload.notional}} — {{raw.payload.reason}}";
         validate_template(tpl).unwrap();
         let rendered = render_template(tpl, &ctx).unwrap();
         assert_eq!(rendered, "Rejected EUR 25000000 — LIMIT_BREACH");
@@ -1073,7 +1074,6 @@ all:
 
         let big_val = "x".repeat(10_000);
         let ctx = json!({ "big": big_val });
-        // 7 * 10_000 = 70_000 > MAX_RENDERED_LEN (65536)
         let tpl = "{{big}}{{big}}{{big}}{{big}}{{big}}{{big}}{{big}}";
         validate_template(tpl).unwrap();
         assert!(matches!(
@@ -1154,13 +1154,11 @@ all:
         );
 
         assert!(matched_count > 0);
-        // Should easily evaluate 100 rules in well under 5 ms per event even in debug/opt-level 1
         assert!(per_event_100_rules_us < 5_000.0);
     }
 
     #[test]
     fn seed_rules_and_mappings_integration() {
-        // Verify P1 trade.rejected.v2 severity rule and alertmanager resolved condition
         let trade_cond: Condition = serde_yaml::from_str(
             r#"
 field: raw.payload.notional
@@ -1170,7 +1168,9 @@ value: 10000000
         )
         .unwrap();
         let ev_trade = sample_trade_event(25_000_000);
-        assert!(compile(&trade_cond).unwrap().evaluate(&event_context(&ev_trade)));
+        assert!(compile(&trade_cond)
+            .unwrap()
+            .evaluate(&event_context(&ev_trade)));
 
         let am_resolved_cond: Condition = serde_yaml::from_str(
             r#"
@@ -1184,7 +1184,6 @@ value: resolved
         assert!(compiled_am.evaluate(&json!({"raw": {"status": "resolved"}})));
         assert!(!compiled_am.evaluate(&json!({"raw": {"status": "firing"}})));
 
-        // Verify all 4 seed rules in config/rules/ compile and render templates cleanly
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
         for rule_file in [
             "rates-big-rejections.yaml",
@@ -1217,4 +1216,3 @@ value: resolved
         assert!(matches!(err, Error::InvalidCondition(_)), "{err}");
     }
 }
-

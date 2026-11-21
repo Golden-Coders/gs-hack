@@ -45,7 +45,6 @@ const leaf = (field: string, op: Cond["op"], value?: unknown): Cond => ({ field,
 
 describe("konwersje reguła <-> kreator", () => {
   it.each(fixtures)("round-trip %s: reguła -> formularz -> reguła daje to samo", (_n, rule) => {
-    // `severity_override: null` celowo znika (brak pola = brak nadpisania), reszta bez zmian
     const { severity_override, ...rest } = rule;
     const expected = severity_override ? rule : rest;
     expect(formToRule(ruleToForm(rule))).toEqual(expected);

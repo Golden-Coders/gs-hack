@@ -1,4 +1,3 @@
-// Kolejka zatwierdzeń — bez checkboxów i bez sekcji Parametry; obsługuje bezpośrednie przejście (?step=run_id:step_id).
 import { Text } from "@atlaskit/primitives/compiled";
 import { useEffect, useRef, useState } from "react";
 import Button from "@atlaskit/button/new";

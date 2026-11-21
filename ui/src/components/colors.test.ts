@@ -32,8 +32,6 @@ describe("paletteColor", () => {
     expect(paletteColor(undefined)).toBeNull();
   });
 
-  // BŁĄD: PALETTE to zwykły obiekt, więc klucze z prototypu ("constructor", "valueOf") zwracają funkcję zamiast null.
-  // Oczekiwane: null; faktyczne: funkcja Object. Skutek praktyczny znikomy (konfiguracja z kolorem "constructor").
   it("nazwy z prototypu obiektu nie są kolorami", () => {
     expect(paletteColor("constructor")).toBeNull();
     expect(paletteColor("valueOf")).toBeNull();

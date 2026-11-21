@@ -1,4 +1,3 @@
-// Markdown runbooków MANUAL. react-markdown nie renderuje surowego HTML i czyści niebezpieczne URL-e.
 import Link from "@atlaskit/link";
 import { token } from "@atlaskit/tokens";
 import ReactMarkdown from "react-markdown";

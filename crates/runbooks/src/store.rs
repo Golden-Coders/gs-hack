@@ -37,7 +37,11 @@ pub struct Snapshot {
 }
 
 /// Jeden obieg: pliki → baza → migawka. Zwraca `true`, gdy migawka się zmieniła.
-pub async fn reload_once(pool: &PgPool, config_dir: &str, snapshot: &ArcSwap<Snapshot>) -> anyhow::Result<bool> {
+pub async fn reload_once(
+    pool: &PgPool,
+    config_dir: &str,
+    snapshot: &ArcSwap<Snapshot>,
+) -> anyhow::Result<bool> {
     sync_files(pool, Path::new(config_dir)).await?;
     let previous = snapshot.load_full();
     let next = load(pool).await?;
@@ -45,11 +49,17 @@ pub async fn reload_once(pool: &PgPool, config_dir: &str, snapshot: &ArcSwap<Sna
         write_unhandled(pool, &next.unhandled).await?;
     }
     if next.runbooks != previous.runbooks {
-        // Router (P2) przeładowuje runbooki MANUAL tylko po tym powiadomieniu (design D5).
         notify_config_changed(pool, "runbooks").await;
     }
-    if next.runbooks.len() != previous.runbooks.len() || next.registry.len() != previous.registry.len() {
-        tracing::info!(runbooks = next.runbooks.len(), actions = next.registry.len(), unhandled = next.unhandled.len(), "p3 config reloaded");
+    if next.runbooks.len() != previous.runbooks.len()
+        || next.registry.len() != previous.registry.len()
+    {
+        tracing::info!(
+            runbooks = next.runbooks.len(),
+            actions = next.registry.len(),
+            unhandled = next.unhandled.len(),
+            "p3 config reloaded"
+        );
     }
     let changed = *previous != next;
     snapshot.store(Arc::new(next));
@@ -58,7 +68,12 @@ pub async fn reload_once(pool: &PgPool, config_dir: &str, snapshot: &ArcSwap<Sna
 
 /// Pętla przeładowania. Błąd jednego obiegu (np. chwilowy brak bazy) tylko loguje.
 /// Zmiana = `ui.events {config_changed}`, żeby ekrany akcji i runbooków się odświeżyły.
-pub async fn run(pool: PgPool, config_dir: String, snapshot: Arc<ArcSwap<Snapshot>>, producer: FutureProducer) {
+pub async fn run(
+    pool: PgPool,
+    config_dir: String,
+    snapshot: Arc<ArcSwap<Snapshot>>,
+    producer: FutureProducer,
+) {
     loop {
         tokio::time::sleep(POLL_INTERVAL).await;
         match reload_once(&pool, &config_dir, &snapshot).await {
@@ -70,7 +85,6 @@ pub async fn run(pool: PgPool, config_dir: String, snapshot: Arc<ArcSwap<Snapsho
 }
 
 pub async fn sync_files(pool: &PgPool, config_dir: &Path) -> anyhow::Result<()> {
-    // Akcje wbudowane też trafiają do `actions` (source_file = 'builtin'), żeby api widziało cały rejestr.
     for action in Registry::builtins() {
         let def = serde_json::to_value(&action)?;
         sqlx::query(
@@ -85,19 +99,25 @@ pub async fn sync_files(pool: &PgPool, config_dir: &Path) -> anyhow::Result<()> 
         .execute(pool)
         .await?;
     }
-    // Seed akcji HTTP z plików wykonujemy tylko wtedy, gdy w bazie nie ma jeszcze żadnych akcji HTTP
-    // (dzięki temu użytkownik może swobodnie zmieniać nazwy, edytować i usuwać akcje w UI bez nadpisywania co 2s).
-    let custom_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM actions WHERE source_file IS DISTINCT FROM 'builtin'")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(1);
+    let custom_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM actions WHERE source_file IS DISTINCT FROM 'builtin'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(1);
     if custom_count == 0 {
-        sync_dir(pool, &config_dir.join("actions"), "actions", "name", |file, text| {
-            let def = parse::parse_action(file, text)?;
-            registry::validate_action(&def).map_err(|e| format!("{file}: {e}"))?;
-            let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
-            Ok((def.name, val))
-        })
+        sync_dir(
+            pool,
+            &config_dir.join("actions"),
+            "actions",
+            "name",
+            |file, text| {
+                let def = parse::parse_action(file, text)?;
+                registry::validate_action(&def).map_err(|e| format!("{file}: {e}"))?;
+                let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
+                Ok((def.name, val))
+            },
+        )
         .await?;
     }
     let rb_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runbooks")
@@ -105,11 +125,17 @@ pub async fn sync_files(pool: &PgPool, config_dir: &Path) -> anyhow::Result<()> 
         .await
         .unwrap_or(1);
     if rb_count == 0 {
-        sync_dir(pool, &config_dir.join("runbooks"), "runbooks", "id", |file, text| {
-            let def = parse::parse_runbook(file, text)?;
-            let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
-            Ok((def.id, val))
-        })
+        sync_dir(
+            pool,
+            &config_dir.join("runbooks"),
+            "runbooks",
+            "id",
+            |file, text| {
+                let def = parse::parse_runbook(file, text)?;
+                let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
+                Ok((def.id, val))
+            },
+        )
         .await?;
     }
     Ok(())
@@ -131,7 +157,14 @@ async fn sync_dir(
     let mut paths: Vec<_> = entries
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| p.is_file() && !p.file_name().and_then(|n| n.to_str()).unwrap_or(".").starts_with('.'))
+        .filter(|p| {
+            p.is_file()
+                && !p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(".")
+                    .starts_with('.')
+        })
         .collect();
     paths.sort();
 
@@ -142,13 +175,15 @@ async fn sync_dir(
     for path in paths {
         let file = path.display().to_string();
         present.push(file.clone());
-        let parsed = std::fs::read_to_string(&path).map_err(|e| format!("{file}: {e}")).and_then(|text| {
-            let (key, def) = parse(&file, &text)?;
-            if let Some(other) = seen_keys.insert(key.clone(), file.clone()) {
-                return Err(format!("{file}: `{key}` jest już zdefiniowane w {other}"));
-            }
-            Ok((key, def, text))
-        });
+        let parsed = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{file}: {e}"))
+            .and_then(|text| {
+                let (key, def) = parse(&file, &text)?;
+                if let Some(other) = seen_keys.insert(key.clone(), file.clone()) {
+                    return Err(format!("{file}: `{key}` jest już zdefiniowane w {other}"));
+                }
+                Ok((key, def, text))
+            });
         match parsed {
             Ok((key, def, text)) => {
                 let changed = sqlx::query(&format!(
@@ -168,12 +203,13 @@ async fn sync_dir(
                 if changed > 0 {
                     tracing::info!(file, key, "{table}: loaded from file");
                 }
-                // Zmieniono id w pliku: stary wpis z tego pliku znika.
-                sqlx::query(&format!("DELETE FROM {table} WHERE source_file = $1 AND {key_col} <> $2"))
-                    .bind(&file)
-                    .bind(&key)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(&format!(
+                    "DELETE FROM {table} WHERE source_file = $1 AND {key_col} <> $2"
+                ))
+                .bind(&file)
+                .bind(&key)
+                .execute(pool)
+                .await?;
             }
             Err(error) => {
                 failed.push(file.clone());
@@ -188,13 +224,15 @@ async fn sync_dir(
                 .await?
                 .rows_affected();
                 if changed > 0 {
-                    tracing::warn!(error, "{table}: invalid file, previous version stays active");
+                    tracing::warn!(
+                        error,
+                        "{table}: invalid file, previous version stays active"
+                    );
                 }
             }
         }
     }
 
-    // Plik usunięty => wpis znika. Plik błędny zostaje w `present`, więc jego stara wersja działa dalej.
     sqlx::query(&format!("DELETE FROM {table} WHERE left(source_file, length($1)) = $1 AND NOT (source_file = ANY($2))"))
         .bind(&prefix)
         .bind(&present)
@@ -212,10 +250,12 @@ pub async fn load(pool: &PgPool) -> anyhow::Result<Snapshot> {
     let rows: Vec<(String, Value, i64)> = sqlx::query_as("SELECT name, definition, version FROM actions WHERE source_file IS DISTINCT FROM 'builtin' ORDER BY name").fetch_all(pool).await?;
     let mut custom = Vec::new();
     for (name, definition, version) in rows {
-        let parsed = serde_json::from_value::<ActionDef>(definition).map_err(|e| e.to_string()).and_then(|a| {
-            registry::validate_action(&a)?;
-            Ok(a)
-        });
+        let parsed = serde_json::from_value::<ActionDef>(definition)
+            .map_err(|e| e.to_string())
+            .and_then(|a| {
+                registry::validate_action(&a)?;
+                Ok(a)
+            });
         match parsed {
             Ok(action) => custom.push(ActionDef { version, ..action }),
             Err(error) => tracing::warn!(name, error, "skipping invalid action from database"),
@@ -224,7 +264,9 @@ pub async fn load(pool: &PgPool) -> anyhow::Result<Snapshot> {
     let registry = Registry::new(custom);
 
     let rows: Vec<(String, Value, Option<Value>, i64)> =
-        sqlx::query_as("SELECT id, definition, resolved, version FROM runbooks ORDER BY id").fetch_all(pool).await?;
+        sqlx::query_as("SELECT id, definition, resolved, version FROM runbooks ORDER BY id")
+            .fetch_all(pool)
+            .await?;
     let mut runbooks = Vec::new();
     let mut unhandled = Unhandled::new();
     for (id, definition, stored_resolved, version) in rows {
@@ -245,7 +287,11 @@ pub async fn load(pool: &PgPool) -> anyhow::Result<Snapshot> {
         }
         let value = serde_json::to_value(&resolved)?;
         if stored_resolved.as_ref() != Some(&value) {
-            sqlx::query("UPDATE runbooks SET resolved = $2 WHERE id = $1").bind(&id).bind(&value).execute(pool).await?;
+            sqlx::query("UPDATE runbooks SET resolved = $2 WHERE id = $1")
+                .bind(&id)
+                .bind(&value)
+                .execute(pool)
+                .await?;
         }
         runbooks.push(resolved);
     }
@@ -254,28 +300,46 @@ pub async fn load(pool: &PgPool) -> anyhow::Result<Snapshot> {
         runbooks,
         unhandled,
         rules: read_defs(pool, "SELECT def FROM rules WHERE enabled ORDER BY id").await?,
-        people: read_defs::<PersonDef>(pool, "SELECT def FROM people ORDER BY id").await?.into_iter().map(|p| (p.id.clone(), p)).collect(),
-        teams: read_defs::<TeamDef>(pool, "SELECT def FROM teams ORDER BY id").await?.into_iter().map(|t| (t.id.clone(), t)).collect(),
+        people: read_defs::<PersonDef>(pool, "SELECT def FROM people ORDER BY id")
+            .await?
+            .into_iter()
+            .map(|p| (p.id.clone(), p))
+            .collect(),
+        teams: read_defs::<TeamDef>(pool, "SELECT def FROM teams ORDER BY id")
+            .await?
+            .into_iter()
+            .map(|t| (t.id.clone(), t))
+            .collect(),
     })
 }
 
 /// Definicje JSONB z tabel innego strumienia. Wiersz, który nie pasuje do kontraktu, pomijamy
 /// (jego właściciel waliduje zapis; tu nie spamujemy logu co 2 s).
-async fn read_defs<T: serde::de::DeserializeOwned>(pool: &PgPool, sql: &str) -> anyhow::Result<Vec<T>> {
+async fn read_defs<T: serde::de::DeserializeOwned>(
+    pool: &PgPool,
+    sql: &str,
+) -> anyhow::Result<Vec<T>> {
     let rows: Vec<Value> = sqlx::query_scalar(sql).fetch_all(pool).await?;
-    Ok(rows.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect())
 }
 
 async fn write_unhandled(pool: &PgPool, unhandled: &Unhandled) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM unhandled_actions").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM unhandled_actions")
+        .execute(&mut *tx)
+        .await?;
     for (action, (occurrences, runbook_ids)) in unhandled {
-        sqlx::query("INSERT INTO unhandled_actions (action, occurrences, runbook_ids) VALUES ($1, $2, $3)")
-            .bind(action)
-            .bind(occurrences)
-            .bind(runbook_ids)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO unhandled_actions (action, occurrences, runbook_ids) VALUES ($1, $2, $3)",
+        )
+        .bind(action)
+        .bind(occurrences)
+        .bind(runbook_ids)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(())

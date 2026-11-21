@@ -18,7 +18,9 @@ pub struct RedactedText {
 
 fn template_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\{\{\s*[A-Za-z_][A-Za-z0-9_.-]*\s*\}\}").expect("valid template regex"))
+    RE.get_or_init(|| {
+        Regex::new(r"\{\{\s*[A-Za-z_][A-Za-z0-9_.-]*\s*\}\}").expect("valid template regex")
+    })
 }
 
 fn url_re() -> &'static Regex {
@@ -37,13 +39,17 @@ fn cred_uri_re() -> &'static Regex {
 fn secret_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]{12,}\b").expect("valid secret regex")
+        Regex::new(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]{12,}\b")
+            .expect("valid secret regex")
     })
 }
 
 fn email_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").expect("valid email regex"))
+    RE.get_or_init(|| {
+        Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+            .expect("valid email regex")
+    })
 }
 
 fn ipv6_re() -> &'static Regex {
@@ -71,8 +77,10 @@ fn ipv6_re() -> &'static Regex {
 fn ipv4_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?::\d{1,5})?\b")
-            .expect("valid ipv4 regex")
+        Regex::new(
+            r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?::\d{1,5})?\b",
+        )
+        .expect("valid ipv4 regex")
     })
 }
 
@@ -84,7 +92,14 @@ fn internal_host_re() -> &'static Regex {
     })
 }
 
-fn replace_kind(input: &str, re: &Regex, kind: &str, label: &str, kinds: &mut BTreeMap<String, usize>, total: &mut usize) -> String {
+fn replace_kind(
+    input: &str,
+    re: &Regex,
+    kind: &str,
+    label: &str,
+    kinds: &mut BTreeMap<String, usize>,
+    total: &mut usize,
+) -> String {
     let mut seq = 0usize;
     let out = re
         .replace_all(input, |_: &regex::Captures| {
@@ -99,7 +114,6 @@ fn replace_kind(input: &str, re: &Regex, kind: &str, label: &str, kinds: &mut BT
 
 /// Redaguje wrażliwe dane (URL, e-mail, IPv4, wewnętrzne hosty) z zachowaniem `{{...}}`.
 pub fn redact(input: &str) -> RedactedText {
-    // 1. Chronimy zmienne szablonowe `{{...}}`, aby nie zostały naruszone przez redakcję.
     let mut templates: Vec<String> = Vec::new();
     let protected = template_re()
         .replace_all(input, |caps: &regex::Captures| {
@@ -109,23 +123,39 @@ pub fn redact(input: &str) -> RedactedText {
         })
         .into_owned();
 
-    // 2. Redagujemy kolejno: URL -> URI z poświadczeniami -> sekrety -> email -> IPv6 -> IPv4 -> wewnętrzny host.
     let mut kinds = BTreeMap::new();
     let mut count = 0usize;
     let step = replace_kind(&protected, url_re(), "url", "URL", &mut kinds, &mut count);
     let step = replace_kind(&step, cred_uri_re(), "uri", "URI", &mut kinds, &mut count);
-    let step = replace_kind(&step, secret_re(), "secret", "SECRET", &mut kinds, &mut count);
+    let step = replace_kind(
+        &step,
+        secret_re(),
+        "secret",
+        "SECRET",
+        &mut kinds,
+        &mut count,
+    );
     let step = replace_kind(&step, email_re(), "email", "EMAIL", &mut kinds, &mut count);
     let step = replace_kind(&step, ipv6_re(), "ip", "IP", &mut kinds, &mut count);
     let step = replace_kind(&step, ipv4_re(), "ip", "IP", &mut kinds, &mut count);
-    let mut step = replace_kind(&step, internal_host_re(), "host", "HOST", &mut kinds, &mut count);
+    let mut step = replace_kind(
+        &step,
+        internal_host_re(),
+        "host",
+        "HOST",
+        &mut kinds,
+        &mut count,
+    );
 
-    // 3. Przywracamy zmienne szablonowe.
     for (idx, tpl) in templates.into_iter().enumerate() {
         step = step.replace(&format!("\x00TPL_{idx}\x00"), &tpl);
     }
 
-    RedactedText { text: step, count, kinds }
+    RedactedText {
+        text: step,
+        count,
+        kinds,
+    }
 }
 
 #[cfg(test)]
@@ -199,7 +229,6 @@ mod tests {
         assert!(!res.text.contains("fe80::1"));
         assert!(!res.text.contains("::1"));
         assert!(!res.text.contains("::ffff:10.0.0.1"));
-        // Zwykły znacznik czasu nie jest błędnie traktowany jako IPv6.
         assert!(res.text.contains("12:34:56"));
         assert_eq!(res.kinds.get("uri"), Some(&2));
         assert_eq!(res.kinds.get("secret"), Some(&2));

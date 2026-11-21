@@ -27,24 +27,47 @@ async fn mapping_changes_are_hot_reloaded() {
 
     let store = new_store();
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let h = tokio::spawn(run_config(common::database_url(), dir.to_string_lossy().into(), pool.clone(), producer, store.clone(), rx));
+    let h = tokio::spawn(run_config(
+        common::database_url(),
+        dir.to_string_lossy().into(),
+        pool.clone(),
+        producer,
+        store.clone(),
+        rx,
+    ));
 
-    let title = |s: &lifecycle::MappingStore, schema: &str| s.load().get(schema).map(|m| (m.version, m.def.title.clone().unwrap_or_default()));
-    common::wait_for("seed + load", Duration::from_secs(20), || async { (title(&store, &schema) == Some((1, "$.a".into()))).then_some(()) }).await;
+    let title = |s: &lifecycle::MappingStore, schema: &str| {
+        s.load()
+            .get(schema)
+            .map(|m| (m.version, m.def.title.clone().unwrap_or_default()))
+    };
+    common::wait_for("seed + load", Duration::from_secs(20), || async {
+        (title(&store, &schema) == Some((1, "$.a".into()))).then_some(())
+    })
+    .await;
 
-    // zmiana w bazie + NOTIFY (jak z API) -> nowa wersja bez restartu
     sqlx::query("UPDATE mappings SET def = jsonb_set(def, '{title}', '\"$.b\"'), version = version + 1 WHERE schema = $1")
         .bind(&schema)
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("SELECT pg_notify('config_changed', 'mappings')").execute(&pool).await.unwrap();
-    common::wait_for("reload po NOTIFY", Duration::from_secs(20), || async { (title(&store, &schema) == Some((2, "$.b".into()))).then_some(()) }).await;
+    sqlx::query("SELECT pg_notify('config_changed', 'mappings')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    common::wait_for("reload po NOTIFY", Duration::from_secs(20), || async {
+        (title(&store, &schema) == Some((2, "$.b".into()))).then_some(())
+    })
+    .await;
 
-    // zmiana pliku -> upsert z wyższą wersją
     tokio::time::sleep(Duration::from_millis(1200)).await; // pewna zmiana mtime
     std::fs::write(&file, yaml(&schema, "$.c")).unwrap();
-    common::wait_for("reload po zmianie pliku", Duration::from_secs(20), || async { (title(&store, &schema) == Some((3, "$.c".into()))).then_some(()) }).await;
+    common::wait_for(
+        "reload po zmianie pliku",
+        Duration::from_secs(20),
+        || async { (title(&store, &schema) == Some((3, "$.c".into()))).then_some(()) },
+    )
+    .await;
 
     tx.send(true).unwrap();
     h.await.unwrap().unwrap();

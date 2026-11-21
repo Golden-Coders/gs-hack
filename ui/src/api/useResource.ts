@@ -1,4 +1,3 @@
-// Ładowanie danych sekcji ekranu: stan (dane, błąd, ładowanie), przeładowanie i ciche odświeżenie.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { describeError } from "./request";
 

@@ -120,7 +120,6 @@ fn timezone_offset_minutes(at: DateTime<Utc>, timezone: &str) -> i64 {
         "Asia/Singapore" | "Asia/Hong_Kong" => 480,
         "Asia/Kolkata" => 330,
         other => {
-            // Obsługa formatów typu "+02:00", "-05:00", "UTC+2"
             let cleaned = other.strip_prefix("UTC").unwrap_or(other);
             if let Some(sign) = cleaned.chars().next() {
                 if sign == '+' || sign == '-' {
@@ -135,7 +134,6 @@ fn timezone_offset_minutes(at: DateTime<Utc>, timezone: &str) -> i64 {
                     }
                 }
             }
-            // Domyślnie Europe/Warsaw (zgodnie z default_tz w contracts)
             if is_eu_dst(at) {
                 120
             } else {
@@ -165,7 +163,6 @@ pub fn is_within_hours(at: DateTime<Utc>, timezone: &str, hours_spec: &str) -> b
     if start_mins < end_mins {
         current_mins >= start_mins && current_mins < end_mins
     } else {
-        // Przedział przez północ, np. 20:00-08:00
         current_mins >= start_mins || current_mins < end_mins
     }
 }
@@ -178,7 +175,6 @@ fn match_preferences(
     at: DateTime<Utc>,
     timezone: &str,
 ) -> Option<Vec<Channel>> {
-    // 1. Najpierw szukamy preferencji z jawnie podanym przedziałem godzinowym, który pasuje
     for pref in prefs {
         if pref.severity == severity {
             if let Some(hours) = &pref.hours {
@@ -188,7 +184,6 @@ fn match_preferences(
             }
         }
     }
-    // 2. W przeciwnym razie szukamy preferencji bez ograniczenia godzinowego (`hours: None`)
     for pref in prefs {
         if pref.severity == severity {
             let no_hours = pref
@@ -213,16 +208,12 @@ pub fn resolve_person_channels(
     severity: Severity,
     at: DateTime<Utc>,
 ) -> Vec<Channel> {
-    // 1. Własne preferencje osoby nadpisują preferencje zespołu
-    if let Some(channels) =
-        match_preferences(&person.preferences, severity, at, &person.timezone)
-    {
+    if let Some(channels) = match_preferences(&person.preferences, severity, at, &person.timezone) {
         if !channels.is_empty() {
             return channels;
         }
     }
 
-    // 2. Domyślne preferencje zespołu wskazującego w regule (`team_context`)
     if let Some(tid) = team_context {
         if let Some(team) = teams.get(tid) {
             if let Some(channels) =
@@ -235,15 +226,13 @@ pub fn resolve_person_channels(
         }
     }
 
-    // 3. Domyślne preferencje jakiegokolwiek zespołu, do którego należy osoba (deterministycznie po id)
     let mut member_teams: Vec<&TeamDef> = teams
         .values()
         .filter(|t| t.members.iter().any(|m| m == &person.id))
         .collect();
     member_teams.sort_by(|a, b| a.id.cmp(&b.id));
     for team in member_teams {
-        if let Some(channels) =
-            match_preferences(&team.preferences, severity, at, &person.timezone)
+        if let Some(channels) = match_preferences(&team.preferences, severity, at, &person.timezone)
         {
             if !channels.is_empty() {
                 return channels;
@@ -251,7 +240,6 @@ pub fn resolve_person_channels(
         }
     }
 
-    // 4. Gdy ani osoba, ani zespół nie mają preferencji dla danego severity -> UI
     vec![Channel::Ui]
 }
 
@@ -324,7 +312,6 @@ pub fn render_for_channels(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| alert.event.title.clone());
 
-    // Render matched manual runbooks
     let mut full_body_with_runbooks = base_body.clone();
     for rb in manual_runbooks {
         if let Some(rb_body_tpl) = &rb.def.body {
@@ -337,7 +324,6 @@ pub fn render_for_channels(
         }
     }
 
-    // Skrócona treść dla SMS (z linkiem do szczegółów alertu w UI, bez pełnej treści runbooka)
     let short_body = if base_body.chars().count() > 120 {
         let truncated: String = base_body.chars().take(117).collect();
         format!("{truncated}...")
@@ -388,7 +374,6 @@ pub fn route_alert(
 
     let ctx = condition::event_context(&alert.event);
 
-    // 1. Ewaluacja wszystkich włączonych reguł
     let matched_rules: Vec<&CompiledRule> = snapshot
         .rules
         .iter()
@@ -401,21 +386,15 @@ pub fn route_alert(
 
     let matched_rule_ids: Vec<String> = matched_rules.iter().map(|r| r.def.id.clone()).collect();
 
-    // 2. Dopasowanie runbooków MANUAL (design D10)
     let matched_manual_rbs =
         match_manual_runbooks(&snapshot.manual_runbooks, &matched_rule_ids, &ctx);
 
-    // 3. Rozwinięcie odbiorców per reguła -> wybór kanałów -> deduplikacja po kluczu idempotencji
-    // Klucz idempotencji z D9: `contracts::keys::delivery(alert.alert_id, alert.episode, &person_id, primary_channel)`.
-    // Zachowujemy kolejność deterministyczną, a gdy ta sama osoba i kanał wynikają z dwóch reguł,
-    // zachowujemy jedno zlecenie (jeśli druga reguła ma wyższe severity, podbijamy severity i prezentację).
     let mut requests_by_key: HashMap<String, usize> = HashMap::new();
     let mut requests: Vec<DeliveryRequest> = Vec::new();
 
     for rule in matched_rules {
         let effective_severity = rule.def.severity_override.unwrap_or(alert.severity);
 
-        // Rozwiń odbiorców reguły na pary (person_id, team_context)
         let mut expanded_recipients: Vec<(String, Option<String>)> = Vec::new();
         for recipient in &rule.def.recipients {
             match recipient {
@@ -478,7 +457,6 @@ pub fn route_alert(
                 );
 
                 if let Some(&existing_idx) = requests_by_key.get(&dedup_key) {
-                    // Jeśli kolejna dopasowana reguła ma wyższe effective_severity, aktualizujemy severity
                     if severity_rank(effective_severity)
                         > severity_rank(requests[existing_idx].severity)
                     {

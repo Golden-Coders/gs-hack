@@ -1,4 +1,3 @@
-// Runbooki dopasowane do alertu: uproszczony widok kroków oraz bezpośredni link do konkretnego kafelka w /approvals.
 import { Text } from "@atlaskit/primitives/compiled";
 import { useState } from "react";
 import { Link } from "react-router-dom";

@@ -1,7 +1,3 @@
-// Maksymalnie prosty i przejrzysty formularz akcji HTTP:
-// 1. Nazwa, opis i czy akcja wymaga zatwierdzenia przez człowieka
-// 2. Wywołanie HTTP (Metoda, Adres URL, opcjonalna treść JSON)
-// 3. Opcjonalne nagłówki (np. Authorization)
 import { useState, type FormEvent } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";

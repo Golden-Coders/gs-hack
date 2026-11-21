@@ -14,12 +14,10 @@ pub fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
-            matches!(
-                p.extension().and_then(|e| e.to_str()),
-                Some("yaml" | "yml")
-            ) && std::fs::symlink_metadata(p)
-                .map(|m| !m.file_type().is_symlink() && m.is_file())
-                .unwrap_or(false)
+            matches!(p.extension().and_then(|e| e.to_str()), Some("yaml" | "yml"))
+                && std::fs::symlink_metadata(p)
+                    .map(|m| !m.file_type().is_symlink() && m.is_file())
+                    .unwrap_or(false)
         })
         .collect();
     files.sort();
@@ -47,7 +45,14 @@ pub async fn publish_config_changed(producer: &rdkafka::producer::FutureProducer
         payload: serde_json::json!({ "kind": kind }),
         at: chrono::Utc::now(),
     };
-    if let Err(e) = crate::kafka::publish(producer, contracts::topics::UI_EVENTS, "config_changed", &ev).await {
+    if let Err(e) = crate::kafka::publish(
+        producer,
+        contracts::topics::UI_EVENTS,
+        "config_changed",
+        &ev,
+    )
+    .await
+    {
         tracing::warn!(error = %e, kind, "publishing config_changed failed");
     }
 }

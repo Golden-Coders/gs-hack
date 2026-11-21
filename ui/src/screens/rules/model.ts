@@ -1,5 +1,3 @@
-// Model edytora reguł (tasks.md 15.1): drzewo warunków do edycji w kreatorze, formularz reguły,
-// konwersje RuleDef <-> formularz <-> YAML oraz walidacja. Ewaluacją warunków zajmuje się backend (crate `condition`).
 import { LineCounter, parseDocument, stringify } from "yaml";
 import type { Schemas } from "../../api/client";
 import { PALETTE_NAMES, type PaletteName } from "../../components/colors";
@@ -9,8 +7,6 @@ export type Cond = Schemas["Condition"];
 export type Op = NonNullable<Cond["op"]>;
 export type Severity = Schemas["Severity"];
 export type Recipient = Schemas["Recipient"];
-
-// ---------------------------------------------------------------- słowniki
 
 export const OPS: { op: Op; label: string; hint?: string }[] = [
   { op: "eq", label: "równa się" },
@@ -37,7 +33,6 @@ export const SEVERITIES: { value: Severity; label: string }[] = [
   { value: "critical", label: "critical" },
 ];
 
-// Nazwy kolorów pochodzą z palety (components/colors.ts); tu tylko polskie etykiety do selecta.
 const COLOR_LABELS: Record<PaletteName, string> = {
   red: "czerwony",
   orange: "pomarańczowy",
@@ -52,8 +47,6 @@ const COLOR_SET: ReadonlySet<string> = new Set(PALETTE_NAMES);
 
 /** Pola kanoniczne zdarzenia – podpowiadane zawsze, niezależnie od `GET /fields`. */
 export const CANONICAL_FIELDS = ["schema", "severity", "source", "title"];
-
-// ---------------------------------------------------------------- drzewo warunków (model kreatora)
 
 export interface LeafNode {
   uid: string;
@@ -132,7 +125,6 @@ function conditionParts(c: Cond): TreeNode[] {
 
 export function conditionToNode(c: Cond): TreeNode {
   const parts = conditionParts(c);
-  // Kilka kluczy w jednym obiekcie to koniunkcja – w kreatorze pokazujemy ją jawnie jako grupę „wszystkie”.
   return parts.length === 1 ? parts[0] : { uid: newUid(), kind: "all", children: parts };
 }
 
@@ -178,8 +170,6 @@ export function findLeaves(node: TreeNode | null, out: LeafNode[] = []): LeafNod
   return out;
 }
 
-// ---------------------------------------------------------------- formularz reguły
-
 export interface FieldRow {
   uid: string;
   path: string;
@@ -224,7 +214,6 @@ export function ruleToForm(rule: Rule): RuleForm {
   const highlight = p.highlight ?? {};
   const fields = p.fields ?? [];
   const rows: FieldRow[] = fields.map((path) => ({ uid: newUid(), path, color: highlight[path] ?? "" }));
-  // Wyróżnione pola spoza listy `fields` pokazujemy jako wiersze (w kreatorze wyróżnienie dotyczy wyświetlanego pola).
   for (const [path, color] of Object.entries(highlight)) {
     if (!fields.includes(path)) rows.push({ uid: newUid(), path, color });
   }
@@ -252,7 +241,6 @@ export function formToRule(f: RuleForm): Rule {
     team: f.team || null,
     condition: nodeToCondition(f.root),
     recipients: f.recipients,
-    // Brak pola = brak nadpisania (serde `default`); `null` odrzuca walidacja mocka Prism (nullable w allOf).
     ...(f.severityOverride ? { severity_override: f.severityOverride } : {}),
     presentation: {
       title: f.title || null,
@@ -274,8 +262,6 @@ export function slugify(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
-
-// ---------------------------------------------------------------- walidacja kreatora
 
 export interface LeafError {
   /** `required` – brak wartości (pokazujemy po próbie zapisu), `format` – zła postać (pokazujemy od razu). */
@@ -372,8 +358,6 @@ export function validateForm(f: RuleForm, isNew: boolean): FormErrors {
     Object.keys(e.groups).length;
   return e;
 }
-
-// ---------------------------------------------------------------- YAML
 
 /** Reguła w YAML: tylko to, co ma sens dla człowieka (pola puste pomijamy, wersję pilnuje serwer). */
 export function ruleToYaml(rule: Rule): string {
@@ -550,7 +534,6 @@ export function parseRuleYaml(text: string, prevVersion: number): YamlResult {
     return { ok: true, rule: buildRule(doc.toJS(), prevVersion) };
   } catch (err) {
     if (!(err instanceof RuleShapeError)) return { ok: false, message: String(err) };
-    // Wskaż najgłębszy istniejący węzeł na ścieżce błędu (brakujący klucz -> jego rodzic).
     for (let i = err.path.length; i >= 0; i--) {
       const node = doc.getIn(err.path.slice(0, i), true) as { range?: [number, number, number] } | undefined;
       if (node?.range) {
@@ -561,8 +544,6 @@ export function parseRuleYaml(text: string, prevVersion: number): YamlResult {
     return { ok: false, message: err.message };
   }
 }
-
-// ---------------------------------------------------------------- pomocnicze
 
 /** Schemat do podpowiedzi pól: z liścia `schema = <wartość>` (dla `glob` z wildcardem nie zgadujemy). */
 export function guessSchema(root: GroupNode): string {

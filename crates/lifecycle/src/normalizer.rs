@@ -26,7 +26,16 @@ pub async fn run_normalizer(
     store: MappingStore,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    run_normalizer_with(topics::groups::LIFECYCLE_NORMALIZER, Topics::default(), brokers, pool, producer, store, shutdown).await
+    run_normalizer_with(
+        topics::groups::LIFECYCLE_NORMALIZER,
+        Topics::default(),
+        brokers,
+        pool,
+        producer,
+        store,
+        shutdown,
+    )
+    .await
 }
 
 /// Jak `run_normalizer`, ale z podaną grupą i topikami (testy używają własnych, izolowanych).
@@ -55,8 +64,6 @@ pub async fn run_normalizer_with(
                 }
             },
         };
-        // At-least-once: ponawiamy do skutku (z limitem dla trwałych błędów danych/indeksu Postgresa),
-        // offset commitujemy dopiero po zapisie skutków.
         let mut permanent_failures = 0u32;
         loop {
             match handle(&msg, &pool, &producer, &store, &topics).await {
@@ -100,7 +107,6 @@ async fn handle(
     let raw = match parse_payload(&env.format, &env.payload) {
         Ok(v) => v,
         Err(e) => {
-            // Ingest już waliduje format; tu tylko zabezpieczenie.
             tracing::warn!(event_id = %env.event_id, error = %e, "normalizer: payload parse failed, skipped");
             return Ok(());
         }
@@ -109,7 +115,13 @@ async fn handle(
     match mapping {
         Some(m) => {
             let event = m.normalize(&env, raw);
-            common::kafka::publish(producer, &topics.events_normalized, &event.fingerprint, &event).await?;
+            common::kafka::publish(
+                producer,
+                &topics.events_normalized,
+                &event.fingerprint,
+                &event,
+            )
+            .await?;
         }
         None => {
             let mut schema = env.schema.clone();
@@ -126,11 +138,13 @@ async fn handle(
             .bind(env.received_at)
             .execute(pool)
             .await?;
-            let count: i64 = common::db::sqlx::query("SELECT count(*) AS n FROM unmapped_events WHERE schema = $1")
-                .bind(&schema)
-                .fetch_one(pool)
-                .await?
-                .get("n");
+            let count: i64 = common::db::sqlx::query(
+                "SELECT count(*) AS n FROM unmapped_events WHERE schema = $1",
+            )
+            .bind(&schema)
+            .fetch_one(pool)
+            .await?
+            .get("n");
             common::kafka::publish(producer, &topics.events_unmapped, &schema, &env).await?;
             let ui = UiEvent {
                 alert_id: None,
@@ -148,23 +162,36 @@ async fn handle(
 /// Transakcja z `FOR UPDATE SKIP LOCKED` – bezpieczne przy wielu instancjach; awaria przed commitem
 /// transakcji = ponowna publikacja (at-least-once; deduplikacja po `event_id` nie jest potrzebna,
 /// bo powtórzone zdarzenie co najwyżej zwiększy licznik).
-pub async fn replay_unmapped(pool: &PgPool, producer: &FutureProducer, store: &MappingStore) -> anyhow::Result<()> {
+pub async fn replay_unmapped(
+    pool: &PgPool,
+    producer: &FutureProducer,
+    store: &MappingStore,
+) -> anyhow::Result<()> {
     replay_unmapped_to(pool, producer, store, topics::EVENTS_RAW).await
 }
 
 /// Jak `replay_unmapped`, ale na podany topik wejściowy (testy).
-pub async fn replay_unmapped_to(pool: &PgPool, producer: &FutureProducer, store: &MappingStore, events_raw: &str) -> anyhow::Result<()> {
-    let schemas: Vec<String> = common::db::sqlx::query("SELECT DISTINCT schema FROM unmapped_events")
-        .fetch_all(pool)
-        .await?
-        .iter()
-        .map(|r| r.get("schema"))
-        .collect();
+pub async fn replay_unmapped_to(
+    pool: &PgPool,
+    producer: &FutureProducer,
+    store: &MappingStore,
+    events_raw: &str,
+) -> anyhow::Result<()> {
+    let schemas: Vec<String> =
+        common::db::sqlx::query("SELECT DISTINCT schema FROM unmapped_events")
+            .fetch_all(pool)
+            .await?
+            .iter()
+            .map(|r| r.get("schema"))
+            .collect();
     let mapped = store.load();
     let mut remaining = MAX_REPLAY_ROWS_PER_TRIGGER;
     for schema in schemas.into_iter().filter(|s| mapped.contains_key(s)) {
         if remaining == 0 {
-            tracing::warn!(limit = MAX_REPLAY_ROWS_PER_TRIGGER, "replay_unmapped reached per-trigger row cap, deferring remaining rows");
+            tracing::warn!(
+                limit = MAX_REPLAY_ROWS_PER_TRIGGER,
+                "replay_unmapped reached per-trigger row cap, deferring remaining rows"
+            );
             break;
         }
         let mut total = 0usize;

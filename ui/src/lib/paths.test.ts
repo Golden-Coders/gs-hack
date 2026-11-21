@@ -59,8 +59,6 @@ describe("parseJsonPath", () => {
     for (const segs of cases) expect(parseJsonPath(toJsonPath(segs)), JSON.stringify(segs)).toEqual(segs);
   });
 
-  // BŁĄD: parser szuka pierwszego "]" (indexOf), więc klucz zawierający "]" (np. "items[0]") nie przechodzi round-tripu
-  // przez toJsonPath. Oczekiwane: ["items[0]"]; faktyczne: null. Rzadkie w praktyce (klucze z nawiasami w payloadzie).
   it.fails("round-trip dla klucza zawierającego nawias zamykający", () => {
     expect(parseJsonPath(toJsonPath(["items[0]"]))).toEqual(["items[0]"]);
   });

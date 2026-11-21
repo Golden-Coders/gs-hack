@@ -24,7 +24,8 @@ pub fn brokers() -> String {
 }
 
 pub fn database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://alerting:alerting@localhost:5432/alerting".into())
+    std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://alerting:alerting@localhost:5432/alerting".into())
 }
 
 /// Prefiks topików tego procesu testowego (każdy plik testów to osobny proces) – izoluje testy
@@ -45,11 +46,21 @@ pub fn group(name: &str) -> &'static str {
 
 fn topic_names() -> Vec<String> {
     let t = topics();
-    vec![t.events_raw, t.events_unmapped, t.events_normalized, t.alerts_commands, t.alerts_changed, t.ui_events]
+    vec![
+        t.events_raw,
+        t.events_unmapped,
+        t.events_normalized,
+        t.alerts_commands,
+        t.alerts_changed,
+        t.ui_events,
+    ]
 }
 
 fn admin() -> AdminClient<DefaultClientContext> {
-    ClientConfig::new().set("bootstrap.servers", brokers()).create().expect("kafka admin")
+    ClientConfig::new()
+        .set("bootstrap.servers", brokers())
+        .create()
+        .expect("kafka admin")
 }
 
 /// Mniej niż produkcyjne 12: broker w compose ma twardy limit 256 partycji (a testy ingest zostawiają
@@ -65,9 +76,16 @@ fn partitions(topic: &str) -> i32 {
 /// Zakłada 6 topików prefiksu (Redpanda nie tworzy ich automatycznie); `TopicAlreadyExists` = OK.
 async fn ensure_topics() {
     let names = topic_names();
-    let new: Vec<_> = names.iter().map(|n| NewTopic::new(n, partitions(n), TopicReplication::Fixed(1))).collect();
+    let new: Vec<_> = names
+        .iter()
+        .map(|n| NewTopic::new(n, partitions(n), TopicReplication::Fixed(1)))
+        .collect();
     let admin = admin();
-    for r in admin.create_topics(new.iter(), &AdminOptions::new()).await.expect("create topics") {
+    for r in admin
+        .create_topics(new.iter(), &AdminOptions::new())
+        .await
+        .expect("create topics")
+    {
         match r {
             Ok(_) | Err((_, RDKafkaErrorCode::TopicAlreadyExists)) => {}
             Err((t, code)) => panic!("creating topic {t}: {code}"),
@@ -94,7 +112,11 @@ static FINISHED: AtomicUsize = AtomicUsize::new(0);
 impl Cleanup {
     /// `total` = liczba testów w pliku (po ostatnim usuwamy topiki).
     pub fn new(total: usize) -> Self {
-        Self { total, fingerprints: vec![], schemas: vec![] }
+        Self {
+            total,
+            fingerprints: vec![],
+            schemas: vec![],
+        }
     }
     pub fn fingerprint(&mut self, fp: &str) {
         self.fingerprints.push(fp.to_string());
@@ -107,7 +129,10 @@ impl Cleanup {
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let last = FINISHED.fetch_add(1, Ordering::SeqCst) + 1 == self.total;
-        let (fps, schemas) = (std::mem::take(&mut self.fingerprints), std::mem::take(&mut self.schemas));
+        let (fps, schemas) = (
+            std::mem::take(&mut self.fingerprints),
+            std::mem::take(&mut self.schemas),
+        );
         let _ = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
                 if let Ok(pool) = PgPool::connect(&database_url()).await {
@@ -134,7 +159,9 @@ impl Drop for Cleanup {
 pub async fn setup() -> (PgPool, FutureProducer) {
     static TOPICS: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
     TOPICS.get_or_init(ensure_topics).await;
-    let pool = common::db::connect_and_migrate(&database_url()).await.expect("postgres");
+    let pool = common::db::connect_and_migrate(&database_url())
+        .await
+        .expect("postgres");
     let producer = common::kafka::producer(&brokers()).expect("kafka producer");
     (pool, producer)
 }
@@ -163,12 +190,19 @@ pub async fn read_topic<T: DeserializeOwned>(
     pred: impl Fn(&T) -> bool,
     until: impl Fn(&[T]) -> bool,
 ) -> Vec<T> {
-    let consumer: StreamConsumer = common::kafka::consumer(&brokers(), &format!("test-reader-{}", Uuid::new_v4()), &[topic]).unwrap();
+    let consumer: StreamConsumer = common::kafka::consumer(
+        &brokers(),
+        &format!("test-reader-{}", Uuid::new_v4()),
+        &[topic],
+    )
+    .unwrap();
     let mut out = Vec::new();
     let start = Instant::now();
     while start.elapsed() < window {
         let left = window - start.elapsed();
-        if let Ok(Ok(m)) = tokio::time::timeout(left.min(Duration::from_millis(500)), consumer.recv()).await {
+        if let Ok(Ok(m)) =
+            tokio::time::timeout(left.min(Duration::from_millis(500)), consumer.recv()).await
+        {
             if let Ok(v) = common::kafka::decode::<T>(&m) {
                 if pred(&v) {
                     out.push(v);
@@ -183,9 +217,18 @@ pub async fn read_topic<T: DeserializeOwned>(
 }
 
 /// Czeka, aż w topiku pojawi się >= `n` wiadomości spełniających `pred` (maks. `timeout`).
-pub async fn expect_topic<T: DeserializeOwned>(topic: &str, n: usize, timeout: Duration, pred: impl Fn(&T) -> bool) -> Vec<T> {
+pub async fn expect_topic<T: DeserializeOwned>(
+    topic: &str,
+    n: usize,
+    timeout: Duration,
+    pred: impl Fn(&T) -> bool,
+) -> Vec<T> {
     let v = read_topic(topic, timeout, pred, |o: &[T]| o.len() >= n).await;
-    assert!(v.len() >= n, "w topiku {topic} oczekiwano >= {n} wiadomości, jest {}", v.len());
+    assert!(
+        v.len() >= n,
+        "w topiku {topic} oczekiwano >= {n} wiadomości, jest {}",
+        v.len()
+    );
     v
 }
 
@@ -220,19 +263,33 @@ pub async fn send_events(producer: &FutureProducer, fingerprint: &str, n: usize)
     for chunk in (0..n).collect::<Vec<_>>().chunks(100) {
         let futs = chunk.iter().map(|_| {
             let ev = event(fingerprint, false);
-            async move { common::kafka::publish(producer, &topics().events_normalized, &ev.fingerprint, &ev).await.unwrap() }
+            async move {
+                common::kafka::publish(producer, &topics().events_normalized, &ev.fingerprint, &ev)
+                    .await
+                    .unwrap()
+            }
         });
         futures::future::join_all(futs).await;
     }
 }
 
-pub async fn send_command(producer: &FutureProducer, alert_id: Uuid, fingerprint: &str, kind: AlertCommandKind, person: &str) {
+pub async fn send_command(
+    producer: &FutureProducer,
+    alert_id: Uuid,
+    fingerprint: &str,
+    kind: AlertCommandKind,
+    person: &str,
+) {
     let cmd = AlertCommand {
         alert_id,
         fingerprint: fingerprint.into(),
         kind,
-        actor: Actor::User { person_id: person.into() },
+        actor: Actor::User {
+            person_id: person.into(),
+        },
         at: chrono::Utc::now(),
     };
-    common::kafka::publish(producer, &topics().alerts_commands, fingerprint, &cmd).await.unwrap();
+    common::kafka::publish(producer, &topics().alerts_commands, fingerprint, &cmd)
+        .await
+        .unwrap();
 }

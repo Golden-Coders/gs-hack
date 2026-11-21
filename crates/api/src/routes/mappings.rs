@@ -23,13 +23,21 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/mappings", get(list_mappings))
         .route("/mappings/preview", post(preview))
-        .route("/mappings/{schema}", get(get_mapping).put(put_mapping).delete(delete_mapping))
+        .route(
+            "/mappings/{schema}",
+            get(get_mapping).put(put_mapping).delete(delete_mapping),
+        )
         .route("/unmapped", get(unmapped))
 }
 
 fn mapping_from_row(r: &sqlx::postgres::PgRow) -> ApiResult<MappingDef> {
-    let mut def: MappingDef = serde_json::from_value(opt_json(r, "def"))
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid stored mapping", e))?;
+    let mut def: MappingDef = serde_json::from_value(opt_json(r, "def")).map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid stored mapping",
+            e,
+        )
+    })?;
     def.version = r.get::<i64, _>("version");
     Ok(def)
 }
@@ -39,10 +47,16 @@ async fn list_mappings(State(st): State<AppState>) -> ApiResult<Json<Vec<Mapping
         .fetch_all(&st.db)
         .await
         .map_err(db_err)?;
-    rows.iter().map(mapping_from_row).collect::<ApiResult<Vec<_>>>().map(Json)
+    rows.iter()
+        .map(mapping_from_row)
+        .collect::<ApiResult<Vec<_>>>()
+        .map(Json)
 }
 
-async fn get_mapping(State(st): State<AppState>, Path(schema): Path<String>) -> ApiResult<Json<MappingDef>> {
+async fn get_mapping(
+    State(st): State<AppState>,
+    Path(schema): Path<String>,
+) -> ApiResult<Json<MappingDef>> {
     let r = sqlx::query("SELECT def, version::bigint AS version FROM mappings WHERE schema = $1")
         .bind(&schema)
         .fetch_optional(&st.db)
@@ -57,13 +71,19 @@ async fn put_mapping(
     Path(schema): Path<String>,
     body: Result<Json<MappingDef>, JsonRejection>,
 ) -> ApiResult<Json<MappingDef>> {
-    let Json(mut def) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", e.body_text()))?;
+    let Json(mut def) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", e.body_text()))?;
     if def.schema != schema {
-        return Err(err(StatusCode::BAD_REQUEST, "schema mismatch", "schema w body różni się od ścieżki"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "schema mismatch",
+            "schema w body różni się od ścieżki",
+        ));
     }
-    // Same compilation as lifecycle: an uncompilable mapping is rejected before touching DB.
-    CompiledMapping::compile(def.clone(), 0).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", format!("{e:#}")))?;
-    let stored = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", e))?;
+    CompiledMapping::compile(def.clone(), 0)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", format!("{e:#}")))?;
+    let stored = serde_json::to_value(&def)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid mapping", e))?;
     let mut tx = st.db.begin().await.map_err(db_err)?;
     let version: i64 = sqlx::query(
         "INSERT INTO mappings (schema, def, version, updated_at) VALUES ($1, $2, 1, now()) \
@@ -76,16 +96,29 @@ async fn put_mapping(
     .await
     .map_err(db_err)?
     .get("version");
-    sqlx::query("SELECT pg_notify('config_changed', 'mappings')").execute(&mut *tx).await.map_err(db_err)?;
+    sqlx::query("SELECT pg_notify('config_changed', 'mappings')")
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
     tx.commit().await.map_err(db_err)?;
     def.version = version;
     Ok(Json(def))
 }
 
-async fn delete_mapping(State(st): State<AppState>, Path(schema): Path<String>) -> ApiResult<StatusCode> {
+async fn delete_mapping(
+    State(st): State<AppState>,
+    Path(schema): Path<String>,
+) -> ApiResult<StatusCode> {
     let mut tx = st.db.begin().await.map_err(db_err)?;
-    sqlx::query("DELETE FROM mappings WHERE schema = $1").bind(&schema).execute(&mut *tx).await.map_err(db_err)?;
-    sqlx::query("SELECT pg_notify('config_changed', 'mappings')").execute(&mut *tx).await.map_err(db_err)?;
+    sqlx::query("DELETE FROM mappings WHERE schema = $1")
+        .bind(&schema)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    sqlx::query("SELECT pg_notify('config_changed', 'mappings')")
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
     tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -101,10 +134,15 @@ struct PreviewReq {
 async fn preview(body: Result<Json<PreviewReq>, JsonRejection>) -> ApiResult<Json<CanonicalEvent>> {
     let bad = |e: String| err(StatusCode::BAD_REQUEST, "invalid preview", e);
     let Json(req) = body.map_err(|e| bad(e.body_text()))?;
-    let format = if req.payload.is_string() { formats::YAML } else { formats::JSON };
+    let format = if req.payload.is_string() {
+        formats::YAML
+    } else {
+        formats::JSON
+    };
     let raw = parse_payload(format, &req.payload).map_err(|e| bad(format!("{e:#}")))?;
     let version = req.mapping.version;
-    let mapping = CompiledMapping::compile(req.mapping, version).map_err(|e| bad(format!("{e:#}")))?;
+    let mapping =
+        CompiledMapping::compile(req.mapping, version).map_err(|e| bad(format!("{e:#}")))?;
     let env = Envelope {
         event_id: Uuid::now_v7(),
         format: format.into(),
@@ -154,11 +192,17 @@ mod tests {
 
     use crate::routes::test_util::{server, uniq, Server};
 
-    const WORKFLOW_MAPPING: &str = include_str!("../../../contracts/fixtures/config/mapping.workflow.json");
-    const WORKFLOW_EVENT: &str = include_str!("../../../contracts/fixtures/events/workflow_failed.json");
+    const WORKFLOW_MAPPING: &str =
+        include_str!("../../../contracts/fixtures/config/mapping.workflow.json");
+    const WORKFLOW_EVENT: &str =
+        include_str!("../../../contracts/fixtures/events/workflow_failed.json");
 
     async fn mapping_rows(s: &Server, schema: &str) -> i64 {
-        sqlx::query_scalar("SELECT count(*) FROM mappings WHERE schema = $1").bind(schema).fetch_one(&s.st.db).await.unwrap()
+        sqlx::query_scalar("SELECT count(*) FROM mappings WHERE schema = $1")
+            .bind(schema)
+            .fetch_one(&s.st.db)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -168,16 +212,24 @@ mod tests {
         let body = json!({"schema": schema, "severity": {"type": "path", "path": "$.s", "map": {}, "default": "warning"}}).to_string();
         let path = format!("/mappings/{schema}");
 
-        let mut listener = sqlx::postgres::PgListener::connect_with(&s.st.db).await.unwrap();
+        let mut listener = sqlx::postgres::PgListener::connect_with(&s.st.db)
+            .await
+            .unwrap();
         listener.listen("config_changed").await.unwrap();
 
         let (st, v1) = s.http("PUT", &path, &[], Some(&body)).await;
         assert_eq!(st, 200);
         let (st, v2) = s.http("PUT", &path, &[], Some(&body)).await;
         assert_eq!(st, 200);
-        assert_eq!(v2["version"].as_i64().unwrap(), v1["version"].as_i64().unwrap() + 1);
+        assert_eq!(
+            v2["version"].as_i64().unwrap(),
+            v1["version"].as_i64().unwrap() + 1
+        );
 
-        let n = tokio::time::timeout(Duration::from_secs(5), listener.recv()).await.expect("brak NOTIFY").unwrap();
+        let n = tokio::time::timeout(Duration::from_secs(5), listener.recv())
+            .await
+            .expect("brak NOTIFY")
+            .unwrap();
         assert_eq!(n.channel(), "config_changed");
         assert_eq!(n.payload(), "mappings");
 
@@ -185,9 +237,15 @@ mod tests {
         assert_eq!(st, 200);
         assert_eq!(v["schema"], schema);
         let (_, list) = s.http("GET", "/mappings", &[], None).await;
-        assert!(list.as_array().unwrap().iter().any(|m| m["schema"] == schema.as_str()));
+        assert!(list
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["schema"] == schema.as_str()));
 
-        let (st, _) = s.http("PUT", &path, &[], Some(&body.replace(&schema, "inny"))).await;
+        let (st, _) = s
+            .http("PUT", &path, &[], Some(&body.replace(&schema, "inny")))
+            .await;
         assert_eq!(st, 400);
         let (st, _) = s.http("PUT", &path, &[], Some("{nie json")).await;
         assert_eq!(st, 400);
@@ -219,10 +277,19 @@ mod tests {
         }
         let (st, v) = s.http("GET", "/unmapped", &[], None).await;
         assert_eq!(st, 200);
-        let row = v.as_array().unwrap().iter().find(|r| r["schema"] == schema.as_str()).expect("brak schematu");
+        let row = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["schema"] == schema.as_str())
+            .expect("brak schematu");
         assert_eq!(row["count"], 3);
         assert_eq!(row["sample"], json!({"n": 2}));
-        sqlx::query("DELETE FROM unmapped_events WHERE schema = $1").bind(&schema).execute(&s.st.db).await.unwrap();
+        sqlx::query("DELETE FROM unmapped_events WHERE schema = $1")
+            .bind(&schema)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -234,8 +301,14 @@ mod tests {
         let (st, v) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
         assert_eq!(st, 200, "{v}");
         assert_eq!(v["severity"], "error");
-        assert_eq!(v["title"], "Counterparty service did not respond in 5000 ms");
-        assert_eq!(v["fingerprint"], "workflow.v1|order-settlement|validate-counterparty|TIMEOUT");
+        assert_eq!(
+            v["title"],
+            "Counterparty service did not respond in 5000 ms"
+        );
+        assert_eq!(
+            v["fingerprint"],
+            "workflow.v1|order-settlement|validate-counterparty|TIMEOUT"
+        );
         assert_eq!(v["raw"], payload);
         assert_eq!(v["fields"]["step"], "validate-counterparty");
     }
@@ -288,7 +361,14 @@ mod tests {
         let mut mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
         mapping["schema"] = json!(schema);
         mapping["fields"]["x"] = json!("$[[[");
-        let (st, _) = s.http("PUT", &format!("/mappings/{schema}"), &[], Some(&mapping.to_string())).await;
+        let (st, _) = s
+            .http(
+                "PUT",
+                &format!("/mappings/{schema}"),
+                &[],
+                Some(&mapping.to_string()),
+            )
+            .await;
         assert_eq!(st, 400);
         assert_eq!(mapping_rows(&s, &schema).await, 0);
     }

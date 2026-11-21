@@ -18,8 +18,10 @@ API_URL="${API_URL:-http://localhost:${API_PORT:-8080}}"
 INGEST_URL="${INGEST_URL:-http://localhost:8081}"
 MOCK_URL="${MOCK_URL:-http://localhost:8090}"
 MAILPIT_URL="${MAILPIT_URL:-http://localhost:8025}"
-TOKEN="${API_TOKEN:-dev-token}"
-PERSON="${PERSON_ID:-e2e}"
+PERSON="${PERSON_ID:-anna}"
+# Sesja operatora (POST /auth/login); API_TOKEN nadpisuje, gdy ustawiony.
+TOKEN="${API_TOKEN:-$(curl -sS -X POST "$API_URL/auth/login" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$PERSON\",\"password\":\"${PERSON_PASSWORD:-haslo}\"}" | jq -r '.session_token // empty')}"
 TIMEOUT="${TIMEOUT_SECS:-45}"
 FIX="$ROOT/crates/contracts/fixtures/events"
 RUN="$(date +%s)$RANDOM"
@@ -136,10 +138,10 @@ runbooks_of "$X_ALERT" | jq -e 'any(.[]; .runbook_id == "pricing-latency" and .k
     || fail "alert $X_ALERT nie ma runbooka pricing-latency (matches po polu service?)"
 ok "alert $X_ALERT, runbook MANUAL pricing-latency dołączony"
 STAGE="pricing-delivery"
-ui() { api GET "$API_URL/alerts/$X_ALERT/deliveries" | jq -ce 'select(length > 0 and all(.[]; .channel == "ui" and .person_id == "tomek")) | select(any(.[]; .status == "delivered"))'; }
-wait_for "dostarczenie wyłącznie na ui dla tomek" ui >/dev/null
+ui() { api GET "$API_URL/alerts/$X_ALERT/deliveries" | jq -ce 'select(length > 0 and all(.[]; .channel == "ui")) | select(any(.[]; .person_id == "tomek")) | select(any(.[]; .status == "delivered"))'; }
+wait_for "dostarczenie wyłącznie na ui dla zespołu pricing (w tym tomek)" ui >/dev/null
 api GET "$API_URL/mock/outbox" | jq -e --arg a "$X_ALERT" 'all(.[]; .alert_id != $a)' >/dev/null || fail "pricing wysłał SMS/telefon (powinno być UI only)"
-ok "pricing: tylko ui (tomek), brak SMS/telefonu"
+ok "pricing: tylko ui (zespół, w tym tomek), brak SMS/telefonu"
 
 STAGE="done"
 echo "PASS runbooks: settlements=$S_ALERT payments=$P_ALERT pricing=$X_ALERT"

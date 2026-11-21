@@ -1,5 +1,3 @@
-// Akcje zbiorcze kolejki zatwierdzeń (design.md D10): pętla po istniejącym
-// POST /runs/{run_id}/steps/{step_id}/{command}, sekwencyjnie, wynik per krok. Czysta logika, bez Reacta.
 
 export type Decision = "approve" | "reject";
 export type StepRef = { run_id: string; step_id: string };

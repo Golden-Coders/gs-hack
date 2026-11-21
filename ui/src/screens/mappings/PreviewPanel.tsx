@@ -1,5 +1,3 @@
-// Podgląd wyniku mappingu na przykładowym zdarzeniu: POST /mappings/preview (z odświeżaniem po zmianach),
-// a gdy backend nie ma jeszcze podglądu (501) – przybliżony wynik liczony lokalnie, wyraźnie oznaczony.
 import { useEffect, useRef, useState } from "react";
 import Button from "@atlaskit/button/new";
 import { Text } from "@atlaskit/primitives/compiled";
@@ -58,7 +56,6 @@ export default function PreviewPanel({
         else if (response.status === 400) {
           next = { kind: "error", message: describeError(error, response) };
         } else {
-          // 501 (podgląd niezaimplementowany), 404/405 albo inny błąd serwera – zostaje wynik lokalny
           next = { kind: "ok", result: localPreview(mapping, payload) };
         }
       } catch {

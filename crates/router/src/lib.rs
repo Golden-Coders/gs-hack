@@ -66,8 +66,6 @@ pub async fn run_router_with(
             },
         };
 
-        // At-least-once: ponawiamy publikację wszystkich wyznaczonych dostarczeń,
-        // a offset zatwierdzamy DOPIERO po opublikowaniu kompletu zleceń (design D2, D7).
         loop {
             match handle_message(&msg, &producer, &store, &public_ui_url).await {
                 Ok(()) => break,

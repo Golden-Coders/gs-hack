@@ -1,4 +1,3 @@
-// Paleta komend ⌘K / Ctrl+K (design.md D9): przejście do ekranu z menu albo do alertu z feedu po tytule.
 import { ButtonItem, MenuGroup, Section } from "@atlaskit/menu";
 import ModalDialog, { ModalBody, ModalHeader, ModalTitle, ModalTransition } from "@atlaskit/modal-dialog";
 import { Text } from "@atlaskit/primitives/compiled";
@@ -12,7 +11,6 @@ type Result = { key: string; label: string; hint: string; to: string };
 
 const MAX_ALERTS = 8;
 
-// Alerty pobieramy dopiero po otwarciu palety (feed ma własne zapytanie i subskrypcję SSE).
 function PaletteDialog({ screens, onClose, onClosed }: { screens: PaletteScreen[]; onClose: () => void; onClosed: () => void }) {
   const navigate = useNavigate();
   const { alerts } = useAlertFeed();
@@ -95,7 +93,6 @@ export default function CommandPalette({ screens }: { screens: PaletteScreen[] }
         setOpen(false);
         return;
       }
-      // Warstwy: paleta nie wchodzi na inny otwarty ModalDialog (np. potwierdzenie odrzucenia).
       if (document.querySelector('[role="dialog"]')) return;
       returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       openRef.current = true;
@@ -110,7 +107,6 @@ export default function CommandPalette({ screens }: { screens: PaletteScreen[] }
     setOpen(false);
   };
 
-  // Fokus wraca po zakończeniu animacji zamknięcia i odmontowaniu okna (do tego czasu blokuje go focus lock).
   return (
     <ModalTransition>
       {open && <PaletteDialog screens={screens} onClose={close} onClosed={() => setTimeout(() => returnTo.current?.focus(), 0)} />}

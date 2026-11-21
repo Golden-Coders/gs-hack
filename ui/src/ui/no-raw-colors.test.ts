@@ -1,6 +1,3 @@
-// Gwarancja D7: żadnych surowych kolorów w kodzie UI — tylko tokeny ADS (`token()` / `var(--ds-*)`).
-// ESLint (`ensure-design-token-usage`) nie widzi plików .css, więc sprawdzamy je tutaj.
-// Pomijamy wygenerowany kontrakt i testy (mogą podawać hex jako dane wejściowe, np. colors.test.ts).
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";

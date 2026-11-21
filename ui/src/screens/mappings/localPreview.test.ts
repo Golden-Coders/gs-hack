@@ -143,7 +143,6 @@ describe("evalCondition", () => {
     expect(evalCondition(L("raw.type", "glob", "WORKFLOW_*"), raw)).toBe(true);
     expect(evalCondition(L("raw.type", "glob", "WORKFLOW_?AILED"), raw)).toBe(true);
     expect(evalCondition(L("raw.type", "glob", "WORKFLOW"), raw)).toBe(false);
-    // kropka w globie jest dosłowna
     expect(evalCondition(L("raw.v", "glob", "a.b"), { v: "axb" })).toBe(false);
   });
 

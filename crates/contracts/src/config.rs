@@ -8,8 +8,6 @@ use serde_json::Value;
 
 use crate::{Channel, Condition, Severity};
 
-// ---------------------------------------------------------------- mappingi (P1)
-
 /// Jak wyznaczyć severity w mappingu.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -63,8 +61,6 @@ pub struct MappingDef {
     pub version: i64,
 }
 
-// ---------------------------------------------------------------- reguły (P2)
-
 /// Odbiorca wskazany przez regułę.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "type", content = "id", rename_all = "snake_case")]
@@ -114,8 +110,6 @@ fn default_true() -> bool {
     true
 }
 
-// ---------------------------------------------------------------- osoby (P2)
-
 /// Preferencja: dla severity (i opcjonalnie przedziału godzin) -> kanały.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreferenceDef {
@@ -155,8 +149,6 @@ pub struct TeamDef {
     #[serde(default)]
     pub preferences: Vec<PreferenceDef>,
 }
-
-// ---------------------------------------------------------------- akcje (P3)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,6 +1,3 @@
-// Ustawienia sesji UI: wybrany backend (mock / prawdziwy) oraz uwierzytelniona tożsamość operatora.
-// Tożsamość operatora i token sesyjny NIE są zapisywane w localStorage – żyją wyłącznie w pamięci karty
-// i są weryfikowane po stronie serwera przez POST /auth/login oraz unieważniane przez POST /auth/logout.
 import { useSyncExternalStore } from "react";
 
 export type Backend = "mock" | "api";
@@ -26,11 +23,9 @@ function write(key: string, value: string | null) {
     if (value === null) localStorage.removeItem(key);
     else localStorage.setItem(key, value);
   } catch {
-    // brak localStorage (tryb prywatny)
   }
 }
 
-// Usuń ewentualny stary klucz personId z localStorage po poprzednich wersjach.
 write(LEGACY_PERSON_KEY, null);
 
 function isBackend(v: unknown): v is Backend {
@@ -40,7 +35,6 @@ function isBackend(v: unknown): v is Backend {
 const envBackend = import.meta.env.VITE_DEFAULT_BACKEND;
 const storedBackend = read(BACKEND_KEY);
 
-// Backend wybierany raz przy starcie strony; zmiana przeładowuje UI, żeby nie mieszać danych z dwóch źródeł.
 export const backend: Backend = isBackend(storedBackend)
   ? storedBackend
   : isBackend(envBackend)
@@ -54,8 +48,6 @@ export function switchBackend(next: Backend) {
   write(BACKEND_KEY, next);
   window.location.reload();
 }
-
-// --- uwierzytelniona sesja operatora (wyłącznie w pamięci karty) ---
 
 let personId: string | null = null;
 let personName: string | null = null;
@@ -111,7 +103,6 @@ export async function checkSession(): Promise<void> {
       }
     }
   } catch {
-    // brak aktywnej sesji
   } finally {
     authChecked = true;
     notify();
@@ -170,7 +161,6 @@ export async function logout(): Promise<void> {
       headers: tok ? { Authorization: `Bearer ${tok}` } : {},
     });
   } catch {
-    // sesja po stronie klienta już wyczyszczona
   }
 }
 

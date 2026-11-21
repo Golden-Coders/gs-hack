@@ -13,7 +13,9 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use contracts::{ActionDef, Approval, Automation, Condition, Op, RunbookDef, RunbookKind, StepDef, StepType};
+use contracts::{
+    ActionDef, Approval, Automation, Condition, Op, RunbookDef, RunbookKind, StepDef, StepType,
+};
 use serde_json::{Map, Value};
 
 /// Pola kanoniczne zdarzenia (zob. `condition::event_context`); reszta to oryginał pod `raw.`.
@@ -43,9 +45,14 @@ pub fn parse_action(file: &str, text: &str) -> Result<ActionDef, String> {
 
 fn parse_yaml(stem: &str, text: &str) -> Result<RunbookDef, String> {
     let doc: Value = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
-    let obj = doc.as_object().ok_or("oczekiwano mapy na najwyższym poziomie")?;
+    let obj = doc
+        .as_object()
+        .ok_or("oczekiwano mapy na najwyższym poziomie")?;
     let mut def = header(stem, obj)?;
-    let steps = obj.get("steps").and_then(Value::as_array).ok_or("brak listy `steps`")?;
+    let steps = obj
+        .get("steps")
+        .and_then(Value::as_array)
+        .ok_or("brak listy `steps`")?;
     let mut ids = HashSet::new();
     for (i, raw) in steps.iter().enumerate() {
         let step = parse_step(i, raw).map_err(|e| format!("krok {}: {e}", i + 1))?;
@@ -60,10 +67,12 @@ fn parse_yaml(stem: &str, text: &str) -> Result<RunbookDef, String> {
 fn parse_text(stem: &str, text: &str) -> Result<RunbookDef, String> {
     let (front, body) = split_front_matter(text);
     let front = match front {
-        Some(yaml) => match serde_yaml::from_str::<Value>(yaml).map_err(|e| format!("nagłówek: {e}"))? {
-            Value::Object(obj) => obj,
-            _ => return Err("nagłówek: oczekiwano mapy".into()),
-        },
+        Some(yaml) => {
+            match serde_yaml::from_str::<Value>(yaml).map_err(|e| format!("nagłówek: {e}"))? {
+                Value::Object(obj) => obj,
+                _ => return Err("nagłówek: oczekiwano mapy".into()),
+            }
+        }
         None => Map::new(),
     };
     let mut def = header(stem, &front)?;
@@ -79,7 +88,9 @@ fn parse_text(stem: &str, text: &str) -> Result<RunbookDef, String> {
 
 /// `---\n<yaml>\n---\n<treść>` → (Some(yaml), treść); bez nagłówka → (None, cały tekst).
 fn split_front_matter(text: &str) -> (Option<&str>, &str) {
-    let Some(rest) = text.strip_prefix("---\n") else { return (None, text) };
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return (None, text);
+    };
     match rest.find("\n---\n") {
         Some(end) => (Some(&rest[..end]), &rest[end + 5..]),
         None => (None, text),
@@ -88,8 +99,16 @@ fn split_front_matter(text: &str) -> (Option<&str>, &str) {
 
 /// Wspólne pola: `runbook`/`id`, `title`, `matches`, `rule_ids`.
 fn header(stem: &str, obj: &Map<String, Value>) -> Result<RunbookDef, String> {
-    let id = obj.get("runbook").or_else(|| obj.get("id")).map(as_text).unwrap_or_else(|| stem.to_string());
-    let matches = obj.get("matches").map(parse_matches).transpose().map_err(|e| format!("matches: {e}"))?;
+    let id = obj
+        .get("runbook")
+        .or_else(|| obj.get("id"))
+        .map(as_text)
+        .unwrap_or_else(|| stem.to_string());
+    let matches = obj
+        .get("matches")
+        .map(parse_matches)
+        .transpose()
+        .map_err(|e| format!("matches: {e}"))?;
     let rule_ids = match obj.get("rule_ids") {
         None => vec![],
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| format!("rule_ids: {e}"))?,
@@ -109,12 +128,19 @@ fn header(stem: &str, obj: &Map<String, Value>) -> Result<RunbookDef, String> {
 
 fn parse_matches(v: &Value) -> Result<Condition, String> {
     let obj = v.as_object().ok_or("oczekiwano mapy")?;
-    let condition = if ["all", "any", "not", "field"].iter().any(|k| obj.contains_key(*k)) {
+    let condition = if ["all", "any", "not", "field"]
+        .iter()
+        .any(|k| obj.contains_key(*k))
+    {
         serde_json::from_value(v.clone()).map_err(|e| e.to_string())?
     } else {
         let leaves = obj
             .iter()
-            .map(|(k, value)| Condition::Leaf { field: field_path(k), op: Op::Eq, value: value.clone() })
+            .map(|(k, value)| Condition::Leaf {
+                field: field_path(k),
+                op: Op::Eq,
+                value: value.clone(),
+            })
             .collect();
         Condition::All { all: leaves }
     };
@@ -141,7 +167,6 @@ fn parse_step(index: usize, raw: &Value) -> Result<StepDef, String> {
         condition: None,
         automation: Automation::Manual,
     };
-    // Krok jako sam tekst (checklista) = krok manualny.
     let obj = match raw {
         Value::String(s) => {
             step.text = s.clone();
@@ -156,7 +181,10 @@ fn parse_step(index: usize, raw: &Value) -> Result<StepDef, String> {
     for (key, val) in obj {
         match key.as_str() {
             "id" => step.id = as_text(val),
-            "type" => explicit_type = Some(serde_json::from_value(val.clone()).map_err(|e| format!("type: {e}"))?),
+            "type" => {
+                explicit_type =
+                    Some(serde_json::from_value(val.clone()).map_err(|e| format!("type: {e}"))?)
+            }
             "text" | "description" => step.text = as_text(val),
             "check" => (type_hint, step.text) = (Some(StepType::Check), as_text(val)),
             "manual" => (type_hint, step.text) = (Some(StepType::Manual), as_text(val)),
@@ -164,23 +192,26 @@ fn parse_step(index: usize, raw: &Value) -> Result<StepDef, String> {
             "action" => step.action = Some(as_text(val)),
             "if" | "condition" => step.condition = Some(as_text(val)),
             "approval" => step.approval = parse_approval(val),
-            "params" => step.params.extend(val.as_object().ok_or("params: oczekiwano mapy")?.clone()),
+            "params" => step
+                .params
+                .extend(val.as_object().ok_or("params: oczekiwano mapy")?.clone()),
             "automation" => {} // wyliczane z rejestru
             _ => {
                 step.params.insert(key.clone(), val.clone());
             }
         }
     }
-    // `check`/`manual`/`note` mogą stać obok `text` – wtedy `text` wygrywa.
     if let Some(t) = obj.get("text").or_else(|| obj.get("description")) {
         step.text = as_text(t);
     }
 
-    step.step_type = explicit_type.or(type_hint).unwrap_or(match (&step.action, &step.condition) {
-        (Some(_), _) => StepType::Action,
-        (None, Some(_)) => StepType::Note, // samo `if` = instrukcja dla człowieka
-        (None, None) => StepType::Manual,
-    });
+    step.step_type = explicit_type
+        .or(type_hint)
+        .unwrap_or(match (&step.action, &step.condition) {
+            (Some(_), _) => StepType::Action,
+            (None, Some(_)) => StepType::Note, // samo `if` = instrukcja dla człowieka
+            (None, None) => StepType::Manual,
+        });
     if step.text.is_empty() {
         step.text = match (&step.action, &step.condition) {
             (Some(a), _) => a.clone(),
@@ -232,56 +263,106 @@ steps:
         let def = parse_runbook("x/settlement-timeout.yaml", APPENDIX_B_YAML).unwrap();
         assert_eq!(def.id, "settlement-timeout");
         assert_eq!(def.kind, RunbookKind::Automatic);
-        let Some(Condition::All { all }) = &def.matches else { panic!("{:?}", def.matches) };
-        assert!(all.contains(&Condition::Leaf { field: "raw.type".into(), op: Op::Eq, value: "WORKFLOW_FAILED".into() }));
-        assert!(all.contains(&Condition::Leaf { field: "raw.error.code".into(), op: Op::Eq, value: "TIMEOUT".into() }));
+        let Some(Condition::All { all }) = &def.matches else {
+            panic!("{:?}", def.matches)
+        };
+        assert!(all.contains(&Condition::Leaf {
+            field: "raw.type".into(),
+            op: Op::Eq,
+            value: "WORKFLOW_FAILED".into()
+        }));
+        assert!(all.contains(&Condition::Leaf {
+            field: "raw.error.code".into(),
+            op: Op::Eq,
+            value: "TIMEOUT".into()
+        }));
 
-        let [s1, s2, s3] = &def.steps[..] else { panic!() };
-        assert_eq!((s1.step_type, s1.text.as_str(), s1.action.as_deref()), (StepType::Check, "Is counterparty-service healthy?", Some("http_get")));
+        let [s1, s2, s3] = &def.steps[..] else {
+            panic!()
+        };
+        assert_eq!(
+            (s1.step_type, s1.text.as_str(), s1.action.as_deref()),
+            (
+                StepType::Check,
+                "Is counterparty-service healthy?",
+                Some("http_get")
+            )
+        );
         assert_eq!(s1.params["url"], "http://counterparty-service/health");
         assert_eq!((s2.id.as_str(), s2.approval), ("s2", Approval::None));
         assert_eq!(s2.params["workflowId"], "{{workflowId}}");
-        assert_eq!((s3.step_type, s3.approval), (StepType::Action, Approval::Required));
+        assert_eq!(
+            (s3.step_type, s3.approval),
+            (StepType::Action, Approval::Required)
+        );
         assert_eq!(s3.condition.as_deref(), Some("retry fails twice"));
         assert_eq!(s3.params["team"], "counterparty-support");
     }
 
     #[test]
     fn if_without_action_is_note() {
-        let def = parse_runbook("r.yaml", "steps:\n  - if: latency still high\n  - Call the on-call person\n").unwrap();
+        let def = parse_runbook(
+            "r.yaml",
+            "steps:\n  - if: latency still high\n  - Call the on-call person\n",
+        )
+        .unwrap();
         assert_eq!(def.steps[0].step_type, StepType::Note);
         assert_eq!(def.steps[0].text, "Jeśli: latency still high");
-        assert_eq!((def.steps[1].step_type, def.steps[1].text.as_str()), (StepType::Manual, "Call the on-call person"));
+        assert_eq!(
+            (def.steps[1].step_type, def.steps[1].text.as_str()),
+            (StepType::Manual, "Call the on-call person")
+        );
     }
 
     #[test]
     fn shell_command_is_just_params() {
-        let def = parse_runbook("r.yaml", "steps:\n  - action: shell\n    command: \"rm -rf /\"\n").unwrap();
+        let def = parse_runbook(
+            "r.yaml",
+            "steps:\n  - action: shell\n    command: \"rm -rf /\"\n",
+        )
+        .unwrap();
         assert_eq!(def.steps[0].action.as_deref(), Some("shell"));
         assert_eq!(def.steps[0].automation, Automation::Manual);
     }
 
     #[test]
     fn invalid_yaml_reports_file_and_line() {
-        let err = parse_runbook("config/runbooks/bad.yaml", "steps:\n  - action: [unclosed\n").unwrap_err();
+        let err = parse_runbook(
+            "config/runbooks/bad.yaml",
+            "steps:\n  - action: [unclosed\n",
+        )
+        .unwrap_err();
         assert!(err.starts_with("config/runbooks/bad.yaml: "), "{err}");
         assert!(err.contains("line"), "{err}");
     }
 
     #[test]
     fn duplicate_step_ids_rejected() {
-        let err = parse_runbook("r.yaml", "steps:\n  - {id: a, manual: x}\n  - {id: a, manual: y}\n").unwrap_err();
+        let err = parse_runbook(
+            "r.yaml",
+            "steps:\n  - {id: a, manual: x}\n  - {id: a, manual: y}\n",
+        )
+        .unwrap_err();
         assert!(err.contains("powtórzone id"), "{err}");
     }
 
     #[test]
     fn text_without_header_is_manual() {
-        let def = parse_runbook("p/pricing-latency.txt", "When pricing latency goes over a second...").unwrap();
-        assert_eq!((def.id.as_str(), def.kind, def.matches.is_none()), ("pricing-latency", RunbookKind::Manual, true));
+        let def = parse_runbook(
+            "p/pricing-latency.txt",
+            "When pricing latency goes over a second...",
+        )
+        .unwrap();
+        assert_eq!(
+            (def.id.as_str(), def.kind, def.matches.is_none()),
+            ("pricing-latency", RunbookKind::Manual, true)
+        );
     }
 
     #[test]
     fn unknown_extension_rejected() {
-        assert!(parse_runbook("r.json", "{}").unwrap_err().contains("rozszerzenie"));
+        assert!(parse_runbook("r.json", "{}")
+            .unwrap_err()
+            .contains("rozszerzenie"));
     }
 }

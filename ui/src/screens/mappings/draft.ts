@@ -1,4 +1,3 @@
-// Model roboczy edytora mappingu (wygodny do edycji formularzem) i konwersja do/z MappingDef z kontraktu.
 import type { Schemas } from "../../api/client";
 
 export type Mapping = Schemas["MappingDef"];

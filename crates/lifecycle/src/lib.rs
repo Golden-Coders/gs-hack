@@ -29,7 +29,13 @@ pub struct Topics {
 impl Topics {
     pub fn with_prefix(prefix: &str) -> Self {
         use contracts::topics::*;
-        let t = |name: &str| if prefix.is_empty() { name.to_string() } else { format!("{prefix}.{name}") };
+        let t = |name: &str| {
+            if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}.{name}")
+            }
+        };
         Self {
             events_raw: t(EVENTS_RAW),
             events_unmapped: t(EVENTS_UNMAPPED),

@@ -20,7 +20,10 @@ pub use sqlx;
 /// i wykonuje wszystkie migracje.
 pub async fn connect_and_migrate(database_url: &str) -> anyhow::Result<PgPool> {
     let pool = connect(database_url).await?;
-    sqlx::migrate!("../../migrations").run(&pool).await.context("running migrations")?;
+    sqlx::migrate!("../../migrations")
+        .run(&pool)
+        .await
+        .context("running migrations")?;
     tracing::info!("database migrations applied");
     Ok(pool)
 }
@@ -29,7 +32,12 @@ pub async fn connect_and_migrate(database_url: &str) -> anyhow::Result<PgPool> {
 pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
     let mut attempt = 0;
     loop {
-        match PgPoolOptions::new().max_connections(10).acquire_timeout(Duration::from_secs(5)).connect(database_url).await {
+        match PgPoolOptions::new()
+            .max_connections(10)
+            .acquire_timeout(Duration::from_secs(5))
+            .connect(database_url)
+            .await
+        {
             Ok(pool) => return Ok(pool),
             Err(e) if attempt < 30 => {
                 attempt += 1;

@@ -1,6 +1,3 @@
-// Strumień na żywo: SSE `/stream` z ponownym łączeniem i dociąganiem zmian z przerwy.
-// Jedno połączenie na kartę, otwierane przy pierwszym subskrybencie.
-// Po ponownym połączeniu (`hello`) dociągamy `GET /alerts?since=<ostatni at>` i wysyłamy je jako `resync`.
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api, API_URL, type Schemas } from "./client";
 import { backend, getSessionToken } from "./session";
@@ -14,7 +11,6 @@ export type StreamStatus = "idle" | "connecting" | "live" | "reconnecting" | "un
 
 const RETRY_MIN_MS = 1_000;
 const RETRY_MAX_MS = 10_000;
-// Zapas na różnicę zegarów klient/serwer przy pierwszym połączeniu (zanim dostaniemy `at` z serwera).
 const CLOCK_SKEW_MS = 5_000;
 
 let source: EventSource | null = null;
@@ -32,7 +28,6 @@ function setStatus(next: StreamStatus) {
   statusListeners.forEach((l) => l());
 }
 
-// Czas ostatniej wiadomości ze strumienia – do decyzji, czy dociągać dane zapytaniami.
 let lastMessageAt = 0;
 
 function emit(msg: StreamMessage) {
@@ -60,7 +55,6 @@ function parse<T>(e: MessageEvent): T | null {
 }
 
 function connect() {
-  // Prism nie obsługuje SSE – na mocku nie łączymy się w kółko, tylko mówimy to wprost.
   if (backend === "mock") return setStatus("unavailable");
   setStatus(connectedOnce ? "reconnecting" : "connecting");
   const tok = getSessionToken() ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
@@ -89,7 +83,6 @@ function connect() {
     emit({ type: "ui_event", data });
   });
 
-  // Ponawiamy sami (z backoffem), bo EventSource po błędzie HTTP zamyka się na stałe.
   es.onerror = () => {
     es.close();
     if (source !== es) return;

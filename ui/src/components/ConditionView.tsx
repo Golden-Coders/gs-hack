@@ -1,5 +1,3 @@
-// Czytelny widok drzewa warunków: all / any / not z liśćmi `field op value`. Tylko do odczytu,
-// użyteczny też w edytorze reguł. Ewaluacją zajmuje się backend (crate `condition`).
 import { Code } from "@atlaskit/code";
 import { Text } from "@atlaskit/primitives/compiled";
 import type { Schemas } from "../api/client";
@@ -21,7 +19,6 @@ const OP_LABEL: Record<NonNullable<Cond["op"]>, string> = {
   glob: "pasuje do wzorca",
 };
 
-// Operator logiczny („nie” to operator, nie porażka — bez czerwieni).
 const Op = ({ children }: { children: string }) => (
   <Text size="small" weight="semibold" color="color.text.subtle">
     {children.toUpperCase()}

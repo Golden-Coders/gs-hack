@@ -66,7 +66,10 @@ pub async fn run_scanner(ctx: Arc<Ctx>, dir: String) {
                 old.abort();
             }
             tracing::info!(source = %name, topic = %def.topic, "starting source");
-            running.insert(name.clone(), (text, tokio::spawn(run_source(ctx.clone(), name, def))));
+            running.insert(
+                name.clone(),
+                (text, tokio::spawn(run_source(ctx.clone(), name, def))),
+            );
         }
         tokio::time::sleep(common::reload::POLL_INTERVAL).await;
     }
@@ -76,7 +79,10 @@ fn read_dir(dir: &Path) -> HashMap<String, String> {
     common::reload::yaml_files(dir)
         .into_iter()
         .filter_map(|p| {
-            Some((p.file_stem()?.to_str()?.to_string(), std::fs::read_to_string(&p).ok()?))
+            Some((
+                p.file_stem()?.to_str()?.to_string(),
+                std::fs::read_to_string(&p).ok()?,
+            ))
         })
         .collect()
 }
@@ -88,7 +94,9 @@ async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef) {
     }
     let consumer = match kafka::consumer(&ctx.brokers, &group, &[def.topic.as_str()]) {
         Ok(c) => c,
-        Err(e) => return tracing::error!(source = %name, error = %e, "creating source consumer failed"),
+        Err(e) => {
+            return tracing::error!(source = %name, error = %e, "creating source consumer failed")
+        }
     };
     loop {
         match consumer.recv().await {
@@ -110,8 +118,14 @@ async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef) {
 /// a `topics-init` zakłada tylko topiki wewnętrzne). Istniejący topik zostaje bez zmian.
 /// shortcut: replikacja 1 (jeden broker w compose), przy klastrze produkcyjnym topiki źródeł zakłada ich właściciel.
 pub async fn ensure_topic(brokers: &str, topic: &str) -> anyhow::Result<()> {
-    let admin: AdminClient<DefaultClientContext> = ClientConfig::new().set("bootstrap.servers", brokers).create()?;
-    let new = NewTopic::new(topic, contracts::topics::PARTITIONS, TopicReplication::Fixed(1));
+    let admin: AdminClient<DefaultClientContext> = ClientConfig::new()
+        .set("bootstrap.servers", brokers)
+        .create()?;
+    let new = NewTopic::new(
+        topic,
+        contracts::topics::PARTITIONS,
+        TopicReplication::Fixed(1),
+    );
     for result in admin.create_topics(&[new], &AdminOptions::new()).await? {
         match result {
             Ok(_) | Err((_, RDKafkaErrorCode::TopicAlreadyExists)) => {}
@@ -126,32 +140,63 @@ pub async fn ensure_topic(brokers: &str, topic: &str) -> anyhow::Result<()> {
 pub fn build(def: &SourceDef, bytes: &[u8]) -> Result<(String, String, Value), ParseError> {
     let json: Option<Value> = serde_json::from_slice(bytes).ok();
     if let Some(Value::Object(o)) = &json {
-        if let (Some(Value::String(f)), Some(Value::String(s)), Some(p)) = (o.get("format"), o.get("schema"), o.get("payload")) {
+        if let (Some(Value::String(f)), Some(Value::String(s)), Some(p)) =
+            (o.get("format"), o.get("schema"), o.get("payload"))
+        {
             if f == &def.format && s == &def.schema {
-                return Ok((def.format.clone(), def.schema.clone(), parse_payload(&def.format, p)?));
+                return Ok((
+                    def.format.clone(),
+                    def.schema.clone(),
+                    parse_payload(&def.format, p)?,
+                ));
             }
         }
     }
     let payload = match def.format.as_str() {
         "json" => json.ok_or_else(|| ParseError::Invalid("invalid json".into()))?,
-        "yaml" => Value::String(String::from_utf8(bytes.to_vec()).map_err(|e| ParseError::Invalid(format!("not utf-8: {e}")))?),
+        "yaml" => Value::String(
+            String::from_utf8(bytes.to_vec())
+                .map_err(|e| ParseError::Invalid(format!("not utf-8: {e}")))?,
+        ),
         other => return Err(ParseError::Unsupported(other.to_string())),
     };
-    Ok((def.format.clone(), def.schema.clone(), parse_payload(&def.format, &payload)?))
+    Ok((
+        def.format.clone(),
+        def.schema.clone(),
+        parse_payload(&def.format, &payload)?,
+    ))
 }
 
 async fn handle(ctx: &Ctx, def: &SourceDef, bytes: &[u8]) {
     let source = format!("kafka:{}", def.topic);
     match build(def, bytes) {
         Ok((format, schema, payload)) => {
-            // Ponawiamy do skutku: offset zostanie zatwierdzony dopiero po publikacji.
-            while let Err(e) = accept(&ctx.producer, &format, &schema, payload.clone(), source.clone()).await {
+            while let Err(e) = accept(
+                &ctx.producer,
+                &format,
+                &schema,
+                payload.clone(),
+                source.clone(),
+            )
+            .await
+            {
                 tracing::warn!(error = %e, "publishing to events.raw failed, retrying");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
-        Err(ParseError::Unsupported(f)) => record_error(&ctx.pool, &ctx.producer, &source, &format!("unsupported format: {f}"), bytes).await,
-        Err(ParseError::Invalid(d)) => record_error(&ctx.pool, &ctx.producer, &source, &d, bytes).await,
+        Err(ParseError::Unsupported(f)) => {
+            record_error(
+                &ctx.pool,
+                &ctx.producer,
+                &source,
+                &format!("unsupported format: {f}"),
+                bytes,
+            )
+            .await
+        }
+        Err(ParseError::Invalid(d)) => {
+            record_error(&ctx.pool, &ctx.producer, &source, &d, bytes).await
+        }
     }
 }
 
@@ -161,14 +206,21 @@ mod tests {
     use serde_json::json;
 
     fn def(format: &str) -> SourceDef {
-        SourceDef { topic: "t".into(), schema: "src.v1".into(), format: format.into() }
+        SourceDef {
+            topic: "t".into(),
+            schema: "src.v1".into(),
+            format: format.into(),
+        }
     }
 
     #[test]
     fn envelope_matching_source_unwraps_payload() {
         let msg = br#"{"format":"json","schema":"src.v1","payload":{"x":1}}"#;
         let (f, s, p) = build(&def("json"), msg).unwrap();
-        assert_eq!((f.as_str(), s.as_str(), p), ("json", "src.v1", json!({"x": 1})));
+        assert_eq!(
+            (f.as_str(), s.as_str(), p),
+            ("json", "src.v1", json!({"x": 1}))
+        );
     }
 
     #[test]
@@ -177,7 +229,10 @@ mod tests {
         let (f, s, p) = build(&def("json"), schema_override).unwrap();
         assert_eq!(f, "json");
         assert_eq!(s, "src.v1");
-        assert_eq!(p, json!({"format": "json", "schema": "other.v2", "payload": {"x": 1}}));
+        assert_eq!(
+            p,
+            json!({"format": "json", "schema": "other.v2", "payload": {"x": 1}})
+        );
 
         let format_override = br#"{"format":"yaml","schema":"src.v1","payload":"a: 1\n"}"#;
         let (f, s, _) = build(&def("json"), format_override).unwrap();
@@ -188,7 +243,10 @@ mod tests {
     #[test]
     fn raw_json_gets_source_schema_and_format() {
         let (f, s, p) = build(&def("json"), br#"{"x":1}"#).unwrap();
-        assert_eq!((f.as_str(), s.as_str(), p), ("json", "src.v1", json!({"x": 1})));
+        assert_eq!(
+            (f.as_str(), s.as_str(), p),
+            ("json", "src.v1", json!({"x": 1}))
+        );
     }
 
     #[test]
@@ -199,11 +257,17 @@ mod tests {
 
     #[test]
     fn invalid_json_is_error() {
-        assert!(matches!(build(&def("json"), b"{not json"), Err(ParseError::Invalid(_))));
+        assert!(matches!(
+            build(&def("json"), b"{not json"),
+            Err(ParseError::Invalid(_))
+        ));
     }
 
     #[test]
     fn unsupported_source_format() {
-        assert!(matches!(build(&def("xml"), b"<a/>"), Err(ParseError::Unsupported(_))));
+        assert!(matches!(
+            build(&def("xml"), b"<a/>"),
+            Err(ParseError::Unsupported(_))
+        ));
     }
 }

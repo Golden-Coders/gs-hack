@@ -1,5 +1,3 @@
-// Kreator drzewa warunków (tasks.md 15.1): grupy „wszystkie / dowolny / nie” i liście „pole – operator – wartość”.
-// Edytowalny odpowiednik ConditionView; stan trzyma właściciel (RuleEditor), tu tylko edycja drzewa.
 import { useEffect, useRef } from "react";
 import Button from "@atlaskit/button/new";
 import { Text } from "@atlaskit/primitives/compiled";
