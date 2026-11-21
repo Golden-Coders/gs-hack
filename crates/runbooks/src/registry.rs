@@ -106,6 +106,10 @@ impl Registry {
         self.actions.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
+
     /// Ustala, które kroki wykonają się automatycznie, i wymusza zatwierdzenie dla `risk: high`.
     /// Wywoływane przy każdym przeładowaniu, więc dodanie brakującej akcji „naprawia” runbooki.
     pub fn classify(&self, def: &RunbookDef) -> RunbookDef {

@@ -6,13 +6,12 @@
 //! - `engine` – runy raz na epizod, maszyna stanów kroków, komendy z UI,
 //! - `author` – `RunbookAuthor` (w MVP tylko `none`).
 
-mod author;
 mod engine;
 mod matching;
 mod notify;
-mod parse;
-mod registry;
 mod store;
+
+use runbooks::{author, parse, registry};
 
 use std::sync::Arc;
 

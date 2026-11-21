@@ -14,6 +14,11 @@ x-backend: &backend
     SMTP_PORT: "1025"
     ACTION_HOST_ALLOWLIST: mock-targets,localhost
     API_TOKEN: dev-token
+    LLM_PROVIDER: ${LLM_PROVIDER:-none}
+    LLM_BASE_URL: ${LLM_BASE_URL:-}
+    LLM_MODEL: ${LLM_MODEL:-}
+    LLM_API_KEY: ${LLM_API_KEY:-}
+    LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-30000}
     RUST_LOG: info
   volumes:
     - ./config:/app/config

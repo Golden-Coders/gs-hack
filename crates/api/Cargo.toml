@@ -9,6 +9,7 @@ publish.workspace = true
 contracts = { workspace = true }
 condition = { workspace = true }
 lifecycle = { path = "../lifecycle" }
+runbooks = { path = "../runbooks" }
 common = { workspace = true, features = ["db", "kafka"] }
 tokio = { workspace = true }
 tracing = { workspace = true }

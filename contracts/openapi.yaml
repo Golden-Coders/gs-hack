@@ -613,6 +613,83 @@ paths:
                   steps: []
                   source_file: config/p3/runbooks/payments-high-error-rate.md
                   version: 1
+    post:
+      tags: [p3]
+      summary: Zapisz zaakceptowany runbook AUTOMATIC (np. wyodrębniony przez LLM)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunbookDef" }
+      responses:
+        "201":
+          description: Zapisany i sklasyfikowany runbook
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunbookDef" }
+        "400":
+          description: Niepoprawna definicja runbooka
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Runbook o takim id już istnieje
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /runbooks/author/status:
+    get:
+      tags: [p3]
+      summary: Stan dostawcy LLM do ekstrakcji kroków runbooka
+      responses:
+        "200":
+          description: Konfiguracja `RunbookAuthor`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunbookAuthorStatus" }
+              example: { enabled: false, provider: none, model: null }
+
+  /runbooks/draft:
+    post:
+      tags: [p3]
+      summary: Wyodrębnij szkic runbooka AUTOMATIC z tekstu/Markdownu przez LLM (bez zapisywania)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunbookDraftRequest" }
+      responses:
+        "200":
+          description: Szkic runbooka po redakcji i klasyfikacji wg rejestru akcji
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunbookDraftResponse" }
+        "400":
+          description: Niepoprawne żądanie szkicu (np. brak tekstu)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Nie znaleziono wskazanego runbooka
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "501":
+          description: Ekstrakcja LLM jest wyłączona (`LLM_PROVIDER=none`)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: Błąd dostawcy lub niepoprawna odpowiedź modelu LLM
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "504":
+          description: Przekroczony czas oczekiwania na odpowiedź LLM
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /runbooks/errors:
     get:
@@ -1207,6 +1284,34 @@ components:
         name: { type: string }
         runbook_ids: { type: array, items: { type: string } }
         manual_executions: { type: integer }
+
+    RunbookAuthorStatus:
+      type: object
+      required: [enabled, provider]
+      properties:
+        enabled: { type: boolean }
+        provider: { type: string, enum: [none, local, api] }
+        model: { type: string, nullable: true }
+
+    RunbookDraftRequest:
+      type: object
+      properties:
+        runbook_id: { type: string, nullable: true }
+        id: { type: string, nullable: true }
+        title: { type: string, nullable: true }
+        text: { type: string, nullable: true }
+        matches: { allOf: [{ $ref: "#/components/schemas/Condition" }], nullable: true }
+        rule_ids: { type: array, items: { type: string } }
+
+    RunbookDraftResponse:
+      type: object
+      required: [draft, yaml, redacted_count, redacted_kinds, warnings]
+      properties:
+        draft: { $ref: "#/components/schemas/RunbookDef" }
+        yaml: { type: string }
+        redacted_count: { type: integer }
+        redacted_kinds: { type: object, additionalProperties: { type: integer } }
+        warnings: { type: array, items: { type: string } }
 
     # Typy wiadomości SSE (dla generatora typów UI)
     AlertChanged:
