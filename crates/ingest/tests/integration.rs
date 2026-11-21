@@ -139,6 +139,27 @@ async fn post_ingest_schema_bad_requests() {
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
 }
 
+/// Liczba partycji topiku wg metadanych brokera (`None`, gdy topik nie istnieje).
+fn partition_count(topic: &str) -> Option<usize> {
+    use common::kafka::rdkafka::{
+        config::ClientConfig,
+        consumer::{BaseConsumer, Consumer},
+    };
+    let c: BaseConsumer = ClientConfig::new().set("bootstrap.servers", BROKERS).create().unwrap();
+    let md = c.fetch_metadata(Some(topic), Duration::from_secs(10)).unwrap();
+    md.topics().iter().find(|t| t.name() == topic && t.error().is_none()).map(|t| t.partitions().len())
+}
+
+#[tokio::test]
+async fn ensure_topic_creates_and_is_idempotent() {
+    let topic = uniq("test.ensure");
+    assert_eq!(partition_count(&topic), None);
+    sources::ensure_topic(BROKERS, &topic).await.unwrap();
+    assert_eq!(partition_count(&topic), Some(topics::PARTITIONS as usize));
+    sources::ensure_topic(BROKERS, &topic).await.unwrap();
+    assert_eq!(partition_count(&topic), Some(topics::PARTITIONS as usize));
+}
+
 #[tokio::test]
 async fn kafka_source_added_without_restart() {
     let dir = std::env::temp_dir().join(format!("ingest-src-{}", Uuid::new_v4()));
@@ -155,6 +176,8 @@ async fn kafka_source_added_without_restart() {
     std::fs::write(dir.join("s.yaml"), format!("topic: {topic}\nschema: {schema}\nformat: json\n")).unwrap();
     // poczekaj, aż skaner (2 s) uruchomi konsumenta, i wyślij wiadomości (earliest => nie zginą)
     tokio::time::sleep(Duration::from_secs(4)).await;
+    // topiku nie zakładamy ręcznie: ma go założyć skaner
+    assert_eq!(partition_count(&topic), Some(topics::PARTITIONS as usize), "skaner nie założył topiku");
     let send = |payload: &'static str| {
         let p = p.clone();
         let topic = topic.clone();

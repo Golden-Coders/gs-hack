@@ -6,7 +6,14 @@ use common::{
     db::sqlx::PgPool,
     kafka::{
         self,
-        rdkafka::{message::Message, producer::FutureProducer},
+        rdkafka::{
+            admin::{AdminClient, AdminOptions, NewTopic, TopicReplication},
+            client::DefaultClientContext,
+            config::ClientConfig,
+            message::Message,
+            producer::FutureProducer,
+            types::RDKafkaErrorCode,
+        },
     },
 };
 use serde::Deserialize;
@@ -82,6 +89,9 @@ fn read_dir(dir: &Path) -> HashMap<String, String> {
 
 async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef) {
     let group = format!("ingest-source-{name}");
+    if let Err(e) = ensure_topic(&ctx.brokers, &def.topic).await {
+        tracing::warn!(source = %name, topic = %def.topic, error = %e, "ensuring source topic failed");
+    }
     let consumer = match kafka::consumer(&ctx.brokers, &group, &[def.topic.as_str()]) {
         Ok(c) => c,
         Err(e) => return tracing::error!(source = %name, error = %e, "creating source consumer failed"),
@@ -100,6 +110,21 @@ async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef) {
             }
         }
     }
+}
+
+/// Tworzy topik źródła, jeśli nie istnieje (Redpanda w compose nie tworzy topików automatycznie,
+/// a `topics-init` zakłada tylko topiki wewnętrzne). Istniejący topik zostaje bez zmian.
+/// shortcut: replikacja 1 (jeden broker w compose), przy klastrze produkcyjnym topiki źródeł zakłada ich właściciel.
+pub async fn ensure_topic(brokers: &str, topic: &str) -> anyhow::Result<()> {
+    let admin: AdminClient<DefaultClientContext> = ClientConfig::new().set("bootstrap.servers", brokers).create()?;
+    let new = NewTopic::new(topic, contracts::topics::PARTITIONS, TopicReplication::Fixed(1));
+    for result in admin.create_topics(&[new], &AdminOptions::new()).await? {
+        match result {
+            Ok(_) | Err((_, RDKafkaErrorCode::TopicAlreadyExists)) => {}
+            Err((t, code)) => anyhow::bail!("creating topic {t}: {code}"),
+        }
+    }
+    Ok(())
 }
 
 /// Buduje (format, schema, payload) z wiadomości: gotowa koperta albo dane wg konfiguracji źródła.
