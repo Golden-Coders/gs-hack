@@ -9,7 +9,7 @@
 //!   odrzuca duplikat, a kroki `succeeded` nie są powtarzane.
 //! - Decyzja „co dalej” to czysta funkcja [`next`]; reszta to zapis.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -93,6 +93,36 @@ pub struct Engine {
     pub snapshot: Arc<ArcSwap<Snapshot>>,
     /// Baza linków do alertu w treści powiadomień `escalate`/`notify`.
     pub public_ui_url: String,
+    /// Blokada per `run_id`, aby nakładające się `spawn_advance` nie wykonywały jednocześnie tego samego kroku `Running`.
+    pub active_runs: Arc<tokio::sync::Mutex<HashSet<Uuid>>>,
+}
+
+struct RunGuard {
+    active: Arc<tokio::sync::Mutex<HashSet<Uuid>>>,
+    run_id: Uuid,
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.active.try_lock() {
+            guard.remove(&self.run_id);
+        } else {
+            let active = self.active.clone();
+            let run_id = self.run_id;
+            tokio::spawn(async move {
+                active.lock().await.remove(&run_id);
+            });
+        }
+    }
+}
+
+async fn try_acquire_run(active: &Arc<tokio::sync::Mutex<HashSet<Uuid>>>, run_id: Uuid) -> Option<RunGuard> {
+    let mut set = active.lock().await;
+    if set.insert(run_id) {
+        Some(RunGuard { active: active.clone(), run_id })
+    } else {
+        None
+    }
 }
 
 impl Engine {
@@ -171,6 +201,7 @@ impl Engine {
         };
         if !applied {
             tracing::info!(run_id = %run.run_id, step_id = step, status = status_str(status), command = ?cmd.kind, "command ignored, step state changed");
+            return Ok(None);
         }
         Ok(Some(run.run_id))
     }
@@ -351,13 +382,18 @@ impl Engine {
 
     /// Prowadzi run do pierwszego kroku, który wymaga człowieka, błędu albo końca.
     pub async fn advance(&self, run_id: Uuid) -> anyhow::Result<()> {
-        let mut run = self.load_run(run_id).await?.with_context(|| format!("run {run_id} not found"))?;
-        if run.kind != RunbookKind::Automatic {
+        let Some(_guard) = try_acquire_run(&self.active_runs, run_id).await else {
+            tracing::debug!(%run_id, "run already advancing, skipping duplicate advance");
             return Ok(());
-        }
-        // Ryzyko akcji mogło wzrosnąć od startu runa: `risk: high` ⇒ zatwierdzenie zawsze.
-        self.snapshot.load().registry.enforce_approval(&mut run.steps);
+        };
         loop {
+            let mut run = self.load_run(run_id).await?.with_context(|| format!("run {run_id} not found"))?;
+            if run.kind != RunbookKind::Automatic {
+                return Ok(());
+            }
+            // Przeładowujemy kroki w każdej iteracji (m.in. tryb ręczny) i wymuszamy zatwierdzenie przy eskalacji ryzyka.
+            self.snapshot.load().registry.enforce_approval(&mut run.steps);
+
             let states = self.step_states(run_id).await?;
             let next = next(&run.steps, &states);
             sqlx::query("UPDATE runbook_runs SET status = $2, updated_at = now() WHERE run_id = $1 AND status <> $2")
@@ -611,6 +647,7 @@ mod tests {
             executor: Executor::new(vec!["127.0.0.1".into()]),
             snapshot: Arc::new(ArcSwap::from_pointee(Snapshot { registry, ..Default::default() })),
             public_ui_url: "http://localhost:5173".into(),
+            active_runs: Default::default(),
         };
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/fixtures/topics/alerts.changed.json");
         let mut alert: AlertChanged = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
@@ -698,5 +735,20 @@ mod tests {
     fn status_strings_match_contract() {
         assert_eq!(status_str(StepStatus::WaitingApproval), "waiting_approval");
         assert_eq!(parse_status("waiting_manual").unwrap(), StepStatus::WaitingManual);
+    }
+
+    #[tokio::test]
+    async fn run_guard_prevents_concurrent_advance_for_same_run() {
+        let active: Arc<tokio::sync::Mutex<HashSet<Uuid>>> = Default::default();
+        let run_a = Uuid::now_v7();
+        let run_b = Uuid::now_v7();
+
+        let g1 = try_acquire_run(&active, run_a).await;
+        assert!(g1.is_some());
+        assert!(try_acquire_run(&active, run_a).await.is_none());
+        assert!(try_acquire_run(&active, run_b).await.is_some());
+
+        drop(g1);
+        assert!(try_acquire_run(&active, run_a).await.is_some());
     }
 }

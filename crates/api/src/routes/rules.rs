@@ -45,7 +45,9 @@ async fn ensure_rules_seeded(db: &PgPool, config_dir: &str) {
     if count > 0 {
         return;
     }
-    let rules_dir = resolve_config_path(config_dir, "rules");
+    let Some(rules_dir) = resolve_config_path(config_dir, "rules") else {
+        return;
+    };
     let Ok(entries) = std::fs::read_dir(&rules_dir) else {
         return;
     };
@@ -90,6 +92,58 @@ async fn ensure_rules_seeded(db: &PgPool, config_dir: &str) {
     }
 }
 
+/// Detects unquoted YAML anchor (`&name`) or alias (`*name`) syntax to mitigate alias bombs.
+fn contains_yaml_anchor_or_alias(text: &str) -> Option<usize> {
+    for (idx, line) in text.lines().enumerate() {
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut escaped = false;
+        let mut prev: Option<char> = None;
+        let mut chars = line.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if in_double {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_double = false;
+                }
+                prev = Some(ch);
+                continue;
+            }
+            if in_single {
+                if ch == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                    } else {
+                        in_single = false;
+                    }
+                }
+                prev = Some(ch);
+                continue;
+            }
+            if ch == '#' && prev.is_none_or(char::is_whitespace) {
+                break;
+            }
+            if ch == '"' {
+                in_double = true;
+            } else if ch == '\'' {
+                in_single = true;
+            } else if matches!(ch, '&' | '*')
+                && prev.is_none_or(|p| p.is_whitespace() || matches!(p, ':' | '-' | '[' | '{' | ','))
+                && chars
+                    .peek()
+                    .is_some_and(|n| !n.is_whitespace() && !matches!(n, ',' | ']' | '}' | ':'))
+            {
+                return Some(idx + 1);
+            }
+            prev = Some(ch);
+        }
+    }
+    None
+}
+
 /// Parses a rule request body (JSON or YAML) and includes the line number on syntax errors.
 pub fn parse_rule_payload(bytes: &[u8]) -> ApiResult<RuleDef> {
     let text = std::str::from_utf8(bytes)
@@ -105,21 +159,31 @@ pub fn parse_rule_payload(bytes: &[u8]) -> ApiResult<RuleDef> {
 
     match serde_json::from_str::<RuleDef>(text) {
         Ok(rule) => Ok(rule),
-        Err(json_err) => match serde_yaml::from_str::<RuleDef>(text) {
-            Ok(rule) => Ok(rule),
-            Err(yaml_err) => {
-                let line = yaml_err
-                    .location()
-                    .map(|l| l.line())
-                    .or_else(|| Some(json_err.line()));
-                Err(err_with_line(
+        Err(json_err) => {
+            if let Some(line) = contains_yaml_anchor_or_alias(text) {
+                return Err(err_with_line(
                     StatusCode::BAD_REQUEST,
                     "invalid rule",
-                    yaml_err,
-                    line,
-                ))
+                    "YAML anchors and aliases are not allowed",
+                    Some(line),
+                ));
             }
-        },
+            match serde_yaml::from_str::<RuleDef>(text) {
+                Ok(rule) => Ok(rule),
+                Err(yaml_err) => {
+                    let line = yaml_err
+                        .location()
+                        .map(|l| l.line())
+                        .or_else(|| Some(json_err.line()));
+                    Err(err_with_line(
+                        StatusCode::BAD_REQUEST,
+                        "invalid rule",
+                        yaml_err,
+                        line,
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -706,19 +770,34 @@ pub fn suggest_fields_with_samples(
     out
 }
 
+fn validate_schema_name(schema: &str) -> Result<(), &'static str> {
+    if schema.is_empty() {
+        return Err("schema cannot be empty");
+    }
+    if schema == "."
+        || schema.contains("..")
+        || schema.contains('/')
+        || schema.contains('\\')
+        || schema.contains('\0')
+    {
+        return Err("schema contains forbidden path characters");
+    }
+    if !schema
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err("schema may only contain [A-Za-z0-9._-]");
+    }
+    Ok(())
+}
+
 async fn get_fields(
     State(st): State<AppState>,
     Query(q): Query<FieldsQuery>,
 ) -> ApiResult<Json<Vec<String>>> {
     let schema = q.schema.trim();
-    if schema.is_empty() {
-        return Ok(Json(vec![
-            "schema".into(),
-            "severity".into(),
-            "source".into(),
-            "title".into(),
-        ]));
-    }
+    validate_schema_name(schema)
+        .map_err(|msg| err(StatusCode::BAD_REQUEST, "invalid schema", msg))?;
 
     let mut mapping_defs = Vec::new();
     if let Ok(Some(row)) = sqlx::query("SELECT def FROM mappings WHERE schema = $1")
@@ -731,10 +810,13 @@ async fn get_fields(
         }
     }
     if mapping_defs.is_empty() {
-        let mapping_file = resolve_config_path(&st.config.config_dir, &format!("mappings/{schema}.yaml"));
-        if let Ok(text) = std::fs::read_to_string(mapping_file) {
-            if let Ok(m) = serde_yaml::from_str::<MappingDef>(&text) {
-                mapping_defs.push(m);
+        if let Some(mapping_file) =
+            resolve_config_path(&st.config.config_dir, &format!("mappings/{schema}.yaml"))
+        {
+            if let Ok(text) = std::fs::read_to_string(mapping_file) {
+                if let Ok(m) = serde_yaml::from_str::<MappingDef>(&text) {
+                    mapping_defs.push(m);
+                }
             }
         }
     }
@@ -931,7 +1013,7 @@ presentation:
 
     #[test]
     fn unit_seed_files_are_valid() {
-        let rules_dir = resolve_config_path("config", "rules");
+        let rules_dir = resolve_config_path("config", "rules").expect("resolve config/rules");
         let entries: Vec<_> = std::fs::read_dir(&rules_dir)
             .expect("read config/rules")
             .filter_map(|e| e.ok().map(|x| x.path()))
@@ -944,10 +1026,32 @@ presentation:
             validate_rule(&rule).unwrap_or_else(|e| panic!("invalid rule {}: {:?}", path.display(), e));
         }
 
-        let people_path = resolve_config_path("config", "people.yaml");
+        let people_path = resolve_config_path("config", "people.yaml").expect("resolve config/people.yaml");
         let text = std::fs::read_to_string(&people_path).expect("read config/people.yaml");
         let parsed: PeopleConfigFile = serde_yaml::from_str(&text).expect("valid people.yaml");
         assert_eq!(parsed.people.len(), 6);
         assert_eq!(parsed.teams.len(), 5);
+    }
+
+    #[test]
+    fn unit_schema_validation_and_path_traversal_rejected() {
+        assert!(validate_schema_name("trade.rejected.v2").is_ok());
+        assert!(validate_schema_name("workflow_v1-beta").is_ok());
+        for bad in ["", ".", "..", "../people", "a/b", "a\\b", "a..b", "foo\0bar", "foo bar", "foo$bar"] {
+            assert!(validate_schema_name(bad).is_err(), "should reject schema `{bad}`");
+        }
+        assert!(resolve_config_path("config", "../Cargo.toml").is_none());
+        assert!(resolve_config_path("config", "/etc/passwd").is_none());
+        assert!(resolve_config_path("config", "mappings/../../Cargo.toml").is_none());
+        assert!(resolve_config_path("config", "people.yaml\0").is_none());
+    }
+
+    #[test]
+    fn unit_yaml_anchors_and_aliases_rejected() {
+        let bomb = "a: &a [\"lol\", \"lol\"]\nb: [*a, *a]\n";
+        let (st, Json(v)) = parse_rule_payload(bomb.as_bytes()).unwrap_err();
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+        assert_eq!(v["error"], "invalid rule");
+        assert!(v["detail"].as_str().unwrap_or("").contains("anchors"));
     }
 }

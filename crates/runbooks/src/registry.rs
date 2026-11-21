@@ -162,6 +162,8 @@ pub enum ActionError {
     MissingParam(&'static str),
     #[error("brak sekretu `${{{0}}}` w środowisku")]
     MissingSecret(String),
+    #[error("sekret niedozwolony przez politykę bezpieczeństwa")]
+    SecretNotAllowed,
     #[error("szablon: {0}")]
     Template(String),
     #[error("timeout po {0} ms")]
@@ -194,7 +196,9 @@ impl Executor {
     pub fn new(allowlist: Vec<String>) -> Self {
         let allowed = allowlist.clone();
         let policy = redirect::Policy::custom(move |attempt| {
-            let ok = attempt.previous().len() < MAX_REDIRECTS && host_allowed(&allowed, attempt.url());
+            let ok = attempt.previous().len() < MAX_REDIRECTS
+                && matches!(attempt.url().scheme(), "http" | "https")
+                && host_allowed(&allowed, attempt.url());
             if ok {
                 attempt.follow()
             } else {
@@ -221,9 +225,9 @@ impl Executor {
             }
             (ActionKind::Http, Some(http)) => {
                 let ctx = overlay(alert_ctx, params);
-                let render = |t: &str| condition::render_template(t, &ctx).map_err(|e| ActionError::Template(e.to_string()));
-                let body = http.body.as_deref().map(render).transpose()?;
-                (http.method.clone(), render(&http.url)?, http.headers.clone(), body, http.timeout_ms)
+                let url = render_escaped(&http.url, &ctx, escape_url_component)?;
+                let body = http.body.as_deref().map(|t| render_escaped(t, &ctx, escape_json_string)).transpose()?;
+                (http.method.clone(), url, http.headers.clone(), body, http.timeout_ms)
             }
             _ => return Err(ActionError::NotHttp(action.name.clone())),
         };
@@ -231,6 +235,9 @@ impl Executor {
         let url = Url::parse(&url).map_err(|_| ActionError::InvalidUrl(url.clone()))?;
         if !matches!(url.scheme(), "http" | "https") {
             return Err(ActionError::InvalidUrl(url.to_string()));
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(ActionError::InvalidUrl("URL z danymi uwierzytelniającymi (userinfo) jest niedozwolony".into()));
         }
         if !host_allowed(&self.allowlist, &url) {
             return Err(ActionError::HostNotAllowed(url.host_str().unwrap_or_default().to_string()));
@@ -274,8 +281,98 @@ impl Executor {
     }
 }
 
+const MAX_RENDERED_TEMPLATE_BYTES: usize = 64 * 1024;
+
+/// Renderuje szablon `{{ścieżka}}`, przepuszczając wyłącznie podstawiane wartości przez `escape`.
+fn render_escaped(template: &str, ctx: &Value, escape: impl Fn(&str) -> String) -> Result<String, ActionError> {
+    condition::validate_template(template).map_err(|e| ActionError::Template(e.to_string()))?;
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let literal = &rest[..start];
+        if out.len() + literal.len() > MAX_RENDERED_TEMPLATE_BYTES {
+            return Err(ActionError::Template("rendered output exceeds maximum size".into()));
+        }
+        out.push_str(literal);
+        let after_open = &rest[start..];
+        let end = after_open.find("}}").ok_or_else(|| ActionError::Template("unclosed `{{`".into()))?;
+        let placeholder = &after_open[..end + 2];
+        let raw_val = condition::render_template(placeholder, ctx).map_err(|e| ActionError::Template(e.to_string()))?;
+        let escaped = escape(&raw_val);
+        if out.len() + escaped.len() > MAX_RENDERED_TEMPLATE_BYTES {
+            return Err(ActionError::Template("rendered output exceeds maximum size".into()));
+        }
+        out.push_str(&escaped);
+        rest = &after_open[end + 2..];
+    }
+    if out.len() + rest.len() > MAX_RENDERED_TEMPLATE_BYTES {
+        return Err(ActionError::Template("rendered output exceeds maximum size".into()));
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Percent-encoding (RFC 3986 unreserved) dla podstawianych wartości w URL akcji HTTP.
+fn escape_url_component(s: &str) -> String {
+    if s == "." {
+        return "%2E".to_string();
+    }
+    if s == ".." {
+        return "%2E%2E".to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(&mut out, "%{b:02X}");
+        }
+    }
+    out
+}
+
+/// Escaping dla wartości podstawianych wewnątrz literałów stringowych JSON w `http.body`.
+fn escape_json_string(s: &str) -> String {
+    let serialized = serde_json::to_string(s).unwrap_or_default();
+    serialized
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or(&serialized)
+        .to_string()
+}
+
 fn host_allowed(allowlist: &[String], url: &Url) -> bool {
-    url.host_str().is_some_and(|h| allowlist.iter().any(|a| a.eq_ignore_ascii_case(h)))
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let port = url.port_or_known_default();
+    allowlist.iter().any(|raw| {
+        let entry = raw.trim();
+        if entry.is_empty() {
+            return false;
+        }
+        if entry.starts_with('[') {
+            if let Some((h, p)) = entry.rsplit_once("]:") {
+                if let Ok(allowed_port) = p.parse::<u16>() {
+                    let h_bracketed = format!("{h}]");
+                    return h_bracketed.eq_ignore_ascii_case(host) && port == Some(allowed_port);
+                }
+                return false;
+            }
+            return entry.eq_ignore_ascii_case(host);
+        }
+        if let Some((h, p)) = entry.rsplit_once(':') {
+            if let Ok(allowed_port) = p.parse::<u16>() {
+                return h.eq_ignore_ascii_case(host) && port == Some(allowed_port);
+            }
+            return false;
+        }
+        entry.eq_ignore_ascii_case(host)
+    })
 }
 
 fn overlay(alert_ctx: &Value, params: &Map<String, Value>) -> Value {
@@ -284,21 +381,49 @@ fn overlay(alert_ctx: &Value, params: &Map<String, Value>) -> Value {
     Value::Object(ctx)
 }
 
-/// `Bearer ${TOKEN}` → wartość z env. Sekret nie trafia do definicji, dziennika ani błędów.
+fn is_allowed_secret(name: &str) -> bool {
+    const DENIED: &[&str] = &[
+        "API_TOKEN",
+        "DATABASE_URL",
+        "LLM_API_KEY",
+        "POSTGRES_PASSWORD",
+        "ACTION_SECRET_ALLOWLIST",
+    ];
+    if DENIED.contains(&name) {
+        return false;
+    }
+    if name.starts_with("ACTION_SECRET_") || name.ends_with("_TOKEN") {
+        return true;
+    }
+    if let Ok(extra) = std::env::var("ACTION_SECRET_ALLOWLIST") {
+        return extra.split(',').map(str::trim).any(|entry| !entry.is_empty() && entry == name);
+    }
+    false
+}
+
+/// `Bearer ${TOKEN}` → wartość z env (wyłącznie dozwolone zmienne). Sekret nie trafia do definicji, dziennika ani błędów.
 fn expand_secrets(value: &str) -> Result<String, ActionError> {
     static SECRET_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = SECRET_RE.get_or_init(|| {
         regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").expect("valid regex")
     });
-    let mut missing = None;
+    let mut err: Option<ActionError> = None;
     let out = re.replace_all(value, |c: &regex::Captures| {
-        std::env::var(&c[1]).unwrap_or_else(|_| {
-            missing = Some(c[1].to_string());
+        if err.is_some() {
+            return String::new();
+        }
+        let name = &c[1];
+        if !is_allowed_secret(name) {
+            err = Some(ActionError::SecretNotAllowed);
+            return String::new();
+        }
+        std::env::var(name).unwrap_or_else(|_| {
+            err = Some(ActionError::MissingSecret(name.to_string()));
             String::new()
         })
     });
-    match missing {
-        Some(name) => Err(ActionError::MissingSecret(name)),
+    match err {
+        Some(e) => Err(e),
         None => Ok(out.into_owned()),
     }
 }
@@ -398,9 +523,69 @@ mod tests {
         let out = executor().execute(&action, &Map::new(), &json!({}), "step:r:s2:0").await.unwrap();
         assert_eq!(out.body, "step:r:s2:0|Bearer s3cret");
 
-        action.http.as_mut().unwrap().headers.insert("Authorization".into(), "Bearer ${P3_TEST_MISSING}".into());
+        action.http.as_mut().unwrap().headers.insert("Authorization".into(), "Bearer ${P3_TEST_MISSING_TOKEN}".into());
         let err = executor().execute(&action, &Map::new(), &json!({}), "k").await.unwrap_err();
-        assert!(matches!(err, ActionError::MissingSecret(ref n) if n == "P3_TEST_MISSING"), "{err}");
+        assert!(matches!(err, ActionError::MissingSecret(ref n) if n == "P3_TEST_MISSING_TOKEN"), "{err}");
+    }
+
+    #[test]
+    fn expand_secrets_blocks_disallowed_env_vars_without_leaking_existence() {
+        std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost/db");
+        std::env::set_var("API_TOKEN", "super-secret-api-token");
+        std::env::set_var("ACTION_SECRET_MY_KEY", "allowed-val");
+
+        assert_eq!(expand_secrets("Bearer ${ACTION_SECRET_MY_KEY}").unwrap(), "Bearer allowed-val");
+
+        let err_existing = expand_secrets("Bearer ${DATABASE_URL}").unwrap_err();
+        let err_api = expand_secrets("Bearer ${API_TOKEN}").unwrap_err();
+        let err_nonexistent = expand_secrets("Bearer ${TOTALLY_UNKNOWN_VAR_XYZ}").unwrap_err();
+
+        assert!(matches!(err_existing, ActionError::SecretNotAllowed));
+        assert!(matches!(err_api, ActionError::SecretNotAllowed));
+        assert!(matches!(err_nonexistent, ActionError::SecretNotAllowed));
+        assert_eq!(err_existing.to_string(), err_nonexistent.to_string());
+        assert!(!err_existing.to_string().contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn url_and_json_body_interpolation_is_escaped() {
+        let ctx = json!({
+            "service": "../../admin?force=true#frag&x=%2f",
+            "summary": "alert\", \"admin\": true, \"x\": \"line1\nline2",
+        });
+
+        let url = render_escaped("http://mock-targets:8090/cache/{{service}}/flush", &ctx, escape_url_component).unwrap();
+        assert_eq!(
+            url,
+            "http://mock-targets:8090/cache/..%2F..%2Fadmin%3Fforce%3Dtrue%23frag%26x%3D%252f/flush"
+        );
+        let parsed_url = Url::parse(&url).unwrap();
+        assert!(parsed_url.query().is_none());
+        assert!(parsed_url.fragment().is_none());
+        assert!(parsed_url.path().starts_with("/cache/"));
+        assert!(parsed_url.path().ends_with("/flush"));
+
+        let dotdot = render_escaped("http://mock-targets:8090/cache/{{s}}/flush", &json!({"s": ".."}), escape_url_component).unwrap();
+        assert_eq!(dotdot, "http://mock-targets:8090/cache/%2E%2E/flush");
+
+        let body = render_escaped(r#"{"summary": "{{summary}}"}"#, &ctx, escape_json_string).unwrap();
+        let parsed: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 1);
+        assert_eq!(parsed["summary"], "alert\", \"admin\": true, \"x\": \"line1\nline2");
+    }
+
+    #[tokio::test]
+    async fn userinfo_and_port_allowlist_are_enforced() {
+        let err = http_get("http://user:pass@127.0.0.1:8080/ok").await.unwrap_err();
+        assert!(matches!(err, ActionError::InvalidUrl(_)), "{err}");
+
+        let allow = vec!["mock-targets:8090".into(), "example.com:443".into(), "[::1]:9000".into()];
+        assert!(host_allowed(&allow, &Url::parse("http://mock-targets:8090/restart").unwrap()));
+        assert!(!host_allowed(&allow, &Url::parse("http://mock-targets:9090/restart").unwrap()));
+        assert!(host_allowed(&allow, &Url::parse("https://example.com/health").unwrap()));
+        assert!(!host_allowed(&allow, &Url::parse("http://example.com/health").unwrap()));
+        assert!(host_allowed(&allow, &Url::parse("http://[::1]:9000/ok").unwrap()));
+        assert!(!host_allowed(&allow, &Url::parse("http://user@mock-targets:8090/restart").unwrap()));
     }
 
     #[test]

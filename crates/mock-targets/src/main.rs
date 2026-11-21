@@ -23,6 +23,27 @@ use serde_json::{json, Value};
 /// Log w pamięci: ostatnie `MAX_CALLS` wywołań i ograniczone `seen_keys` (`MAX_SEEN_KEYS`).
 const MAX_CALLS: usize = 1000;
 const MAX_SEEN_KEYS: usize = MAX_CALLS * 2;
+/// Maksymalne opóźnienie żądane przez `?delay_ms=` (30 s), aby uniknąć blokowania tasków bez końca.
+const MAX_DELAY_MS: u64 = 30_000;
+
+fn clamp_delay_ms(ms: u64) -> u64 {
+    ms.min(MAX_DELAY_MS)
+}
+
+fn authorized(headers: &HeaderMap, expected: Option<&str>) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    let (a, b) = (token.as_bytes(), expected.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
 
 #[derive(Default)]
 struct SeenKeys {
@@ -55,6 +76,7 @@ impl SeenKeys {
 struct AppState {
     calls: Arc<Mutex<Vec<Call>>>,
     seen_keys: Arc<Mutex<SeenKeys>>,
+    calls_token: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -68,19 +90,34 @@ struct Call {
     replayed: bool,
 }
 
-fn app() -> Router {
+fn app_with_token(calls_token: Option<String>) -> Router {
+    let state = AppState { calls_token, ..AppState::default() };
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/calls", get(list_calls).delete(clear_calls))
         .fallback(record)
-        .with_state(AppState::default())
+        .with_state(state)
 }
 
-async fn list_calls(State(s): State<AppState>) -> Json<Vec<Call>> {
-    Json(s.calls.lock().unwrap_or_else(|e| e.into_inner()).clone())
+fn app() -> Router {
+    let calls_token = std::env::var("MOCK_TARGETS_TOKEN").ok().filter(|v| !v.is_empty());
+    app_with_token(calls_token)
 }
 
-async fn clear_calls(State(s): State<AppState>) -> StatusCode {
+async fn list_calls(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<Call>>, StatusCode> {
+    if !authorized(&headers, s.calls_token.as_deref()) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(s.calls.lock().unwrap_or_else(|e| e.into_inner()).clone()))
+}
+
+async fn clear_calls(State(s): State<AppState>, headers: HeaderMap) -> StatusCode {
+    if !authorized(&headers, s.calls_token.as_deref()) {
+        return StatusCode::UNAUTHORIZED;
+    }
     s.calls.lock().unwrap_or_else(|e| e.into_inner()).clear();
     s.seen_keys.lock().unwrap_or_else(|e| e.into_inner()).clear();
     StatusCode::NO_CONTENT
@@ -95,7 +132,7 @@ async fn record(
     body: Bytes,
 ) -> (StatusCode, Json<Value>) {
     if let Some(ms) = query.get("delay_ms").and_then(|v| v.parse::<u64>().ok()) {
-        tokio::time::sleep(Duration::from_millis(ms)).await;
+        tokio::time::sleep(Duration::from_millis(clamp_delay_ms(ms))).await;
     }
     let status = query
         .get("status")
@@ -188,5 +225,61 @@ mod tests {
         // Oldest keys were evicted, newest are still deduplicated.
         assert!(!seen.insert(format!("k-{}", MAX_SEEN_KEYS + 9)));
         assert!(seen.insert("k-0".into()));
+    }
+
+    #[test]
+    fn delay_ms_is_clamped_to_max() {
+        assert_eq!(clamp_delay_ms(0), 0);
+        assert_eq!(clamp_delay_ms(1_500), 1_500);
+        assert_eq!(clamp_delay_ms(MAX_DELAY_MS), MAX_DELAY_MS);
+        assert_eq!(clamp_delay_ms(MAX_DELAY_MS + 1), MAX_DELAY_MS);
+        assert_eq!(clamp_delay_ms(u64::MAX), MAX_DELAY_MS);
+    }
+
+    #[tokio::test]
+    async fn calls_requires_bearer_token_when_configured() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app_with_token(Some("secret-token".into()))).await.unwrap()
+        });
+        let base = format!("http://{addr}");
+        let client = reqwest::Client::new();
+
+        // Missing or wrong token is rejected on GET and DELETE /calls.
+        assert_eq!(client.get(format!("{base}/calls")).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            client
+                .get(format!("{base}/calls"))
+                .bearer_auth("wrong")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(client.delete(format!("{base}/calls")).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+
+        // Valid bearer token is accepted.
+        assert_eq!(
+            client
+                .get(format!("{base}/calls"))
+                .bearer_auth("secret-token")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            client
+                .delete(format!("{base}/calls"))
+                .bearer_auth("secret-token")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
     }
 }

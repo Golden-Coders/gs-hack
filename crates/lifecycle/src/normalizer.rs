@@ -15,6 +15,9 @@ use crate::config::MappingStore;
 use crate::mapping::parse_payload;
 use crate::{Shutdown, Topics};
 
+const MAX_REPLAY_ROWS_PER_TRIGGER: usize = 5_000;
+const REPLAY_BATCH_SIZE: usize = 500;
+
 /// Konsument `events.raw` w grupie `lifecycle-normalizer`; działa do sygnału zatrzymania.
 pub async fn run_normalizer(
     brokers: String,
@@ -44,18 +47,33 @@ pub async fn run_normalizer_with(
                 Ok(m) => m,
                 Err(e) => {
                     tracing::warn!(error = %e, "normalizer: kafka error");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::select! {
+                        _ = shutdown.changed() => return Ok(()),
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
                     continue;
                 }
             },
         };
-        // At-least-once: ponawiamy do skutku, offset commitujemy dopiero po zapisie skutków.
+        // At-least-once: ponawiamy do skutku (z limitem dla trwałych błędów danych/indeksu Postgresa),
+        // offset commitujemy dopiero po zapisie skutków.
+        let mut permanent_failures = 0u32;
         loop {
             match handle(&msg, &pool, &producer, &store, &topics).await {
                 Ok(()) => break,
                 Err(e) => {
+                    if crate::is_permanent_pg_error(&e) {
+                        permanent_failures += 1;
+                        if permanent_failures >= crate::MAX_PERMANENT_RETRIES {
+                            tracing::error!(error = %e, retries = permanent_failures, "normalizer: permanent postgres error, skipping message");
+                            break;
+                        }
+                    }
                     tracing::warn!(error = %e, "normalizer: processing failed, retrying");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::select! {
+                        _ = shutdown.changed() => return Ok(()),
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
                 }
             }
         }
@@ -94,26 +112,30 @@ async fn handle(
             common::kafka::publish(producer, &topics.events_normalized, &event.fingerprint, &event).await?;
         }
         None => {
+            let mut schema = env.schema.clone();
+            crate::mapping::strip_nuls_str(&mut schema);
+            let mut env_json = serde_json::to_value(&env)?;
+            crate::mapping::strip_nuls_value(&mut env_json);
             common::db::sqlx::query(
                 "INSERT INTO unmapped_events (event_id, schema, envelope, received_at) VALUES ($1, $2, $3, $4)
                  ON CONFLICT (event_id) DO NOTHING",
             )
             .bind(env.event_id)
-            .bind(&env.schema)
-            .bind(serde_json::to_value(&env)?)
+            .bind(&schema)
+            .bind(&env_json)
             .bind(env.received_at)
             .execute(pool)
             .await?;
             let count: i64 = common::db::sqlx::query("SELECT count(*) AS n FROM unmapped_events WHERE schema = $1")
-                .bind(&env.schema)
+                .bind(&schema)
                 .fetch_one(pool)
                 .await?
                 .get("n");
-            common::kafka::publish(producer, &topics.events_unmapped, &env.schema, &env).await?;
+            common::kafka::publish(producer, &topics.events_unmapped, &schema, &env).await?;
             let ui = UiEvent {
                 alert_id: None,
                 kind: UiEventKind::Unmapped,
-                payload: json!({"schema": env.schema, "count": count}),
+                payload: json!({"schema": schema, "count": count}),
                 at: chrono::Utc::now(),
             };
             common::kafka::publish(producer, &topics.ui_events, "unmapped", &ui).await?;
@@ -139,15 +161,22 @@ pub async fn replay_unmapped_to(pool: &PgPool, producer: &FutureProducer, store:
         .map(|r| r.get("schema"))
         .collect();
     let mapped = store.load();
+    let mut remaining = MAX_REPLAY_ROWS_PER_TRIGGER;
     for schema in schemas.into_iter().filter(|s| mapped.contains_key(s)) {
+        if remaining == 0 {
+            tracing::warn!(limit = MAX_REPLAY_ROWS_PER_TRIGGER, "replay_unmapped reached per-trigger row cap, deferring remaining rows");
+            break;
+        }
         let mut total = 0usize;
-        loop {
+        while remaining > 0 {
+            let batch_limit = remaining.min(REPLAY_BATCH_SIZE) as i64;
             let mut tx = pool.begin().await?;
             let rows = common::db::sqlx::query(
                 "SELECT event_id, envelope FROM unmapped_events WHERE schema = $1
-                 ORDER BY received_at LIMIT 500 FOR UPDATE SKIP LOCKED",
+                 ORDER BY received_at LIMIT $2 FOR UPDATE SKIP LOCKED",
             )
             .bind(&schema)
+            .bind(batch_limit)
             .fetch_all(&mut *tx)
             .await?;
             if rows.is_empty() {
@@ -166,6 +195,7 @@ pub async fn replay_unmapped_to(pool: &PgPool, producer: &FutureProducer, store:
                 .await?;
             tx.commit().await?;
             total += ids.len();
+            remaining = remaining.saturating_sub(ids.len());
         }
         if total > 0 {
             tracing::info!(%schema, total, "replayed unmapped events");

@@ -1,5 +1,6 @@
-// Ustawienia sesji UI: wybrany backend (mock / prawdziwy) i tożsamość („działam jako”).
-// Trzymane w localStorage – to wygoda per przeglądarka; bez niego UI działa na wartościach domyślnych.
+// Ustawienia sesji UI: wybrany backend (mock / prawdziwy) oraz uwierzytelniona tożsamość operatora.
+// Tożsamość operatora i token sesyjny NIE są zapisywane w localStorage – żyją wyłącznie w pamięci karty
+// i są weryfikowane po stronie serwera przez POST /auth/login oraz unieważniane przez POST /auth/logout.
 import { useSyncExternalStore } from "react";
 
 export type Backend = "mock" | "api";
@@ -10,7 +11,7 @@ export const BACKEND_URLS: Record<Backend, string> = {
 };
 
 const BACKEND_KEY = "alerting.backend";
-const PERSON_KEY = "alerting.personId";
+const LEGACY_PERSON_KEY = "alerting.personId";
 
 function read(key: string): string | null {
   try {
@@ -25,9 +26,12 @@ function write(key: string, value: string | null) {
     if (value === null) localStorage.removeItem(key);
     else localStorage.setItem(key, value);
   } catch {
-    // brak localStorage (tryb prywatny) – ustawienie żyje tylko do przeładowania
+    // brak localStorage (tryb prywatny)
   }
 }
+
+// Usuń ewentualny stary klucz personId z localStorage po poprzednich wersjach.
+write(LEGACY_PERSON_KEY, null);
 
 function isBackend(v: unknown): v is Backend {
   return v === "mock" || v === "api";
@@ -51,19 +55,68 @@ export function switchBackend(next: Backend) {
   window.location.reload();
 }
 
-// --- tożsamość: mały store obserwowany przez useSyncExternalStore
+// --- uwierzytelniona sesja operatora (wyłącznie w pamięci karty) ---
 
-let personId: string | null = read(PERSON_KEY);
+let personId: string | null = null;
+let sessionToken: string | null = null;
 const listeners = new Set<() => void>();
+
+function notify() {
+  listeners.forEach((l) => l());
+}
 
 export function getPersonId(): string | null {
   return personId;
 }
 
+export function getSessionToken(): string | null {
+  return sessionToken;
+}
+
 export function setPersonId(id: string | null) {
   personId = id;
-  write(PERSON_KEY, id);
-  listeners.forEach((l) => l());
+  if (id === null) sessionToken = null;
+  notify();
+}
+
+export async function loginAs(id: string, token?: string): Promise<void> {
+  if (backend === "mock") {
+    personId = id;
+    sessionToken = null;
+    notify();
+    return;
+  }
+  const cred = token ?? import.meta.env.VITE_API_TOKEN ?? "dev-token";
+  const res = await fetch(`${API_URL}/auth/login`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ person_id: id, token: cred }),
+  });
+  if (!res.ok) {
+    throw new Error(`Logowanie nie powiodło się (${res.status})`);
+  }
+  const data = (await res.json()) as { person_id: string; session_token?: string };
+  personId = data.person_id;
+  sessionToken = data.session_token ?? null;
+  notify();
+}
+
+export async function logout(): Promise<void> {
+  const tok = sessionToken;
+  personId = null;
+  sessionToken = null;
+  notify();
+  if (backend === "mock") return;
+  try {
+    await fetch(`${API_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+    });
+  } catch {
+    // sesja po stronie klienta już wyczyszczona
+  }
 }
 
 function subscribe(listener: () => void) {

@@ -6,7 +6,7 @@ use std::time::Duration;
 /// Interwał pollingu plików konfiguracji (bind-mount Dockera na macOS nie przekazuje zdarzeń systemu plików).
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Zwraca posortowaną listę plików `.yaml`/`.yml` w podanym katalogu.
+/// Zwraca posortowaną listę plików `.yaml`/`.yml` w podanym katalogu (pomija dowiązania symboliczne).
 pub fn yaml_files(dir: &Path) -> Vec<PathBuf> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return vec![];
@@ -17,7 +17,9 @@ pub fn yaml_files(dir: &Path) -> Vec<PathBuf> {
             matches!(
                 p.extension().and_then(|e| e.to_str()),
                 Some("yaml" | "yml")
-            )
+            ) && std::fs::symlink_metadata(p)
+                .map(|m| !m.file_type().is_symlink() && m.is_file())
+                .unwrap_or(false)
         })
         .collect();
     files.sort();

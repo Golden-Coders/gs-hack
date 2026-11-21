@@ -23,7 +23,7 @@ use runbooks::registry::Registry;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::error::{db_err, err, parse_uuid, require_person_id, ApiResult};
+use crate::error::{db_err, err, parse_uuid, ApiResult};
 use crate::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -326,11 +326,12 @@ fn command_allowed(kind: &RunbookCommandKind, status: &str) -> bool {
 async fn step_command(
     State(st): State<AppState>,
     Path((run_id, step_id, command)): Path<(String, String, String)>,
+    axum::Extension(auth): axum::Extension<crate::auth::AuthenticatedOperator>,
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult<StatusCode> {
     let run_id = parse_uuid(&run_id, "run_id")?;
-    let person_id = require_person_id(&headers)?;
+    let person_id = crate::auth::resolve_verified_person_id(&st, &auth, &headers).await?;
     let note = if body.is_empty() {
         None
     } else {

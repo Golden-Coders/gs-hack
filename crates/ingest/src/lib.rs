@@ -17,6 +17,64 @@ pub enum ParseError {
     Invalid(String),
 }
 
+/// Sprawdza, czy tekst YAML zawiera kotwice (`&name`) lub aliasy (`*name`) poza cytatami i komentarzami.
+fn has_yaml_anchor_or_alias(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\'' {
+                if bytes.get(i + 1) == Some(&b'\'') {
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        let prev_is_boundary = i == 0
+            || matches!(
+                bytes[i - 1],
+                b' ' | b'\t' | b'\n' | b'\r' | b':' | b',' | b'[' | b'{' | b'-' | b'?'
+            );
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'#' if i == 0 || matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'&' | b'*' if prev_is_boundary => {
+                if let Some(&next) = bytes.get(i + 1) {
+                    if !next.is_ascii_whitespace() && !matches!(next, b',' | b']' | b'}' | b'[' | b'{') {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Jedno miejsce parsowania formatów; zwraca payload gotowy do wysłania w kopercie.
 /// `json` – dowolna wartość; `yaml` – string z poprawnym YAML (zwracany bez zmian).
 pub fn parse_payload(format: &str, payload: &Value) -> Result<Value, ParseError> {
@@ -24,6 +82,12 @@ pub fn parse_payload(format: &str, payload: &Value) -> Result<Value, ParseError>
         "json" => Ok(payload.clone()),
         "yaml" => {
             let text = payload.as_str().ok_or_else(|| ParseError::Invalid("yaml payload must be a string".into()))?;
+            if text.contains('\0') {
+                return Err(ParseError::Invalid("yaml payload must not contain NUL bytes".into()));
+            }
+            if has_yaml_anchor_or_alias(text) {
+                return Err(ParseError::Invalid("yaml anchors and aliases are not allowed".into()));
+            }
             serde_yaml::from_str::<serde_yaml::Value>(text).map_err(|e| ParseError::Invalid(format!("invalid yaml: {e}")))?;
             Ok(payload.clone())
         }
@@ -93,5 +157,16 @@ mod tests {
     #[test]
     fn parse_unsupported() {
         assert_eq!(parse_payload("xml", &json!("<a/>")), Err(ParseError::Unsupported("xml".into())));
+    }
+
+    #[test]
+    fn parse_yaml_rejects_anchors_aliases_and_nul() {
+        let bomb = Value::String("a: &a [1, 2]\nb: [*a, *a]\n".into());
+        assert!(matches!(parse_payload("yaml", &bomb), Err(ParseError::Invalid(_))));
+        let nul = Value::String("a: 1\0\n".into());
+        assert!(matches!(parse_payload("yaml", &nul), Err(ParseError::Invalid(_))));
+        // Quoted & and * remain valid YAML strings.
+        let quoted = Value::String("msg: \"R&D *ok*\"\nnote: 'a &b *c'\n".into());
+        assert_eq!(parse_payload("yaml", &quoted), Ok(quoted));
     }
 }

@@ -14,10 +14,17 @@ async fn main() -> anyhow::Result<()> {
     let ctx = Arc::new(sources::Ctx { brokers: config.kafka_brokers.clone(), pool, producer: producer.clone() });
     let scanner = tokio::spawn(sources::run_scanner(ctx, format!("{}/sources", config.config_dir)));
 
+    let ingest_token = std::env::var("INGEST_TOKEN").ok().filter(|t| !t.is_empty());
+    if ingest_token.is_some() {
+        tracing::info!("ingest bearer token authentication enabled");
+    }
+
     let port = common::Config::port("INGEST", 8081);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, "ingest listening");
-    axum::serve(listener, http::app(http::AppState { producer })).with_graceful_shutdown(common::shutdown_signal()).await?;
+    axum::serve(listener, http::app_with_token(http::AppState { producer }, ingest_token))
+        .with_graceful_shutdown(common::shutdown_signal())
+        .await?;
     scanner.abort();
     Ok(())
 }

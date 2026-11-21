@@ -33,15 +33,112 @@ fn parse_path(p: &str) -> Result<JsonPath> {
     JsonPath::parse(p).with_context(|| format!("invalid JSONPath `{p}`"))
 }
 
+/// Sprawdza, czy tekst YAML zawiera kotwice (`&name`) lub aliasy (`*name`) poza cytatami i komentarzami.
+fn has_yaml_anchor_or_alias(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_single {
+            if b == b'\'' {
+                if bytes.get(i + 1) == Some(&b'\'') {
+                    i += 2;
+                    continue;
+                }
+                in_single = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == b'"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        let prev_is_boundary = i == 0
+            || matches!(
+                bytes[i - 1],
+                b' ' | b'\t' | b'\n' | b'\r' | b':' | b',' | b'[' | b'{' | b'-' | b'?'
+            );
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'#' if i == 0 || matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'&' | b'*' if prev_is_boundary => {
+                if let Some(&next) = bytes.get(i + 1) {
+                    if !next.is_ascii_whitespace() && !matches!(next, b',' | b']' | b'}' | b'[' | b'{') {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Parsuje payload koperty według jej `format`: `json` bez zmian, `yaml` (string) -> wartość JSON.
 pub fn parse_payload(format: &str, payload: &Value) -> Result<Value> {
     match format {
         formats::JSON => Ok(payload.clone()),
         formats::YAML => {
             let text = payload.as_str().context("yaml payload must be a string")?;
+            if text.contains('\0') {
+                bail!("yaml payload must not contain NUL bytes");
+            }
+            if has_yaml_anchor_or_alias(text) {
+                bail!("yaml anchors and aliases are not allowed");
+            }
             serde_yaml::from_str::<Value>(text).context("invalid yaml payload")
         }
         other => bail!("unsupported format `{other}`"),
+    }
+}
+
+/// Usuwa bajty NUL (`\0`) ze stringa (Postgres TEXT/JSONB nie akceptuje `\u0000`).
+pub(crate) fn strip_nuls_str(s: &mut String) {
+    if s.contains('\0') {
+        *s = s.replace('\0', "");
+    }
+}
+
+/// Rekurencyjnie usuwa bajty NUL (`\0`) ze wszystkich kluczy i wartości stringowych w JSON.
+pub(crate) fn strip_nuls_value(v: &mut Value) {
+    match v {
+        Value::String(s) => strip_nuls_str(s),
+        Value::Array(arr) => {
+            for item in arr {
+                strip_nuls_value(item);
+            }
+        }
+        Value::Object(map) => {
+            if map.keys().any(|k| k.contains('\0')) {
+                let old = std::mem::take(map);
+                for (k, mut val) in old {
+                    strip_nuls_value(&mut val);
+                    map.insert(k.replace('\0', ""), val);
+                }
+            } else {
+                for val in map.values_mut() {
+                    strip_nuls_value(val);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -66,6 +163,43 @@ fn fnv1a64(data: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// FNV-1a 128 – używany do bezpiecznego skracania bardzo długich fingerprintów (limit indeksu B-tree).
+fn fnv1a128(data: &[u8]) -> u128 {
+    let mut hash: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+    for &b in data {
+        hash ^= u128::from(b);
+        hash = hash.wrapping_mul(0x0000_0000_0100_0000_0000_0000_0000_013b);
+    }
+    hash
+}
+
+pub(crate) const MAX_FINGERPRINT_BYTES: usize = 512;
+
+/// Ogranicza długość fingerprintu do `MAX_FINGERPRINT_BYTES` (zachowując prefiks UTF-8 + 128-bitowy hash).
+pub(crate) fn bound_fingerprint(fp: String) -> String {
+    if fp.len() <= MAX_FINGERPRINT_BYTES {
+        return fp;
+    }
+    let hash = fnv1a128(fp.as_bytes());
+    let mut end = 440.min(fp.len());
+    while !fp.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}|h:{:032x}", &fp[..end], hash)
+}
+
+/// Escapuje `\` -> `\\` oraz `|` -> `\|` w segmencie fingerprintu, zapobiegając kolizjom separatora.
+fn escape_fp_part(s: &str, out: &mut String) {
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '|' => out.push_str("\\|"),
+            '\0' => {}
+            c => out.push(c),
+        }
+    }
 }
 
 fn scale(name: &str) -> Option<Severity> {
@@ -157,19 +291,37 @@ impl CompiledMapping {
             }
         };
 
-        event.fingerprint = if self.fingerprint.is_empty() {
+        let fp = if self.fingerprint.is_empty() {
             let body = serde_json::to_string(&event.raw).unwrap_or_default();
-            format!("{}|{:016x}", env.schema, fnv1a64(body.as_bytes()))
+            let mut fp = String::new();
+            escape_fp_part(&env.schema, &mut fp);
+            fp.push('|');
+            fp.push_str(&format!("{:016x}", fnv1a64(body.as_bytes())));
+            fp
         } else {
-            let mut fp = env.schema.clone();
+            let mut fp = String::new();
+            escape_fp_part(&env.schema, &mut fp);
             for p in &self.fingerprint {
                 fp.push('|');
-                fp.push_str(&as_text(first(p, &event.raw)).unwrap_or_default());
+                match as_text(first(p, &event.raw)) {
+                    Some(v) => escape_fp_part(&v, &mut fp),
+                    None => fp.push_str("\\N"),
+                }
             }
             fp
         };
+        event.fingerprint = bound_fingerprint(fp);
 
         event.resolved = self.resolved.as_ref().is_some_and(|c| c.evaluate(&ctx));
+
+        strip_nuls_str(&mut event.schema);
+        strip_nuls_str(&mut event.source);
+        strip_nuls_str(&mut event.title);
+        strip_nuls_str(&mut event.fingerprint);
+        strip_nuls_value(&mut event.raw);
+        for val in event.fields.values_mut() {
+            strip_nuls_value(val);
+        }
         event
     }
 }
@@ -349,5 +501,64 @@ mod tests {
         let mut def = seed_def("workflow.v1");
         def.fingerprint.push("not a path".into());
         assert!(CompiledMapping::compile(def, 1).is_err());
+    }
+
+    #[test]
+    fn fingerprint_escapes_delimiters_and_distinguishes_null_from_empty() {
+        let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
+        let fp = |wf: Option<&str>, step: Option<&str>, code: Option<&str>| {
+            let mut i = fixture("workflow_failed");
+            match wf {
+                Some(v) => i.payload["workflowName"] = json!(v),
+                None => {
+                    i.payload.as_object_mut().unwrap().remove("workflowName");
+                }
+            }
+            match step {
+                Some(v) => i.payload["step"] = json!(v),
+                None => {
+                    i.payload.as_object_mut().unwrap().remove("step");
+                }
+            }
+            match code {
+                Some(v) => i.payload["error"]["code"] = json!(v),
+                None => {
+                    i.payload["error"].as_object_mut().unwrap().remove("code");
+                }
+            }
+            let env = env_of(&i);
+            m.normalize(&env, env.payload.clone()).fingerprint
+        };
+
+        assert_ne!(fp(Some("A|B"), Some("C"), Some("D")), fp(Some("A"), Some("B|C"), Some("D")));
+        assert_ne!(fp(Some(""), Some("C"), Some("D")), fp(None, Some("C"), Some("D")));
+        assert_ne!(fp(Some("\\N"), Some("C"), Some("D")), fp(None, Some("C"), Some("D")));
+    }
+
+    #[test]
+    fn fingerprint_length_is_bounded_and_nuls_are_stripped() {
+        let m = CompiledMapping::compile(seed_def("workflow.v1"), 1).unwrap();
+        let mut i = fixture("workflow_failed");
+        i.payload["workflowName"] = json!("a".repeat(1000));
+        i.payload["error"]["message"] = json!("bad\0msg");
+        let env = env_of(&i);
+        let ev1 = m.normalize(&env, env.payload.clone());
+        assert!(ev1.fingerprint.len() <= MAX_FINGERPRINT_BYTES);
+        assert_eq!(ev1.title, "badmsg");
+        assert!(!ev1.raw["error"]["message"].as_str().unwrap().contains('\0'));
+
+        // Different tail beyond 512 bytes must still produce distinct bounded fingerprints.
+        i.payload["workflowName"] = json!(format!("{}b", "a".repeat(999)));
+        let env2 = env_of(&i);
+        let ev2 = m.normalize(&env2, env2.payload.clone());
+        assert!(ev2.fingerprint.len() <= MAX_FINGERPRINT_BYTES);
+        assert_ne!(ev1.fingerprint, ev2.fingerprint);
+    }
+
+    #[test]
+    fn yaml_payload_rejects_anchors_aliases_and_nul() {
+        assert!(parse_payload("yaml", &json!("a: &a [1, 2]\nb: [*a, *a]\n")).is_err());
+        assert!(parse_payload("yaml", &json!("a: 1\0\n")).is_err());
+        assert!(parse_payload("yaml", &json!("msg: \"R&D *ok*\"\n")).is_ok());
     }
 }

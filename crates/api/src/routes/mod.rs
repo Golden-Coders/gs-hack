@@ -8,7 +8,7 @@ mod people;
 mod rules;
 mod runbooks;
 
-use std::path::{Path as FsPath, PathBuf};
+use std::path::{Component, Path as FsPath, PathBuf};
 
 use axum::Router;
 
@@ -25,19 +25,38 @@ pub fn router() -> Router<AppState> {
         .merge(actions::router())
 }
 
-/// Resolves a config path whether the binary is started from the repo root or `crates/api`.
-pub(crate) fn resolve_config_path(config_dir: &str, rel: &str) -> PathBuf {
-    let candidates = [
-        FsPath::new(config_dir).join(rel),
-        FsPath::new("config").join(rel),
-        FsPath::new("../../config").join(rel),
+/// Resolves a relative config path safely inside the config directory whether the binary is
+/// started from the repo root or `crates/api`. Rejects path traversal and non-relative paths.
+pub(crate) fn resolve_config_path(config_dir: &str, rel: &str) -> Option<PathBuf> {
+    if rel.is_empty() || rel.contains('\0') {
+        return None;
+    }
+    let rel_path = FsPath::new(rel);
+    if rel_path.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+        return None;
+    }
+
+    let bases = [
+        FsPath::new(config_dir),
+        FsPath::new("config"),
+        FsPath::new("../../config"),
     ];
-    for c in &candidates {
-        if c.exists() {
-            return c.clone();
+    for base in bases {
+        let candidate = base.join(rel_path);
+        if candidate.exists() {
+            let Ok(canon_base) = std::fs::canonicalize(base) else {
+                continue;
+            };
+            let Ok(canon_cand) = std::fs::canonicalize(&candidate) else {
+                continue;
+            };
+            if canon_cand.starts_with(&canon_base) {
+                return Some(canon_cand);
+            }
+            return None;
         }
     }
-    candidates[0].clone()
+    Some(FsPath::new(config_dir).join(rel_path))
 }
 
 #[cfg(test)]

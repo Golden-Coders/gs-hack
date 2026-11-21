@@ -18,6 +18,29 @@ use tokio::sync::{mpsc, Semaphore};
 /// Domyślna współbieżność przetwarzania `deliveries.requested` (konfigurowalna przez `SENDER_CONCURRENCY`).
 pub const DEFAULT_SENDER_CONCURRENCY: usize = 32;
 
+/// Maksymalny czas oczekiwania konsumenta `sender-retry` na `not_before`, aby sfałszowany
+/// znacznik czasu w dalekiej przyszłości nie zablokował kolejki retry.
+pub const MAX_RETRY_WAIT: Duration = Duration::from_secs(300);
+
+fn compute_retry_wait(not_before: chrono::DateTime<Utc>, now: chrono::DateTime<Utc>) -> Duration {
+    if not_before <= now {
+        return Duration::ZERO;
+    }
+    let raw_wait = (not_before - now).to_std().unwrap_or(MAX_RETRY_WAIT);
+    if raw_wait > MAX_RETRY_WAIT {
+        tracing::warn!(
+            %not_before,
+            %now,
+            raw_wait_secs = raw_wait.as_secs(),
+            max_wait_secs = MAX_RETRY_WAIT.as_secs(),
+            "clamping excessive retry not_before wait duration"
+        );
+        MAX_RETRY_WAIT
+    } else {
+        raw_wait
+    }
+}
+
 /// Śledzi offsety w locie per partycja i wyznacza najwyższy ciągły offset gotowy do commitu.
 /// Gwarantuje commitowanie ściśle w kolejności (bez przeskakiwania nieukończonych wiadomości — at-least-once).
 #[derive(Debug, Default)]
@@ -103,7 +126,7 @@ pub async fn run_sender(brokers: String, engine: SenderEngine, mut shutdown: Shu
     );
 
     let sem = Arc::new(Semaphore::new(concurrency));
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(i32, i64, bool)>();
+    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(i32, i64)>();
     let mut tracker = OffsetTracker::default();
 
     loop {
@@ -115,23 +138,20 @@ pub async fn run_sender(brokers: String, engine: SenderEngine, mut shutdown: Shu
                     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
                     while tracker.in_flight() > 0 {
                         match tokio::time::timeout_at(deadline, done_rx.recv()).await {
-                            Ok(Some((partition, offset, true))) => {
+                            Ok(Some((partition, offset))) => {
                                 if let Some(off) = tracker.mark_done(partition, offset) {
                                     commit_partition_offset(&consumer, topics::DELIVERIES_REQUESTED, partition, off);
                                 }
                             }
-                            Ok(Some(_)) => {}
                             Ok(None) | Err(_) => break,
                         }
                     }
                     return Ok(());
                 }
             }
-            Some((partition, offset, ok)) = done_rx.recv() => {
-                if ok {
-                    if let Some(off) = tracker.mark_done(partition, offset) {
-                        commit_partition_offset(&consumer, topics::DELIVERIES_REQUESTED, partition, off);
-                    }
+            Some((partition, offset)) = done_rx.recv() => {
+                if let Some(off) = tracker.mark_done(partition, offset) {
+                    commit_partition_offset(&consumer, topics::DELIVERIES_REQUESTED, partition, off);
                 }
             }
             permit = sem.clone().acquire_owned() => {
@@ -146,12 +166,10 @@ pub async fn run_sender(brokers: String, engine: SenderEngine, mut shutdown: Shu
                             continue;
                         }
                     }
-                    Some((partition, offset, ok)) = done_rx.recv() => {
+                    Some((partition, offset)) = done_rx.recv() => {
                         drop(permit);
-                        if ok {
-                            if let Some(off) = tracker.mark_done(partition, offset) {
-                                commit_partition_offset(&consumer, topics::DELIVERIES_REQUESTED, partition, off);
-                            }
+                        if let Some(off) = tracker.mark_done(partition, offset) {
+                            commit_partition_offset(&consumer, topics::DELIVERIES_REQUESTED, partition, off);
                         }
                     }
                     msg_res = consumer.recv() => {
@@ -185,17 +203,20 @@ pub async fn run_sender(brokers: String, engine: SenderEngine, mut shutdown: Shu
                         let tx = done_tx.clone();
                         tokio::spawn(async move {
                             let _permit = permit;
-                            let ok = match eng.process_request(req).await {
+                            match eng.process_request(req).await {
                                 Ok(outcome) => {
                                     tracing::debug!(?outcome, partition, offset, "processed delivery request");
-                                    true
                                 }
                                 Err(e) => {
-                                    tracing::error!(error = %e, partition, offset, "failed to process delivery request; leaving offset uncommitted");
-                                    false
+                                    tracing::error!(
+                                        error = %e,
+                                        partition,
+                                        offset,
+                                        "failed to process delivery request; marking offset done to avoid wedging partition commits"
+                                    );
                                 }
-                            };
-                            let _ = tx.send((partition, offset, ok));
+                            }
+                            let _ = tx.send((partition, offset));
                         });
                     }
                 }
@@ -242,9 +263,8 @@ pub async fn run_sender_retry(brokers: String, engine: SenderEngine, mut shutdow
                 };
 
                 if let Some(not_before) = req.not_before {
-                    let now = Utc::now();
-                    if not_before > now {
-                        let wait = (not_before - now).to_std().unwrap_or(Duration::ZERO);
+                    let wait = compute_retry_wait(not_before, Utc::now());
+                    if !wait.is_zero() {
                         tokio::select! {
                             _ = tokio::time::sleep(wait) => {}
                             _ = shutdown.changed() => {
@@ -269,5 +289,35 @@ pub async fn run_sender_retry(brokers: String, engine: SenderEngine, mut shutdow
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_retry_wait_clamps_far_future_timestamps() {
+        let now = Utc::now();
+
+        // Past or equal timestamp -> zero wait.
+        assert_eq!(compute_retry_wait(now - chrono::Duration::seconds(10), now), Duration::ZERO);
+        assert_eq!(compute_retry_wait(now, now), Duration::ZERO);
+
+        // Normal backoff within limit -> exact duration.
+        assert_eq!(
+            compute_retry_wait(now + chrono::Duration::seconds(30), now),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            compute_retry_wait(now + chrono::Duration::seconds(300), now),
+            MAX_RETRY_WAIT
+        );
+
+        // Forged far-future timestamp -> clamped to MAX_RETRY_WAIT.
+        assert_eq!(
+            compute_retry_wait(now + chrono::Duration::days(3650), now),
+            MAX_RETRY_WAIT
+        );
     }
 }
