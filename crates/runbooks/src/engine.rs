@@ -24,7 +24,7 @@ use contracts::{
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::matching;
+use crate::{matching, notify};
 use crate::registry::Executor;
 use crate::store::Snapshot;
 
@@ -81,6 +81,7 @@ pub struct Run {
     pub alert_id: Uuid,
     pub episode: i32,
     pub kind: RunbookKind,
+    pub title: String,
     pub steps: Vec<StepDef>,
     pub context: Value,
 }
@@ -90,6 +91,8 @@ pub struct Engine {
     pub producer: FutureProducer,
     pub executor: Executor,
     pub snapshot: Arc<ArcSwap<Snapshot>>,
+    /// Baza linków do alertu w treści powiadomień `escalate`/`notify`.
+    pub public_ui_url: String,
 }
 
 impl Engine {
@@ -253,7 +256,7 @@ impl Engine {
         let snapshot = self.snapshot.load();
         let ctx = matching::alert_context(alert);
         let mut runs = Vec::new();
-        for (def, specificity) in matching::matching(&snapshot.runbooks, &ctx) {
+        for (def, specificity) in matching::matching(&snapshot.runbooks, &snapshot.rules, alert) {
             let rendered = matching::render_runbook(def, &ctx);
             runs.push(self.create_run(alert, &rendered, specificity, &ctx).await?);
         }
@@ -319,17 +322,18 @@ impl Engine {
     }
 
     pub async fn load_run(&self, run_id: Uuid) -> anyhow::Result<Option<Run>> {
-        let row: Option<(Uuid, i32, String, Value, Value)> =
-            sqlx::query_as("SELECT alert_id, episode, kind, steps, context FROM runbook_runs WHERE run_id = $1")
+        let row: Option<(Uuid, i32, String, String, Value, Value)> =
+            sqlx::query_as("SELECT alert_id, episode, kind, title, steps, context FROM runbook_runs WHERE run_id = $1")
                 .bind(run_id)
                 .fetch_optional(&self.pool)
                 .await?;
-        let Some((alert_id, episode, kind, steps, context)) = row else { return Ok(None) };
+        let Some((alert_id, episode, kind, title, steps, context)) = row else { return Ok(None) };
         Ok(Some(Run {
             run_id,
             alert_id,
             episode,
             kind: serde_json::from_value(Value::String(kind))?,
+            title,
             steps: serde_json::from_value(steps)?,
             context,
         }))
@@ -386,12 +390,17 @@ impl Engine {
     /// Wykonuje akcję kroku. Wynik/błąd to tekst do `step_runs.result` i dziennika.
     async fn execute(&self, run: &Run, step: &StepDef, attempt: i32) -> Result<String, String> {
         let name = step.action.as_deref().ok_or("krok nie ma akcji")?;
-        if matches!(name, "escalate" | "notify") {
-            // shortcut: czeka na katalog osób/zespołów i preferencje od P2 (sekcje 7–8);
-            // do tego czasu krok kończy się błędem, a operator może go pominąć albo zrobić ręcznie.
-            return Err(format!("`{name}` czeka na katalog osób i zespołów od P2"));
-        }
         let snapshot = self.snapshot.load();
+        if matches!(name, "escalate" | "notify") {
+            let notice = notify::Notice::new(name, run.alert_id, run.episode, run.run_id, &run.title, step, &run.context, &self.public_ui_url);
+            let (requests, summary) = notify::build(&notice, &step.params, &snapshot, chrono::Utc::now())?;
+            for request in &requests {
+                kafka::publish(&self.producer, topics::DELIVERIES_REQUESTED, &run.alert_id.to_string(), request)
+                    .await
+                    .map_err(|e| format!("publikacja zlecenia dostarczenia: {e}"))?;
+            }
+            return Ok(summary);
+        }
         let action = snapshot.registry.get(name).ok_or_else(|| format!("akcji `{name}` nie ma już w rejestrze"))?;
         let key = contracts::keys::step(run.run_id, &step.id, attempt as u32);
         let out = self.executor.execute(action, &step.params, &run.context, &key).await.map_err(|e| e.to_string())?;
@@ -588,7 +597,8 @@ mod tests {
             pool: pool.clone(),
             producer: kafka::producer(&config.kafka_brokers).unwrap(),
             executor: Executor::new(vec!["127.0.0.1".into()]),
-            snapshot: Arc::new(ArcSwap::from_pointee(Snapshot { registry, runbooks: vec![], unhandled: Default::default() })),
+            snapshot: Arc::new(ArcSwap::from_pointee(Snapshot { registry, ..Default::default() })),
+            public_ui_url: "http://localhost:5173".into(),
         };
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/fixtures/topics/alerts.changed.json");
         let mut alert: AlertChanged = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
@@ -644,7 +654,7 @@ mod tests {
         // Odrzucenie nie z tego stanu (krok s2 już zrobiony) jest ignorowane.
         engine.apply_command(&cmd("s2", RunbookCommandKind::Reject)).await.unwrap();
         assert_eq!(status("s2").await, "succeeded");
-        // Zatwierdzenie eskalacji: wykonanie, a do czasu katalogu osób P2 – błąd.
+        // Zatwierdzenie eskalacji: wykonanie; zespołu `x` nie ma w katalogu osób, więc krok kończy się błędem.
         engine.apply_command(&cmd("s3", RunbookCommandKind::Approve)).await.unwrap();
         engine.advance(run_id).await.unwrap();
         assert_eq!(status("s3").await, "failed");

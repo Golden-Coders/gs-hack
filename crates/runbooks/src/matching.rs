@@ -1,6 +1,6 @@
 //! Dopasowanie runbooków do alertu i podstawianie wartości (zadanie 11.3).
 
-use contracts::{AlertChanged, Condition, RunbookDef};
+use contracts::{AlertChanged, Condition, RuleDef, RunbookDef};
 use serde_json::{json, Value};
 
 /// Kontekst warunków i szablonów: `condition::event_context` + dane alertu.
@@ -26,16 +26,28 @@ pub fn specificity(c: &Condition) -> i32 {
     }
 }
 
+fn evaluates(cond: &Condition, ctx: &Value) -> bool {
+    condition::compile(cond).is_ok_and(|c| c.evaluate(ctx))
+}
+
 /// Pasujące runbooki od najbardziej szczegółowego (remis: po id, żeby kolejność była stała).
-pub fn matching<'a>(runbooks: &'a [RunbookDef], ctx: &Value) -> Vec<(&'a RunbookDef, i32)> {
+///
+/// Runbook pasuje, gdy spełniony jest jego `matches` ALBO gdy pasuje reguła z `rule_ids`
+/// (ta sama semantyka co `router::match_manual_runbooks`). Warunki liczymy na tym samym
+/// kontekście co router (`condition::event_context`), więc runbook MANUAL przy alercie
+/// to ten sam, który router dołącza do powiadomienia. Szczegółowość: liczba warunków
+/// w `matches`, a dla runbooka dopasowanego tylko przez regułę – w warunku tej reguły.
+pub fn matching<'a>(runbooks: &'a [RunbookDef], rules: &[RuleDef], alert: &AlertChanged) -> Vec<(&'a RunbookDef, i32)> {
+    let ctx = condition::event_context(&alert.event);
+    let pinned_needed = runbooks.iter().any(|rb| !rb.rule_ids.is_empty());
+    let matched_rules: Vec<&RuleDef> = if pinned_needed { rules.iter().filter(|r| evaluates(&r.condition, &ctx)).collect() } else { vec![] };
     let mut found: Vec<_> = runbooks
         .iter()
         .filter_map(|rb| {
-            // shortcut: `rule_ids` (przypięcie do reguły) nie jest jeszcze sprawdzane – czeka na
-            // tabelę reguł P2 (otwarta kwestia w CLAUDE.md); do tego czasu liczy się tylko `matches`.
-            let cond = rb.matches.as_ref()?;
-            let compiled = condition::compile(cond).ok()?;
-            compiled.evaluate(ctx).then(|| (rb, specificity(cond)))
+            if let Some(cond) = rb.matches.as_ref().filter(|c| evaluates(c, &ctx)) {
+                return Some((rb, specificity(cond)));
+            }
+            matched_rules.iter().filter(|r| rb.rule_ids.contains(&r.id)).map(|r| specificity(&r.condition)).max().map(|s| (rb, s))
         })
         .collect();
     found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.id.cmp(&b.0.id)));
@@ -96,7 +108,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "czeka na prawdziwy crate condition (P2, sekcja 6)"]
     fn specific_runbook_first_and_params_rendered() {
         let general = parse_runbook("general.yaml", "matches: {type: WORKFLOW_FAILED}\nsteps: [x]").unwrap();
         let specific = parse_runbook(
@@ -106,10 +117,31 @@ mod tests {
         .unwrap();
         let other = parse_runbook("other.yaml", "matches: {type: SOMETHING_ELSE}\nsteps: [x]").unwrap();
         let runbooks = [general, other, specific];
-        let ctx = alert_context(&alert());
-        let found = matching(&runbooks, &ctx);
+        let found = matching(&runbooks, &[], &alert());
         assert_eq!(found.iter().map(|(r, _)| r.id.as_str()).collect::<Vec<_>>(), ["specific", "general"]);
-        let rendered = render_runbook(found[0].0, &ctx);
+        let rendered = render_runbook(found[0].0, &alert_context(&alert()));
         assert_eq!(rendered.steps[0].params["workflowId"], "WF-20261023-00042");
+    }
+
+    #[test]
+    fn appendix_b_template_without_raw_prefix_is_rendered() {
+        let def = parse_runbook("r.yaml", "steps:\n  - action: retry_workflow\n    workflowId: \"{{workflowId}}\"\n").unwrap();
+        let rendered = render_runbook(&def, &alert_context(&alert()));
+        assert_eq!(rendered.steps[0].params["workflowId"], "WF-20261023-00042");
+    }
+
+    #[test]
+    fn runbook_pinned_to_matching_rule() {
+        let rule: RuleDef = serde_json::from_value(json!({
+            "id": "settlements-prod", "name": "Settlements", "condition": { "field": "raw.workflowName", "op": "eq", "value": "order-settlement" },
+            "recipients": [], "presentation": {}, "enabled": true, "version": 1
+        }))
+        .unwrap();
+        let other_rule = RuleDef { id: "pricing".into(), condition: serde_json::from_value(json!({ "field": "raw.service", "op": "eq", "value": "pricing" })).unwrap(), ..rule.clone() };
+        let pinned = parse_runbook("pinned.md", "---\nrule_ids: [settlements-prod]\n---\nCall settlements").unwrap();
+        let pinned_elsewhere = parse_runbook("elsewhere.md", "---\nrule_ids: [pricing]\n---\nCall pricing").unwrap();
+        let runbooks = [pinned, pinned_elsewhere];
+        let found = matching(&runbooks, &[rule, other_rule], &alert());
+        assert_eq!(found.iter().map(|(r, s)| (r.id.as_str(), *s)).collect::<Vec<_>>(), [("pinned", 1)]);
     }
 }
