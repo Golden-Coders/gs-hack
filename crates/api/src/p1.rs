@@ -12,7 +12,7 @@ use common::db::sqlx::{
     types::{chrono::DateTime, chrono::Utc, Json as SqlJson, Uuid},
     Row,
 };
-use contracts::{formats, topics, Actor, AlertCommand, AlertCommandKind, CanonicalEvent, Envelope, MappingDef};
+use contracts::{formats, topics, Actor, AlertCommand, AlertCommandKind, CanonicalEvent, Envelope, MappingDef, Recipient, RuleDef, Severity};
 use lifecycle::mapping::{parse_payload, CompiledMapping};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -75,25 +75,192 @@ async fn ingest_errors(State(st): State<AppState>) -> ApiResult<Json<Value>> {
 const ALERT_COLS: &str = "id, fingerprint, state, severity, title, schema, count::bigint AS count, episode::int AS episode, first_seen, last_seen, \
                           last_event, acked_by, resolved_by";
 
-/// shortcut: rule_ids/teams/color/prezentacja wymagają reguł P2 (tabela rules + condition); uzupełnić przy integracji 18.x
-fn summary(r: &sqlx::postgres::PgRow) -> serde_json::Map<String, Value> {
+struct CompiledRule {
+    def: RuleDef,
+    condition: condition::Compiled,
+    teams: Vec<String>,
+}
+
+impl CompiledRule {
+    fn from_def(def: RuleDef) -> Option<Self> {
+        if !def.enabled {
+            return None;
+        }
+        let condition = condition::compile(&def.condition).ok()?;
+        let mut teams: Vec<String> = def.team.iter().cloned().collect();
+        for r in &def.recipients {
+            if let Recipient::Team(t) = r {
+                if !teams.contains(t) {
+                    teams.push(t.clone());
+                }
+            }
+        }
+        Some(Self { def, condition, teams })
+    }
+}
+
+async fn load_enabled_rules(db: &sqlx::PgPool) -> Vec<CompiledRule> {
+    match sqlx::query("SELECT def, enabled FROM rules WHERE enabled = TRUE ORDER BY id")
+        .fetch_all(db)
+        .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .filter_map(|row| {
+                let mut def: RuleDef = serde_json::from_value(row.get("def")).ok()?;
+                def.enabled = row.get("enabled");
+                CompiledRule::from_def(def)
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "p1: loading rules failed, returning unenriched alerts");
+            Vec::new()
+        }
+    }
+}
+
+fn severity_to_str(s: Severity) -> &'static str {
+    match s {
+        Severity::Info => "info",
+        Severity::Warning => "warning",
+        Severity::Error => "error",
+        Severity::Critical => "critical",
+    }
+}
+
+fn resolve_path<'a>(ctx: &'a Value, path: &str) -> Value {
+    let mut cur = ctx;
+    for seg in path.split('.') {
+        match cur {
+            Value::Object(map) => match map.get(seg) {
+                Some(next) => cur = next,
+                None => return Value::Null,
+            },
+            Value::Array(arr) => match seg.parse::<usize>().ok().and_then(|i| arr.get(i)) {
+                Some(next) => cur = next,
+                None => return Value::Null,
+            },
+            _ => return Value::Null,
+        }
+    }
+    cur.clone()
+}
+
+struct AlertEnrichment {
+    rule_ids: Vec<String>,
+    teams: Vec<String>,
+    severity: String,
+    title: String,
+    color: Option<String>,
+    body: String,
+    fields: Vec<Value>,
+}
+
+/// D10 (hardening 6.1): wylicza `rule_ids`, `teams`, nadpisane `severity` oraz prezentację
+/// (`title`, `body`, `fields`, `color`) na podstawie włączonych reguł P2 (tylko odczyt).
+fn enrich_alert(base_severity: &str, base_title: &str, last_event: &Value, rules: &[CompiledRule]) -> AlertEnrichment {
+    let mut out = AlertEnrichment {
+        rule_ids: Vec::new(),
+        teams: Vec::new(),
+        severity: base_severity.to_string(),
+        title: base_title.to_string(),
+        color: None,
+        body: String::new(),
+        fields: Vec::new(),
+    };
+    let Ok(event) = serde_json::from_value::<CanonicalEvent>(last_event.clone()) else {
+        return out;
+    };
+    let ctx = condition::event_context(&event);
+    let mut max_override: Option<Severity> = None;
+    let mut title_set = false;
+    let mut body_set = false;
+    let mut seen_fields: Vec<String> = Vec::new();
+
+    for rule in rules {
+        if !rule.condition.evaluate(&ctx) {
+            continue;
+        }
+        out.rule_ids.push(rule.def.id.clone());
+        for t in &rule.teams {
+            if !out.teams.contains(t) {
+                out.teams.push(t.clone());
+            }
+        }
+        if let Some(ov) = rule.def.severity_override {
+            max_override = Some(match max_override {
+                Some(cur) => cur.max(ov),
+                None => ov,
+            });
+        }
+        if !title_set {
+            if let Some(tpl) = rule.def.presentation.title.as_deref().filter(|s| !s.trim().is_empty()) {
+                if let Ok(rendered) = condition::render_template(tpl, &ctx) {
+                    if !rendered.trim().is_empty() {
+                        out.title = rendered;
+                        title_set = true;
+                    }
+                }
+            }
+        }
+        if out.color.is_none() {
+            if let Some(c) = rule.def.presentation.color.as_deref().filter(|s| !s.trim().is_empty()) {
+                out.color = Some(c.to_string());
+            }
+        }
+        if !body_set {
+            if let Some(tpl) = rule.def.presentation.body.as_deref().filter(|s| !s.trim().is_empty()) {
+                if let Ok(rendered) = condition::render_template(tpl, &ctx) {
+                    out.body = rendered;
+                    body_set = true;
+                }
+            }
+        }
+        for path in &rule.def.presentation.fields {
+            if seen_fields.contains(path) {
+                continue;
+            }
+            seen_fields.push(path.clone());
+            let label = path.strip_prefix("raw.").unwrap_or(path);
+            let value = resolve_path(&ctx, path);
+            let highlight = rule.def.presentation.highlight.get(path).cloned();
+            out.fields.push(json!({
+                "path": path,
+                "label": label,
+                "value": value,
+                "highlight": highlight,
+            }));
+        }
+    }
+
+    if let Some(ov) = max_override {
+        out.severity = severity_to_str(ov).to_string();
+    }
+    out
+}
+
+fn summary(r: &sqlx::postgres::PgRow, rules: &[CompiledRule]) -> (serde_json::Map<String, Value>, AlertEnrichment) {
+    let base_sev = r.get::<String, _>("severity");
+    let base_title = r.get::<String, _>("title");
+    let last_event = opt_json(r, "last_event");
+    let enriched = enrich_alert(&base_sev, &base_title, &last_event, rules);
     let v = json!({
         "id": r.get::<Uuid, _>("id"),
         "fingerprint": r.get::<String, _>("fingerprint"),
         "state": r.get::<String, _>("state"),
-        "severity": r.get::<String, _>("severity"),
-        "title": r.get::<String, _>("title"),
+        "severity": enriched.severity,
+        "title": enriched.title,
         "schema": r.get::<String, _>("schema"),
         "count": r.get::<i64, _>("count"),
         "episode": r.get::<i32, _>("episode"),
         "first_seen": r.get::<DateTime<Utc>, _>("first_seen"),
         "last_seen": r.get::<DateTime<Utc>, _>("last_seen"),
-        "rule_ids": [],
-        "teams": [],
-        "color": null,
+        "rule_ids": enriched.rule_ids,
+        "teams": enriched.teams,
+        "color": enriched.color,
     });
     match v {
-        Value::Object(m) => m,
+        Value::Object(m) => (m, enriched),
         _ => unreachable!(),
     }
 }
@@ -103,25 +270,53 @@ struct AlertsQuery {
     state: Option<String>,
     since: Option<DateTime<Utc>>,
     limit: Option<i64>,
-    /// Akceptowany, ale ignorowany (patrz `summary`).
-    #[allow(dead_code)]
     team: Option<String>,
 }
 
 async fn list_alerts(State(st): State<AppState>, Query(q): Query<AlertsQuery>) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
-    let sql = format!(
-        "SELECT {ALERT_COLS} FROM alerts WHERE ($1::text IS NULL OR state = $1) \
-         AND ($2::timestamptz IS NULL OR updated_at > $2) ORDER BY updated_at DESC LIMIT $3"
-    );
-    let rows = sqlx::query(&sql)
-        .bind(q.state)
-        .bind(q.since)
-        .bind(limit)
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
-    Ok(Json(Value::Array(rows.iter().map(|r| Value::Object(summary(r))).collect())))
+    let team_filter = q.team.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let rules = load_enabled_rules(&st.db).await;
+
+    let rows = if team_filter.is_some() {
+        let sql = format!(
+            "SELECT {ALERT_COLS} FROM alerts WHERE ($1::text IS NULL OR state = $1) \
+             AND ($2::timestamptz IS NULL OR updated_at > $2) ORDER BY updated_at DESC"
+        );
+        sqlx::query(&sql)
+            .bind(q.state)
+            .bind(q.since)
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?
+    } else {
+        let sql = format!(
+            "SELECT {ALERT_COLS} FROM alerts WHERE ($1::text IS NULL OR state = $1) \
+             AND ($2::timestamptz IS NULL OR updated_at > $2) ORDER BY updated_at DESC LIMIT $3"
+        );
+        sqlx::query(&sql)
+            .bind(q.state)
+            .bind(q.since)
+            .bind(limit)
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?
+    };
+
+    let mut out = Vec::with_capacity(rows.len().min(limit as usize));
+    for r in &rows {
+        let (m, enriched) = summary(r, &rules);
+        if let Some(team) = team_filter {
+            if !enriched.teams.iter().any(|t| t == team) {
+                continue;
+            }
+        }
+        out.push(Value::Object(m));
+        if out.len() >= limit as usize {
+            break;
+        }
+    }
+    Ok(Json(Value::Array(out)))
 }
 
 async fn fetch_alert(st: &AppState, id: Uuid) -> ApiResult<sqlx::postgres::PgRow> {
@@ -135,9 +330,10 @@ async fn fetch_alert(st: &AppState, id: Uuid) -> ApiResult<sqlx::postgres::PgRow
 
 async fn get_alert(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let r = fetch_alert(&st, parse_id(&id)?).await?;
-    let mut m = summary(&r);
-    m.insert("body".into(), json!(""));
-    m.insert("fields".into(), json!([]));
+    let rules = load_enabled_rules(&st.db).await;
+    let (mut m, enriched) = summary(&r, &rules);
+    m.insert("body".into(), json!(enriched.body));
+    m.insert("fields".into(), Value::Array(enriched.fields));
     m.insert("event".into(), opt_json(&r, "last_event"));
     m.insert("acked_by".into(), opt_json(&r, "acked_by"));
     m.insert("resolved_by".into(), opt_json(&r, "resolved_by"));
@@ -731,5 +927,130 @@ mod tests {
             .await;
         assert_ne!(st, 401);
         assert!(head.contains("access-control-allow-origin"), "{head}");
+    }
+
+    #[test]
+    fn unit_enrich_alert_settlements_presentation_and_override() {
+        let rule: RuleDef = serde_json::from_str(include_str!("../../contracts/fixtures/config/rule.settlements.json")).unwrap();
+        let compiled = CompiledRule::from_def(rule).unwrap();
+        let alert: contracts::AlertChanged =
+            serde_json::from_str(include_str!("../../contracts/fixtures/topics/alerts.changed.json")).unwrap();
+        let last_event = serde_json::to_value(&alert.event).unwrap();
+
+        let e = enrich_alert("error", &alert.event.title, &last_event, &[compiled]);
+        assert_eq!(e.rule_ids, vec!["settlements-prod"]);
+        assert_eq!(e.teams, vec!["settlements"]);
+        assert_eq!(e.severity, "critical");
+        assert_eq!(e.title, "WORKFLOW_FAILED order-settlement");
+        assert_eq!(e.color.as_deref(), Some("red"));
+        assert_eq!(e.body, "Step validate-counterparty failed: Counterparty service did not respond in 5000 ms");
+        assert_eq!(e.fields.len(), 3);
+        assert_eq!(e.fields[0]["path"], "raw.workflowId");
+        assert_eq!(e.fields[0]["label"], "workflowId");
+        assert_eq!(e.fields[0]["value"], "WF-20261023-00042");
+        assert_eq!(e.fields[0]["highlight"], Value::Null);
+        assert_eq!(e.fields[1]["path"], "raw.step");
+        assert_eq!(e.fields[1]["highlight"], "red");
+        assert_eq!(e.fields[2]["path"], "raw.error.message");
+        assert_eq!(e.fields[2]["highlight"], "red");
+    }
+
+    #[test]
+    fn unit_enrich_alert_unmatched_and_non_canonical_fallback() {
+        let rule: RuleDef = serde_json::from_str(include_str!("../../contracts/fixtures/config/rule.rates.json")).unwrap();
+        let compiled = CompiledRule::from_def(rule).unwrap();
+        let alert: contracts::AlertChanged =
+            serde_json::from_str(include_str!("../../contracts/fixtures/topics/alerts.changed.json")).unwrap();
+        let last_event = serde_json::to_value(&alert.event).unwrap();
+
+        let e = enrich_alert("error", "base-title", &last_event, std::slice::from_ref(&compiled));
+        assert!(e.rule_ids.is_empty());
+        assert!(e.teams.is_empty());
+        assert_eq!(e.severity, "error");
+        assert_eq!(e.title, "base-title");
+        assert!(e.color.is_none());
+
+        // Niepełny JSON (jak w starszych wierszach testowych) nie psuje odpowiedzi.
+        let e2 = enrich_alert("warning", "tytul", &json!({"title": "tytul"}), &[compiled]);
+        assert!(e2.rule_ids.is_empty());
+        assert_eq!(e2.severity, "warning");
+        assert_eq!(e2.title, "tytul");
+    }
+
+    #[tokio::test]
+    async fn list_alerts_team_filter_and_presentation() {
+        let s = server().await;
+        let rule_id = uniq("d10-rule");
+        let team_id = uniq("d10-team");
+        let fp_match = uniq("d10-fp-match");
+        let fp_other = uniq("d10-fp-other");
+
+        let mut alert_changed: contracts::AlertChanged =
+            serde_json::from_str(include_str!("../../contracts/fixtures/topics/alerts.changed.json")).unwrap();
+        alert_changed.event.fingerprint = fp_match.clone();
+        let ev_match = serde_json::to_value(&alert_changed.event).unwrap();
+
+        let rule: RuleDef = serde_json::from_value(json!({
+            "id": rule_id,
+            "name": "D10 test rule",
+            "team": team_id,
+            "condition": { "field": "fingerprint", "op": "eq", "value": fp_match },
+            "recipients": [{ "type": "team", "id": team_id }],
+            "severity_override": "critical",
+            "presentation": {
+                "title": "D10 {{raw.workflowName}}",
+                "body": "Step {{raw.step}}",
+                "fields": ["raw.step"],
+                "highlight": { "raw.step": "red" },
+                "color": "red"
+            },
+            "enabled": true,
+            "version": 1
+        }))
+        .unwrap();
+
+        sqlx::query("INSERT INTO rules (id, name, team, def, enabled, version, updated_at) VALUES ($1, $2, $3, $4, TRUE, 1, now())")
+            .bind(&rule.id)
+            .bind(&rule.name)
+            .bind(&rule.team)
+            .bind(SqlJson(serde_json::to_value(&rule).unwrap()))
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+
+        let id_match = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO alerts (id, fingerprint, state, severity, title, schema, episode, count, first_seen, last_seen, last_event, updated_at) \
+             VALUES ($1, $2, 'open', 'error', 'orig', 'workflow.v1', 1, 1, now(), now(), $3, now())",
+        )
+        .bind(id_match)
+        .bind(&fp_match)
+        .bind(SqlJson(ev_match))
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+        s.alerts.lock().unwrap().push(id_match);
+        let id_other = s.insert_alert(&fp_other, "open", 0).await;
+
+        let (st, list) = s.http("GET", &format!("/alerts?team={team_id}"), &[], None).await;
+        assert_eq!(st, 200);
+        let arr = list.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], id_match.to_string());
+        assert_eq!(arr[0]["severity"], "critical");
+        assert_eq!(arr[0]["title"], "D10 order-settlement");
+        assert_eq!(arr[0]["color"], "red");
+        assert_eq!(arr[0]["rule_ids"], json!([rule_id]));
+        assert_eq!(arr[0]["teams"], json!([team_id]));
+        assert_ne!(arr[0]["id"], id_other.to_string());
+
+        let (st, detail) = s.http("GET", &format!("/alerts/{id_match}"), &[], None).await;
+        assert_eq!(st, 200);
+        assert_eq!(detail["body"], "Step validate-counterparty");
+        assert_eq!(detail["fields"][0]["path"], "raw.step");
+        assert_eq!(detail["fields"][0]["highlight"], "red");
+
+        sqlx::query("DELETE FROM rules WHERE id = $1").bind(&rule.id).execute(&s.st.db).await.unwrap();
+        s.cleanup().await;
     }
 }
