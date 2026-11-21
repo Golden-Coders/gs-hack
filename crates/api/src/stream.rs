@@ -1,27 +1,20 @@
-//! SSE `/stream` (design D13).
+//! SSE `/stream` endpoint.
 //!
-//! Konsument Kafki `alerts.changed` i `ui.events` (grupa `api-sse-<instancja>`,
-//! czyli każda instancja api dostaje wszystko, start od końca topiku, bez
-//! commitowania offsetów – po restarcie UI dociąga zmiany przez
-//! `GET /alerts?since=`) rozsyła zdarzenia przez `tokio::sync::broadcast` do
-//! podłączonych klientów. Format zgodny z `contracts/openapi.yaml`:
+//! Consumes Kafka topics `alerts.changed` and `ui.events` (using a per-instance
+//! group `api-sse-<uuid>`, starting from `latest` without committing offsets;
+//! after restart UI catches up via `GET /alerts?since=`) and fans events out via
+//! `tokio::sync::broadcast`. Format matches `contracts/openapi.yaml`:
 //! `event: hello` (`data: {}`), `event: alert_changed` (`AlertChanged`),
 //! `event: ui_event` (`UiEvent`).
 //!
-//! Konsument startuje leniwie przy pierwszym kliencie (`main.rs`/`state.rs`
-//! są zamrożone). Wolny klient (`RecvError::Lagged`) pomija zaległe zdarzenia
-//! i nie blokuje pozostałych.
+//! The consumer starts lazily on the first client. Slow clients (`RecvError::Lagged`)
+//! skip missed events without blocking others.
 //!
-//! Filtr `?team=<id>`: alert należy do zespołu, gdy pasuje do włączonej reguły,
-//! której `team` to ten zespół albo której odbiorcą jest ten zespół (warunki
-//! przez crate `condition`, reguły z tabeli `rules` P2 – tylko odczyt).
-//! `ui_event` z `alert_id` dziedziczy zespoły alertu; `ui_event` bez `alert_id`
-//! (np. `unmapped`, `config_changed`) trafia do wszystkich. `ui_event` z
-//! `alert_id`, którego nie udało się znaleźć, trafia tylko do klientów bez filtra.
-//!
-//! Zamykanie: strumień każdego klienta kończy się na Ctrl+C/SIGTERM (osobne
-//! zadanie czeka na ten sam `common::shutdown_signal`), inaczej graceful
-//! shutdown w `main.rs` (zamrożony) czekałby, aż klient sam się rozłączy.
+//! `?team=<id>` filter: an alert belongs to a team if it matches an enabled rule
+//! whose `team` or team recipient matches that team. `ui_event` with `alert_id`
+//! inherits the alert's teams; `ui_event` without `alert_id` (e.g. `unmapped`,
+//! `config_changed`) goes to all clients. `ui_event` with an unknown `alert_id`
+//! goes only to unfiltered clients.
 
 use std::{
     collections::HashMap,
@@ -40,11 +33,12 @@ use common::kafka::rdkafka::{
     consumer::{Consumer, StreamConsumer},
     Message,
 };
-use contracts::{topics, AlertChanged, CanonicalEvent, Recipient, RuleDef, UiEvent};
+use contracts::{topics, AlertChanged, CanonicalEvent, UiEvent};
 use futures::{stream, Stream, StreamExt};
 use serde::Deserialize;
 use tokio::sync::{broadcast, watch};
 
+use crate::rules_eval::{load_enabled_rules, teams_for_event, CompiledRule};
 use crate::AppState;
 
 /// Pojemność bufora broadcast; klient dalej w tyle dostaje `Lagged` i pomija zaległe.
@@ -136,13 +130,13 @@ fn visible(item: &Item, team: Option<&str>) -> bool {
 /// Zdekodowana wiadomość z Kafki.
 #[derive(Debug)]
 enum Decoded {
-    Alert(AlertChanged),
+    Alert(Box<AlertChanged>),
     Ui(UiEvent),
 }
 
 fn decode(topic: &str, payload: &[u8]) -> anyhow::Result<Decoded> {
     Ok(match topic {
-        topics::ALERTS_CHANGED => Decoded::Alert(serde_json::from_slice(payload)?),
+        topics::ALERTS_CHANGED => Decoded::Alert(Box::new(serde_json::from_slice(payload)?)),
         topics::UI_EVENTS => Decoded::Ui(serde_json::from_slice(payload)?),
         other => anyhow::bail!("unexpected topic {other}"),
     })
@@ -205,47 +199,9 @@ async fn run_consumer(
     }
 }
 
-/// Reguła z zespołami, których dotyczy (`rule.team` + odbiorcy typu zespół).
-struct RuleTeams {
-    condition: condition::Compiled,
-    teams: Vec<String>,
-}
-
-impl RuleTeams {
-    fn from_def(def: &RuleDef) -> Option<Self> {
-        if !def.enabled {
-            return None;
-        }
-        let condition = condition::compile(&def.condition).ok()?;
-        let mut teams: Vec<String> = def.team.iter().cloned().collect();
-        for r in &def.recipients {
-            if let Recipient::Team(t) = r {
-                if !teams.contains(t) {
-                    teams.push(t.clone());
-                }
-            }
-        }
-        Some(Self { condition, teams })
-    }
-}
-
-/// Zespoły alertu = zespoły wszystkich pasujących reguł.
-fn teams_for_event(rules: &[RuleTeams], event: &CanonicalEvent) -> Vec<String> {
-    let ctx = condition::event_context(event);
-    let mut out: Vec<String> = Vec::new();
-    for r in rules.iter().filter(|r| r.condition.evaluate(&ctx)) {
-        for t in &r.teams {
-            if !out.contains(t) {
-                out.push(t.clone());
-            }
-        }
-    }
-    out
-}
-
 struct TeamResolver {
     db: PgPool,
-    rules: Vec<RuleTeams>,
+    rules: Vec<CompiledRule>,
     loaded_at: Option<Instant>,
     alerts: HashMap<Uuid, Vec<String>>,
 }
@@ -259,19 +215,7 @@ impl TeamResolver {
         if self.loaded_at.is_some_and(|t| t.elapsed() < RULES_TTL) {
             return;
         }
-        match sqlx::query("SELECT def, enabled FROM rules").fetch_all(&self.db).await {
-            Ok(rows) => {
-                self.rules = rows
-                    .iter()
-                    .filter_map(|row| {
-                        let mut def: RuleDef = serde_json::from_value(row.get("def")).ok()?;
-                        def.enabled = row.get("enabled");
-                        RuleTeams::from_def(&def)
-                    })
-                    .collect();
-            }
-            Err(e) => tracing::warn!(error = %e, "sse: loading rules failed, using previous"),
-        }
+        self.rules = load_enabled_rules(&self.db).await;
         self.loaded_at = Some(Instant::now());
     }
 
@@ -437,19 +381,19 @@ mod tests {
 
     #[test]
     fn teams_from_matching_rules() {
-        let rule: RuleDef = serde_json::from_value(serde_json::json!({
+        let rule: contracts::RuleDef = serde_json::from_value(serde_json::json!({
             "id": "r1", "name": "r1", "team": "settlements",
             "condition": { "field": "schema", "op": "eq", "value": "workflow.v1" },
             "recipients": [{ "type": "team", "id": "ops" }]
         }))
         .unwrap();
-        let other: RuleDef = serde_json::from_value(serde_json::json!({
+        let other: contracts::RuleDef = serde_json::from_value(serde_json::json!({
             "id": "r2", "name": "r2", "team": "rates",
             "condition": { "field": "schema", "op": "eq", "value": "nope" },
             "recipients": []
         }))
         .unwrap();
-        let rules: Vec<RuleTeams> = [rule, other].iter().filter_map(RuleTeams::from_def).collect();
+        let rules: Vec<CompiledRule> = [rule, other].into_iter().filter_map(CompiledRule::from_def).collect();
         let a: AlertChanged = serde_json::from_str(ALERT).unwrap();
         assert_eq!(teams_for_event(&rules, &a.event), vec!["settlements", "ops"]);
     }
