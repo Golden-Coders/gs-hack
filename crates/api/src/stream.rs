@@ -16,7 +16,12 @@
 //! której `team` to ten zespół albo której odbiorcą jest ten zespół (warunki
 //! przez crate `condition`, reguły z tabeli `rules` P2 – tylko odczyt).
 //! `ui_event` z `alert_id` dziedziczy zespoły alertu; `ui_event` bez `alert_id`
-//! (np. `unmapped`, `config_changed`) trafia do wszystkich.
+//! (np. `unmapped`, `config_changed`) trafia do wszystkich. `ui_event` z
+//! `alert_id`, którego nie udało się znaleźć, trafia tylko do klientów bez filtra.
+//!
+//! Zamykanie: strumień każdego klienta kończy się na Ctrl+C/SIGTERM (osobne
+//! zadanie czeka na ten sam `common::shutdown_signal`), inaczej graceful
+//! shutdown w `main.rs` (zamrożony) czekałby, aż klient sam się rozłączy.
 
 use std::{
     collections::HashMap,
@@ -38,7 +43,7 @@ use common::kafka::rdkafka::{
 use contracts::{topics, AlertChanged, CanonicalEvent, Recipient, RuleDef, UiEvent};
 use futures::{stream, Stream, StreamExt};
 use serde::Deserialize;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::AppState;
 
@@ -64,14 +69,38 @@ pub struct StreamQuery {
 }
 
 static HUB: OnceLock<broadcast::Sender<Arc<Item>>> = OnceLock::new();
+/// `true` po sygnale zamknięcia; zadanie nasłuchujące startuje przy pierwszym kliencie.
+static SHUTDOWN: OnceLock<watch::Receiver<bool>> = OnceLock::new();
+
+fn shutdown_rx() -> watch::Receiver<bool> {
+    SHUTDOWN
+        .get_or_init(|| {
+            let (tx, rx) = watch::channel(false);
+            tokio::spawn(async move {
+                common::shutdown_signal().await;
+                let _ = tx.send(true);
+            });
+            rx
+        })
+        .clone()
+}
+
+/// Kończy strumień, gdy `shutdown` przejdzie na `true` (albo nadawca zniknie).
+fn until_shutdown<S: Stream>(s: S, mut shutdown: watch::Receiver<bool>) -> impl Stream<Item = S::Item> {
+    s.take_until(async move {
+        let _ = shutdown.wait_for(|v| *v).await;
+    })
+}
 
 pub async fn sse(
     State(st): State<AppState>,
     Query(q): Query<StreamQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let shutdown = shutdown_rx();
     let rx = HUB.get_or_init(|| start(st)).subscribe();
     let hello = stream::once(async { Ok(Event::default().event("hello").data("{}")) });
-    Sse::new(hello.chain(client_stream(rx, q.team.filter(|t| !t.is_empty()))))
+    let events = hello.chain(client_stream(rx, q.team.filter(|t| !t.is_empty())));
+    Sse::new(until_shutdown(events, shutdown))
         .keep_alive(KeepAlive::new().interval(HEARTBEAT))
 }
 
@@ -253,7 +282,9 @@ impl TeamResolver {
         self.alerts.insert(id, teams);
     }
 
-    /// `None` = zdarzenie dla wszystkich (globalne albo nie udało się ustalić zespołów).
+    /// `None` = zdarzenie dla wszystkich (`ui_event` bez `alert_id`). Nieznany alert
+    /// (`ui_event` z `alert_id`, którego nie ma w bazie albo lookup się nie udał)
+    /// = pusta lista, czyli tylko klienci bez filtra `?team=`.
     async fn resolve(&mut self, d: &Decoded) -> Option<Vec<String>> {
         match d {
             Decoded::Alert(a) => {
@@ -272,8 +303,12 @@ impl TeamResolver {
                     .fetch_optional(&self.db)
                     .await
                     .ok()
-                    .flatten()?;
-                let event: CanonicalEvent = serde_json::from_value(row.get("last_event")).ok()?;
+                    .flatten();
+                let event = row.and_then(|r| serde_json::from_value::<CanonicalEvent>(r.get("last_event")).ok());
+                let Some(event) = event else {
+                    // Nie zapamiętujemy: alert może pojawić się w bazie za chwilę.
+                    return Some(Vec::new());
+                };
                 self.refresh_rules().await;
                 let teams = teams_for_event(&self.rules, &event);
                 self.remember(id, teams.clone());
@@ -367,6 +402,37 @@ mod tests {
             .unwrap();
         let out = String::from_utf8(bytes.to_vec()).unwrap();
         assert_eq!(out, "event: ui_event\ndata: 3\n\nevent: ui_event\ndata: 4\n\n");
+    }
+
+    #[tokio::test]
+    async fn stream_ends_on_shutdown() {
+        let (_hub, rx) = broadcast::channel::<Arc<Item>>(4);
+        let (stop, shutdown) = watch::channel(false);
+        // Bez sygnału strumień wisi (nadawca hub żyje).
+        let mut s = Box::pin(until_shutdown(client_stream(rx, None), shutdown));
+        assert!(tokio::time::timeout(Duration::from_millis(50), s.next()).await.is_err());
+        stop.send(true).unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(1), s.next()).await.expect("koniec po sygnale");
+        assert!(end.is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_alert_ui_event_only_for_unfiltered_clients() {
+        let db = common::db::sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(500))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let mut resolver = TeamResolver::new(db);
+        let mut u: UiEvent = serde_json::from_str(UI).unwrap();
+        u.alert_id = Some(Uuid::new_v4());
+        let teams = resolver.resolve(&Decoded::Ui(u.clone())).await;
+        assert_eq!(teams, Some(Vec::new()));
+        let it = Item { name: "ui_event", data: "x".into(), teams };
+        assert!(!visible(&it, Some("nobody")));
+        assert!(visible(&it, None));
+
+        u.alert_id = None;
+        assert_eq!(resolver.resolve(&Decoded::Ui(u)).await, None, "bez alert_id: dla wszystkich");
     }
 
     #[test]

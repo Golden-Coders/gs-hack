@@ -47,24 +47,33 @@ Ograniczenia generatora:
 
 ## Jak zebrać p50/p99
 
-Po przebiegu (system po przepływie, bez nowego ruchu, poczekać chwilę na dostarczenie):
+Po przebiegu (system po przepływie, bez nowego ruchu, poczekać chwilę na dostarczenie). Zanotuj czas
+startu przebiegu (UTC) i podaj go jako `since` – liczą się tylko dostarczenia z `received_at >= since`:
 
 ```bash
-docker compose exec -T postgres psql -U alerting -d alerting < crates/loadgen/latency.sql
+docker exec -i gs-hack-postgres-1 psql -U alerting -d alerting -v ON_ERROR_STOP=1 \
+  -v since="'2026-11-21 02:00'" < crates/loadgen/latency.sql
 ```
 
+`since` to wyrażenie SQL (stałą datę podajemy w apostrofach); bez `-v since=...` domyślnie
+`now() - interval '15 minutes'`. Bez okna liczyłyby się stare fixtures i ponowne wysyłki
+z dawnym `received_at` (na wspólnym stosie p99 wychodziło ~28 dni).
+
 Skrypt zwraca p50/p99 w ms (`delivered_at − received_at` dla `status = 'delivered'`) oraz liczbę alertów
-i sumę liczników z `alerts`. Tabela `deliveries` należy do P2; nazwy kolumn do potwierdzenia przy integracji (18.1).
+i sumę liczników z `alerts` (ta część bez okna – cała tabela).
 
 ## Jak zebrać lag konsumentów
 
 ```bash
 crates/loadgen/lag.sh                 # domyślna lista grup
 crates/loadgen/lag.sh router sender   # wybrane grupy
+REDPANDA_CONTAINER=inny-redpanda-1 crates/loadgen/lag.sh   # inna nazwa kontenera
 ```
 
-Skrypt woła `docker compose exec -T redpanda rpk group describe <grupa>` dla grup:
+Skrypt woła `docker exec gs-hack-redpanda-1 rpk group describe <grupa>` (kontener z `REDPANDA_CONTAINER`,
+działa z dowolnego katalogu) dla grup:
 `lifecycle-normalizer`, `lifecycle-dedup`, `router`, `runbooks`, `sender`, `sender-retry`, `ingest-source-trades`.
+Zwraca kod ≠ 0, gdy nie udało się opisać żadnej grupy (zły kontener, broker nie działa).
 Lag zapisujemy w trakcie przebiegu (największa wartość na grupę) i po nim (ma spaść do zera).
 
 ## Wyniki
