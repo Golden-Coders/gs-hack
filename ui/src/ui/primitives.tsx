@@ -1,5 +1,5 @@
 // Prymitywy UI wspólne dla wszystkich ekranów (bez wiedzy o domenie). Style: ui.css.
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 /** Ramka sekcji: nagłówek z akcjami, stan ładowania i błąd z ponowieniem widoczne przy samej sekcji. */
 export function Card({
@@ -9,6 +9,7 @@ export function Card({
   error,
   onRetry,
   className,
+  flush,
   children,
 }: {
   title?: ReactNode;
@@ -17,10 +18,13 @@ export function Card({
   error?: string | null;
   onRetry?: () => void;
   className?: string;
+  /** Bez dolnego marginesu – dla kart w kontenerach flex/grid z własnym `gap`. */
+  flush?: boolean;
   children?: ReactNode;
 }) {
+  const cls = ["card", flush && "card-flush", className].filter(Boolean).join(" ");
   return (
-    <section className={className ? `card ${className}` : "card"} aria-busy={loading || undefined}>
+    <section className={cls} aria-busy={loading || undefined}>
       {(title || actions || loading) && (
         <header className="card-head">
           {title && <h2>{title}</h2>}
@@ -34,15 +38,34 @@ export function Card({
   );
 }
 
-export function ErrorBox({ message, onRetry, disabled }: { message: string; onRetry?: () => void; disabled?: boolean }) {
+export function ErrorBox({
+  message,
+  onRetry,
+  disabled,
+  id,
+}: {
+  message: ReactNode;
+  onRetry?: () => void;
+  disabled?: boolean;
+  id?: string;
+}) {
   return (
-    <div className="error-box" role="alert">
+    <div className="error-box" role="alert" id={id}>
       {message}
       {onRetry && (
         <button type="button" onClick={onRetry} disabled={disabled}>
           Spróbuj ponownie
         </button>
       )}
+    </div>
+  );
+}
+
+/** Komunikat o powodzeniu (np. „Zapisano regułę”), ogłaszany czytnikom ekranu. */
+export function Notice({ children }: { children: ReactNode }) {
+  return (
+    <div className="notice" role="status">
+      {children}
     </div>
   );
 }
@@ -78,27 +101,63 @@ export function Segmented<T extends string>({
   );
 }
 
-/** Zakładki przełączające widok w obrębie sekcji. */
+/**
+ * Zakładki przełączające widok w obrębie sekcji. Strzałki/Home/End przenoszą fokus i wybór (roving tabindex);
+ * z `idPrefix` zakładki dostają `id`/`aria-controls`, a panel – `tabPanelProps(idPrefix, value)`.
+ */
 export function Tabs<T extends string>({
   tabs,
   value,
   onChange,
   label,
+  idPrefix,
 }: {
   tabs: { value: T; label: ReactNode }[];
   value: T;
   onChange: (v: T) => void;
   label: string;
+  idPrefix?: string;
 }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const i = tabs.findIndex((t) => t.value === value);
+    const next =
+      e.key === "ArrowRight" ? (i + 1) % tabs.length
+      : e.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length
+      : e.key === "Home" ? 0
+      : e.key === "End" ? tabs.length - 1
+      : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    onChange(tabs[next].value);
+    refs.current[next]?.focus();
+  }
   return (
-    <div className="tabs" role="tablist" aria-label={label}>
-      {tabs.map((t) => (
-        <button key={t.value} type="button" role="tab" aria-selected={t.value === value} onClick={() => onChange(t.value)}>
+    <div className="tabs" role="tablist" aria-label={label} onKeyDown={onKeyDown}>
+      {tabs.map((t, i) => (
+        <button
+          key={t.value}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          type="button"
+          role="tab"
+          id={idPrefix ? `${idPrefix}-tab-${t.value}` : undefined}
+          aria-controls={idPrefix ? `${idPrefix}-panel-${t.value}` : undefined}
+          aria-selected={t.value === value}
+          tabIndex={t.value === value ? 0 : -1}
+          onClick={() => onChange(t.value)}
+        >
           {t.label}
         </button>
       ))}
     </div>
   );
+}
+
+/** Atrybuty panelu powiązanego z `Tabs` o tym samym `idPrefix`. */
+export function tabPanelProps(idPrefix: string, value: string) {
+  return { role: "tabpanel", id: `${idPrefix}-panel-${value}`, "aria-labelledby": `${idPrefix}-tab-${value}`, tabIndex: 0 } as const;
 }
 
 /** Pole formularza: widoczna etykieta, podpowiedź i błąd powiązane z kontrolką przez id/aria. */
@@ -143,6 +202,8 @@ export function ConfirmInline({
   onConfirm,
   busy,
   disabled,
+  ariaLabel,
+  onAskingChange,
 }: {
   label: ReactNode;
   question: ReactNode;
@@ -150,16 +211,24 @@ export function ConfirmInline({
   onConfirm: () => void;
   busy?: boolean;
   disabled?: boolean;
+  /** Pełna nazwa akcji dla czytników, np. „Usuń mapping workflow.v1”. */
+  ariaLabel?: string;
+  /** Informuje rodzica, że trwa pytanie (np. żeby schować sąsiednie przyciski). */
+  onAskingChange?: (asking: boolean) => void;
 }) {
-  const [asking, setAsking] = useState(false);
+  const [asking, setAskingState] = useState(false);
+  const setAsking = (v: boolean) => {
+    setAskingState(v);
+    onAskingChange?.(v);
+  };
   if (!asking)
     return (
-      <button type="button" className="danger" onClick={() => setAsking(true)} disabled={disabled || busy}>
-        {label}
+      <button type="button" className="danger" aria-label={ariaLabel} onClick={() => setAsking(true)} disabled={disabled || busy}>
+        {busy ? "Trwa…" : label}
       </button>
     );
   return (
-    <span className="confirm-inline" role="group">
+    <span className="confirm-inline" role="group" aria-label={ariaLabel}>
       <span>{question}</span>
       <button
         type="button"

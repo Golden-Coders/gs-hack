@@ -11,6 +11,8 @@ export type Resource<T> = {
   reload: () => void;
   /** Ciche odświeżenie (dociąganie w tle): bez wskaźnika ładowania. */
   refresh: () => void;
+  /** Lokalna zmiana danych (aktualizacja optymistyczna); kolejne pobranie ją nadpisze. */
+  setData: (update: (data: T | null) => T | null) => void;
 };
 
 /**
@@ -55,5 +57,9 @@ export function useResource<T>(load: () => Promise<FetchResult<T>>, key = ""): R
     };
   }, [key, reload]);
 
-  return { ...state, reload, refresh };
+  const setData = useCallback((update: (data: T | null) => T | null) => {
+    setState((s) => ({ ...s, data: update(s.data) }));
+  }, []);
+
+  return { ...state, reload, refresh, setData };
 }

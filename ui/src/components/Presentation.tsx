@@ -20,7 +20,7 @@ export function PresentedFields({ fields }: { fields: Schemas["PresentedField"][
         return (
           <div
             key={f.path}
-            className={color ? "field highlighted" : "field"}
+            className={color ? "presented-field highlighted" : "presented-field"}
             style={color ? { color: color.fg, background: color.bg } : undefined}
           >
             <dt title={f.path}>{f.label}</dt>

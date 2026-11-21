@@ -56,8 +56,8 @@ main { padding: 24px 32px; min-width: 0; }
 .presentation h2 { font-size: 17px; margin: 0; }
 .presentation-body { margin: 8px 0; }
 .presented-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; margin: 8px 0 0; }
-.presented-fields .field { padding: 6px 8px; border-radius: 6px; background: #f9fafb; }
-.presented-fields .field.highlighted { font-weight: 600; }
+.presented-field { padding: 6px 8px; border-radius: 6px; background: #f9fafb; }
+.presented-field.highlighted { font-weight: 600; }
 .presented-fields dt { font-size: 11px; opacity: .7; }
 .presented-fields dd { margin: 0; word-break: break-word; }
 .markdown { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 4px 16px; margin-bottom: 12px; }
