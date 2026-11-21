@@ -148,8 +148,8 @@ Jedna kolejka zamiast dwóch strumieni: domyka otwarte zadania P1 (3.4, 5.2, 5.3
 - [ ] 19.A3 Przegląd PR #17 (P3) pod kątem routera i `rule_ids` (otwarta kwestia D10): router/sender nie zmieniają kontraktu, `deliveries.requested` z `escalate`/`notify` przechodzi przez sender; bramka: komentarz w PR + zielona bramka bazowa na gałęzi PR
 
 ### Etap B ∥ — SSE `/stream` (design D13; równolegle z A i C)
-- [ ] 19.B1 `crates/api/src/stream.rs`: konsument `alerts.changed` i `ui.events` (grupa `api-sse-<instancja>`, start od końca topiku), `tokio::sync::broadcast` do klientów, `event: alert_changed` / `event: ui_event` wg `openapi.yaml`, heartbeat; wolny klient nie blokuje innych (lagged ⇒ pominięcie); bramka: `curl -N :8080/stream` pokazuje `alert_changed` po `rpk topic produce alerts.changed < crates/contracts/fixtures/topics/alerts.changed.json` + test jednostkowy formatu zdarzeń
-- [ ] 19.B2 Filtrowanie po zespole (parametr `team` zgodnie z `openapi.yaml`, bez parametru = wszystkie); bramka: test HTTP ⇒ odblokowuje weryfikację 13.2 i 14.1 na prawdziwym backendzie
+- [x] 19.B1 `crates/api/src/stream.rs`: konsument `alerts.changed` i `ui.events` (grupa `api-sse-<instancja>`, start od końca topiku), `tokio::sync::broadcast` do klientów, `event: alert_changed` / `event: ui_event` wg `openapi.yaml`, heartbeat; wolny klient nie blokuje innych (lagged ⇒ pominięcie); bramka: `curl -N :8080/stream` pokazuje `alert_changed` po `rpk topic produce alerts.changed < crates/contracts/fixtures/topics/alerts.changed.json` + test jednostkowy formatu zdarzeń
+- [x] 19.B2 Filtrowanie po zespole (parametr `team` zgodnie z `openapi.yaml`, bez parametru = wszystkie); bramka: test HTTP ⇒ odblokowuje weryfikację 13.2 i 14.1 na prawdziwym backendzie
 
 ### Etap C — pierwszy przepływ end-to-end (po A)
 - [ ] 19.C1 Skrypt `scripts/e2e/first-flow.sh`: `docker compose up -d --build`, `POST /ingest` z fixture WORKFLOW_FAILED, czekanie (z limitem) na alert w `GET /alerts`, dostarczenie SMS w `GET /mock/outbox` i wpis w `GET /alerts/{id}/deliveries` z `received_at`/`delivered_at`; bramka: skrypt kończy się kodem 0 na czystym `docker compose down -v` ⇒ odhaczyć 18.1
