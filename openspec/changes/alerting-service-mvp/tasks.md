@@ -123,7 +123,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 ## 18. Integracja end-to-end (wszyscy)
 
 - [x] 18.1 Pierwszy przepływ: zdarzenie WORKFLOW_FAILED przez HTTP → alert → reguła Settlements → SMS (mock) i UI; weryfikacja: dostarczenie widoczne w UI z poprawnym `received_at`/`delivered_at`
-- [ ] 18.2 Wszystkie trzy zdarzenia z Appendix A dają alerty i dostarczenia zgodnie z czterema regułami z zadania; weryfikacja: test integracyjny w compose
+- [x] 18.2 Wszystkie trzy zdarzenia z Appendix A dają alerty i dostarczenia zgodnie z czterema regułami z zadania; weryfikacja: test integracyjny w compose
 - [ ] 18.3 Runbooki end-to-end: Settlements (auto-retry + eskalacja z zatwierdzeniem), payments (MANUAL w emailu), pricing (MANUAL z linkiem w SMS); weryfikacja: kroki i dziennik widoczne w UI
 - [ ] 18.4 Odporność: wyłączenie Mailpit i symulowanego SMS, restart każdej binarki w trakcie ruchu; weryfikacja: brak utraconych alertów i zdublowanych powiadomień
 - [ ] 18.5 Skalowanie: 2 instancje `lifecycle` i `sender` pod obciążeniem; weryfikacja: poprawny dedup i pomiar w `docs/LOADTEST.md`
@@ -156,8 +156,8 @@ Jedna kolejka zamiast dwóch strumieni: domyka otwarte zadania P1 (3.4, 5.2, 5.3
 - [x] 19.C2 Dopasować `crates/loadgen/latency.sql` do faktycznych kolumn `deliveries` (P2) i uruchomić go oraz `lag.sh` po C1; bramka: raport p50/p99 i lag na pustym systemie ⇒ odhaczyć 5.2
 
 ### Etap D — wszystkie schematy i reguły (po C)
-- [ ] 19.D1 `scripts/e2e/appendix-a.sh`: trzy zdarzenia z Appendix A ⇒ alerty i dostarczenia zgodne z czterema regułami (odbiorcy, kanały wg preferencji, Anna o 22:00, fallback na UI); bramka: skrypt zielony ⇒ odhaczyć 18.2
-- [ ] 19.D2 Dedup i reopen end-to-end: 500 duplikatów ⇒ 1 alert z licznikiem 500 i jedno powiadomienie na odbiorcę; resolve + nowe zdarzenie ⇒ reopen tego samego alertu i ponowne powiadomienie; bramka: krok w `appendix-a.sh`
+- [x] 19.D1 `scripts/e2e/appendix-a.sh`: trzy zdarzenia z Appendix A ⇒ alerty i dostarczenia zgodne z czterema regułami (odbiorcy, kanały wg preferencji, Anna o 22:00, fallback na UI); bramka: skrypt zielony ⇒ odhaczyć 18.2
+- [x] 19.D2 Dedup i reopen end-to-end: 500 duplikatów ⇒ 1 alert z licznikiem 500 i jedno powiadomienie na odbiorcę; resolve + nowe zdarzenie ⇒ reopen tego samego alertu i ponowne powiadomienie; bramka: krok w `appendix-a.sh`
 
 ### Etap E ∥ — pomiar wydajności #1 (po C; równolegle z D)
 - [ ] 19.E1 `loadgen` (np. `RATE=500 DURATION_SECS=60 DUP_RATIO=0.5 MODE=both`) + `latency.sql` + `lag.sh`; wpis „Pomiar 1” w `docs/LOADTEST.md`; decyzja, co optymalizować (wąskie gardło = grupa z największym lagiem); bramka: wiersz w tabeli wyników z komendą do powtórzenia
