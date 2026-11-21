@@ -84,6 +84,7 @@ Lag zapisujemy w trakcie przebiegu (największa wartość na grupę) i po nim (m
 | Pomiar 1 – rozgrzewka | 2026-11-21 02:10:07 CET | 100 / 99.9 (1 999, 0 błędów) | — (nie mierzono osobno) | — | 0 (wszystkie grupy po przebiegu) | commit `7b50707`; obrazy ingest/lifecycle/router/sender/api z 2026-11-21 00:30:10 UTC (sprzed PR #26 – api bez wymogu tokenu); 12 partycji/topik, po 1 instancji; `DUP_RATIO=0.5 MODE=both`; `RATE=100 DURATION_SECS=20` | `RATE=100 DURATION_SECS=20 DUP_RATIO=0.5 MODE=both INGEST_URL=http://localhost:8081 cargo run --release -p loadgen` |
 | Pomiar końcowy (skalowanie ×2 — 2.3 & 3.1) | 2026-11-21 03:02:28 CET | 500 / 499.8 (14 995 loadgen + 80 sond SMS/UI, 0 błędów) | bez email: 123.4 (`sms` 125.1, `phone` 120.3, `ui` 122.8); `email`: 16.6 | bez email: 231.8 (`sms` 229.4, `phone` 224.4, `ui` 234.6); `email`: 186.2 | 28 (`sender`, 2 inst.); `router` 20, `lifecycle-dedup` 5, `lifecycle-normalizer` 2 → 0 na końcu | commit `f8dcd72` (obrazy zbudowane `2026-11-21T01:56:43Z`, po PR #32/#34); 12 partycji/topik; `--scale lifecycle=2 --scale sender=2`; `DUP_RATIO=0.5 MODE=both`; `RATE=500 DURATION_SECS=30` | `docker compose up -d --scale lifecycle=2 --scale sender=2 && docker compose --profile tools run --rm -e INGEST_URL=http://ingest:8081 -e RATE=500 -e DURATION_SECS=30 -e DUP_RATIO=0.5 -e MODE=both loadgen` + `latency.sql` (`since='2026-11-21 02:02:28+00'`) |
 | Pomiar 6.1 (współbieżny `sender` ×1 po PR #38/#46) | 2026-11-21 04:01 CET | 500 / 499.7 (9 995 wysłanych, 0 błędów) | `email`: 9.5 | `email`: 20.9 | 3 (`sender`, próbki co 5 s: `0, 0, 3, 0` → `0` po opróżnieniu) | 1 instancja każdego serwisu (współbieżny `sender` z PR #38 + po refaktoryzacji PR #43–#46); 12 partycji/topik; `DUP_RATIO=0.5 MODE=both`; `RATE=500 DURATION_SECS=20` | `docker compose --profile tools run --rm -e INGEST_URL=http://ingest:8081 -e RATE=500 -e DURATION_SECS=20 -e DUP_RATIO=0.5 -e MODE=both loadgen` + `lag.sh sender` + `latency.sql` |
+| Po optymalizacji konsumentów (`perf/consumer-concurrency`) | 2026-11-21 08:15 CET | test schodkowy 450→2000: **1500 SUSTAINED** stabilnie (44 987 wysłanych, 0 błędów), 2000 na granicy (1999,4 osiągnięte; 2,27 s zaległości) | `email`: 12,2 (1500), 13,8 (2000) | `email`: 187,4 (1500), 211,4 (2000) | `ingest-source-trades` 5 232 przy 2000 (pozostałe ≤ 143) → 0 po drainie | 1 instancja każdego serwisu, projekt `gsload`, obraz `alerting-backend:loadtest` z `41020a3`; 12 partycji/topik; `DUP_RATIO=0.5 MODE=both`; 30 s/krok; przed zmianą: 450 SUSTAINED | `loadtest/build.sh && loadtest/reset.sh && loadtest/step_load.py --rates 450,600,800,1000,1500,2000 --step-secs 30 --mode both --no-stop`; szczegóły i skalowanie: `loadtest/RESULTS.md` |
 
 <!-- P2 6.4 Benchmark ewaluacji warunków (crates/condition, 100 reguł × zdarzenie, 1000 zdarzeń = 100 000 ewaluacji):
      Release: 10.76 ms łącznie | 10.76 µs / zdarzenie (100 reguł) | 107.6 ns / reguła (~92 900 zdarzeń/s przy 100 regułach)
@@ -148,3 +149,61 @@ W „Konfiguracja” wpisz wartości `RATE`, `DURATION_SECS`, `DUP_RATIO`, `MODE
 
 - **1 instancja `sender` bez problemu utrzymuje 500 msg/s:** po wprowadzeniu równoległego przetwarzania w `sender` (PR #38) i pełnej refaktoryzacji backendu (PR #43–#46), przy `RATE=500 DURATION_SECS=20 DUP_RATIO=0.5 MODE=both` (`9 995` wysłanych, `0` błędów, `499.7 msg/s`), lag grupy `sender` (próbkowany co 5 s) wynosił kolejno **`0, 0, 3, 0`** i spadł do **`0`** natychmiast po końcu ruchu (vs max lag **9 954** w pomiarze 1).
 - **Latencja e2e kanału `email` (7 506 dostarczeń):** **p50 = 9.5 ms**, **p99 = 20.9 ms** (spadek z 26 070 ms / 40 163 ms sprzed optymalizacji).
+
+## Pula połączeń Postgresa
+
+Przy skalowaniu poziomym pula 10 połączeń na proces × ~20 procesów przekraczała `max_connections=100` w Postgresie
+(`too many clients already`). Rozmiar puli jest teraz konfigurowalny per serwis (`common::db::connect_with`,
+`connect_and_migrate_with`):
+
+- `DB_MAX_CONNECTIONS` (liczba ≥ 1) – maksimum puli procesu; nadpisuje domyślną wartość serwisu. Wartość niepoprawna
+  (nie liczba, `0`) → ostrzeżenie w logu i wartość domyślna.
+- `DB_MIN_CONNECTIONS` (liczba ≥ 0, domyślnie 0) – utrzymywane połączenia; przycinane do maksimum.
+- Domyślne wartości są stałą `DB_POOL_DEFAULT` w `main.rs` każdego serwisu (jedno miejsce, w kodzie – działają bez
+  konfiguracji compose; w razie potrzeby nadpisanie przez `environment:` w `docker-compose.yml` danego serwisu).
+  `connect`/`connect_and_migrate` bez rozmiaru (testy) nadal używają 10.
+
+| Serwis | Domyślnie | Użycie bazy |
+|---|---|---|
+| lifecycle | 10 (+1 `PgListener`) | normalizer (UNMAPPED) + dedup (16 pasów; połączenie tylko na czas INSERT/flush/przejścia, duplikat = inkrement w pamięci) |
+| sender | 8 | `claim_delivery`, zapis dostarczeń/prób na każde dostarczenie, współbieżnie |
+| runbooks | 6 | runy, kroki, zatwierdzenia, wywołania akcji; mniejszy wolumen niż lifecycle/sender |
+| api | 5 | zapytania UI (lista alertów, komendy, mappings), ruch ludzki |
+| router | 2 (+1 `PgListener`) | tylko przeładowanie konfiguracji; ścieżka gorąca czyta migawkę `ArcSwap` |
+| ingest | 2 | tylko skaner źródeł / błędy (`events.unmapped`) |
+
+Budżet (`PgListener::connect` otwiera osobne połączenie poza pulą, więc liczymy +1 dla lifecycle i router):
+
+- 1× każdy serwis: 11 + 3 + 8 + 6 + 5 + 2 = **35** połączeń.
+- Skalowane (lifecycle×4, router×4, sender×2, runbooks×2, ingest×2, api×1): 44 + 12 + 16 + 12 + 4 + 5 = **93**
+  (z 100 zostaje ~7 na psql, migracje i administrację). Pule są leniwe, więc realne użycie jest zwykle niższe.
+  Przy większej liczbie replik obniż `DB_MAX_CONNECTIONS` albo użyj PgBouncera.
+
+### PgBouncer (opcja)
+
+Gdy budżet 100 nie wystarcza, można postawić PgBouncera przed Postgresem w trybie `transaction` pooling:
+
+- sqlx domyślnie używa prepared statements. W trybie transaction wymagany jest PgBouncer ≥ 1.21 z
+  `max_prepared_statements > 0` albo wyłączenie cache'u po stronie klienta (`statement_cache_capacity(0)` w
+  `PgConnectOptions`); inaczej pojawią się błędy `prepared statement ... does not exist`.
+- `LISTEN/NOTIFY config_changed` wymaga stałej sesji. Używają go (`PgListener`): `crates/lifecycle/src/config.rs`,
+  `crates/router/src/config.rs` oraz test w `crates/api/src/routes/mappings.rs`. Te połączenia muszą iść bezpośrednio
+  do Postgresa (osobny `DATABASE_URL` dla listenera) albo przez pulę w trybie `session`.
+- Migracje (advisory lock sqlx) również wymagają sesji – uruchamiaj je bezpośrednio.
+
+## Partycje topiku źródłowego
+
+Źródła Kafki (`config/sources/*.yaml`, np. `trades`) konsumuje `ingest` współbieżnie (pasy per klucz wiadomości,
+`INGEST_SOURCE_LANES`, domyślnie 32), ale **skalowanie między instancjami ogranicza liczba partycji topiku**:
+partycja to jednostka podziału grupy konsumenckiej `ingest-source-<nazwa>`. Topik z 1 partycją obsłuży jedna instancja
+i jedno zadanie niezależnie od liczby replik.
+
+- W compose `trades` zakłada `topics-init` (12 partycji). Gdyby producent (np. `loadgen`) zapisał do `trades` wcześniej,
+  broker mógłby go utworzyć automatycznie z domyślną 1 partycją – dlatego topik jest w `topics-init`.
+- `ensure_topic` w `ingest` zakłada brakujący topik (12 partycji, `contracts::topics::PARTITIONS`). Gdy topik już istnieje
+  i ma mniej partycji, loguje **warn** (liczba partycji + wskazówka), ale **nie** zwiększa ich automatycznie:
+  zmiana liczby partycji zmienia mapowanie klucz -> partycja i może zaburzyć kolejność per klucz.
+- Ręczne zwiększenie: `rpk topic add-partitions trades -n <ile_dodać>` (zrób to świadomie, najlepiej przy pustym lagu).
+- W produkcji topik źródłowy zakłada jego właściciel; ingest tylko ostrzega.
+- Zmiana pliku źródła zatrzymuje konsumenta łagodnie (sygnał stop, drenowanie pasów i commit offsetów, limit 15 s,
+  potem `abort`) i dopiero wtedy startuje nowego; niezcommitowane wiadomości wrócą (at-least-once).

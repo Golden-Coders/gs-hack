@@ -49,11 +49,15 @@ services:
       redpanda: { condition: service_healthy }
     entrypoint: ["/bin/bash", "-c"]
     # Lista = contracts::topics::ALL, partycje = contracts::topics::PARTITIONS.
+    # `trades` to topik ŹRÓDŁOWY (config/sources/trades.yaml) – zakładamy go tu tylko w lokalnym dev/compose, żeby
+    # producent (np. loadgen) nie utworzył go automatycznie z 1 partycją (wtedy skalowanie ingest nic nie daje).
+    # W produkcji topik źródłowy zakłada jego właściciel (ingest tylko ostrzega, gdy ma < 12 partycji).
     command:
       - >-
         rpk topic create -X brokers=redpanda:9092 -p 12
         events.raw events.unmapped events.normalized alerts.commands alerts.changed
         deliveries.requested deliveries.retry deliveries.dlq runbooks.commands ui.events
+        trades
         || rpk topic list -X brokers=redpanda:9092
 
   postgres:

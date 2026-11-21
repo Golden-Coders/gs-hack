@@ -14,6 +14,15 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub use rdkafka;
 
+pub mod concurrent;
+pub mod offsets;
+
+pub use concurrent::{
+    concurrent_consumer, run_concurrent, ConcurrentConfig, LaneHandler, OffsetCommitter,
+    RevokeBarrierContext,
+};
+pub use offsets::OffsetTracker;
+
 /// Producent o niskiej latencji (ścieżka alertu). `acks=all` – brak utraty po 202.
 pub fn producer(brokers: &str) -> anyhow::Result<FutureProducer> {
     ClientConfig::new()
@@ -60,7 +69,7 @@ pub fn consumer(brokers: &str, group: &str, topics: &[&str]) -> anyhow::Result<S
 }
 
 /// Dekoduje payload wiadomości z JSON.
-pub fn decode<T: DeserializeOwned>(message: &BorrowedMessage<'_>) -> anyhow::Result<T> {
+pub fn decode<T: DeserializeOwned>(message: &impl Message) -> anyhow::Result<T> {
     let payload = message.payload().context("empty kafka message")?;
     serde_json::from_slice(payload)
         .with_context(|| format!("decoding message from {}", message.topic()))

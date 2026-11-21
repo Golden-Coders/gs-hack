@@ -1,0 +1,178 @@
+{
+  "args": {
+    "project": "gsload",
+    "rates": "3000",
+    "step_secs": 30,
+    "per_loadgen": 2500,
+    "dup_ratio": "1.0",
+    "mode": "http",
+    "drain_timeout": 180,
+    "no_stop": true,
+    "label": "after-dup1.0"
+  },
+  "steps": [
+    {
+      "target_rate": 3000,
+      "loadgens": 2,
+      "secs": 30,
+      "sent": 89976,
+      "errors": 0,
+      "achieved_rate": 2999.2,
+      "lag_at_end_of_load": 56,
+      "backlog_secs": 0.02,
+      "drained": true,
+      "drain_secs": 3.4,
+      "events_counted": 89976,
+      "new_alerts": 3,
+      "deliveries": 7,
+      "e2e_processed_rate": 102.7,
+      "max_lag": {
+        "lifecycle-normalizer": 506,
+        "lifecycle-dedup": 1009,
+        "router": 0,
+        "runbooks": 0,
+        "sender": 0,
+        "sender-retry": 0,
+        "ingest-source-trades": 0
+      },
+      "stage_rate_per_s": {
+        "lifecycle-normalizer": 81.6,
+        "lifecycle-dedup": 81.6,
+        "router": 0.0,
+        "runbooks": 0.0,
+        "sender": 0.0,
+        "sender-retry": 0.0,
+        "ingest-source-trades": 0.0
+      },
+      "cpu_pct": {
+        "router-3": {
+          "avg": 1.1,
+          "max": 2.0
+        },
+        "sender-2": {
+          "avg": 1.0,
+          "max": 2.4
+        },
+        "router-2": {
+          "avg": 0.9,
+          "max": 2.5
+        },
+        "ingest-1": {
+          "avg": 29.0,
+          "max": 55.0
+        },
+        "router-4": {
+          "avg": 0.8,
+          "max": 1.2
+        },
+        "lifecycle-4": {
+          "avg": 32.3,
+          "max": 59.6
+        },
+        "ingest-2": {
+          "avg": 23.8,
+          "max": 50.5
+        },
+        "runbooks-2": {
+          "avg": 1.5,
+          "max": 2.5
+        },
+        "lifecycle-3": {
+          "avg": 30.0,
+          "max": 48.0
+        },
+        "lifecycle-2": {
+          "avg": 20.6,
+          "max": 39.2
+        },
+        "router-1": {
+          "avg": 2.3,
+          "max": 9.1
+        },
+        "runbooks-1": {
+          "avg": 1.3,
+          "max": 2.9
+        },
+        "lifecycle-1": {
+          "avg": 31.4,
+          "max": 56.5
+        },
+        "api-1": {
+          "avg": 0.5,
+          "max": 1.0
+        },
+        "sender-1": {
+          "avg": 1.2,
+          "max": 3.8
+        },
+        "postgres-1": {
+          "avg": 9.8,
+          "max": 32.8
+        },
+        "mock-targets-1": {
+          "avg": 0.0,
+          "max": 0.0
+        },
+        "mailpit-1": {
+          "avg": 0.0,
+          "max": 0.0
+        },
+        "redpanda-1": {
+          "avg": 74.2,
+          "max": 137.4
+        },
+        "loadgen-run-82401d7b0848": {
+          "avg": 18.6,
+          "max": 51.3
+        },
+        "loadgen-run-03511292fd8a": {
+          "avg": 19.3,
+          "max": 54.1
+        }
+      },
+      "mem": {
+        "loadgen-run-82401d7b0848": "35.98MiB",
+        "loadgen-run-03511292fd8a": "27.39MiB",
+        "router-3": "11.94MiB",
+        "sender-2": "4.707MiB",
+        "router-2": "4.578MiB",
+        "ingest-1": "21.79MiB",
+        "router-4": "4.688MiB",
+        "lifecycle-4": "11.52MiB",
+        "ingest-2": "20.54MiB",
+        "runbooks-2": "5.051MiB",
+        "lifecycle-3": "10.85MiB",
+        "lifecycle-2": "10.45MiB",
+        "router-1": "4.48MiB",
+        "runbooks-1": "4.938MiB",
+        "lifecycle-1": "11.66MiB",
+        "api-1": "3.125MiB",
+        "sender-1": "5.301MiB",
+        "postgres-1": "145.7MiB",
+        "mock-targets-1": "3.812MiB",
+        "mailpit-1": "29.19MiB",
+        "redpanda-1": "497.4MiB"
+      },
+      "latency": {
+        "email": {
+          "n": 3,
+          "p50_ms": 130.5,
+          "p99_ms": 132.3
+        },
+        "phone": {
+          "n": 2,
+          "p50_ms": 127.5,
+          "p99_ms": 127.5
+        },
+        "sms": {
+          "n": 2,
+          "p50_ms": 116.7,
+          "p99_ms": 119.1
+        }
+      },
+      "pg_connections": "47",
+      "verdict": "SUSTAINED",
+      "t_start": 1795244030.103422
+    }
+  ]
+}

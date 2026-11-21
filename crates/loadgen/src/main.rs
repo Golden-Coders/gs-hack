@@ -35,8 +35,16 @@ async fn main() -> anyhow::Result<()> {
     let ingest_url = format!("{}/ingest", settings.ingest_url.trim_end_matches('/'));
 
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
-    let seed = now_ms ^ 0x9E37_79B9_7F4A_7C15;
-    let mut generator = Generator::new(settings.dup_ratio, seed, now_ms);
+    let instance: u64 = std::env::var("LOADGEN_ID")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let seed = now_ms ^ 0x9E37_79B9_7F4A_7C15 ^ instance.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    let mut generator = Generator::new(
+        settings.dup_ratio,
+        seed,
+        now_ms + instance * 1_000_000_000_000,
+    );
 
     println!(
         "loadgen: tryb={:?}, tempo={} msg/s, czas={} s, duplikaty={:.2}, ingest={ingest_url}, temat={}",
@@ -117,7 +125,7 @@ async fn send(
         }
         Channel::Kafka => {
             let producer = producer.context("producer Kafka niedostępny")?;
-            common::kafka::publish(producer, topic, event.schema.name(), &event.body).await
+            common::kafka::publish(producer, topic, &event.identity, &event.body).await
         }
     }
 }

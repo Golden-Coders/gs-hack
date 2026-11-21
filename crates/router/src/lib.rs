@@ -4,11 +4,11 @@
 pub mod config;
 pub mod engine;
 
-use std::time::Duration;
+use std::sync::Arc;
 
-use common::kafka::rdkafka::consumer::{CommitMode, Consumer};
-use common::kafka::rdkafka::message::BorrowedMessage;
+use common::kafka::rdkafka::message::{Message, OwnedMessage};
 use common::kafka::rdkafka::producer::FutureProducer;
+use common::kafka::{concurrent_consumer, run_concurrent, ConcurrentConfig, LaneHandler};
 use contracts::{topics, AlertChanged};
 
 pub use config::{
@@ -43,6 +43,9 @@ pub async fn run_router(
     .await
 }
 
+/// Domyślna liczba pasów współbieżnego konsumenta (nadpisywana przez `ROUTER_LANES`).
+const DEFAULT_LANES: usize = 32;
+
 /// Jak `run_router`, ale z podaną grupą konsumentów (testy integracyjne mogą używać własnej grupy).
 pub async fn run_router_with(
     group: &str,
@@ -50,69 +53,86 @@ pub async fn run_router_with(
     public_ui_url: String,
     producer: FutureProducer,
     store: RouterStore,
-    mut shutdown: Shutdown,
+    shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let consumer = common::kafka::consumer(&brokers, group, &[topics::ALERTS_CHANGED])?;
-    loop {
-        let msg = tokio::select! {
-            _ = shutdown.changed() => return Ok(()),
-            m = consumer.recv() => match m {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::warn!(error = %e, "router: kafka recv error");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-            },
-        };
-
-        loop {
-            match handle_message(&msg, &producer, &store, &public_ui_url).await {
-                Ok(()) => break,
-                Err(e) => {
-                    tracing::warn!(error = %e, "router: processing alert failed, retrying");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-        }
-
-        if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
-            tracing::warn!(error = %e, "router: offset commit failed");
-        }
-    }
+    run_router_on_topics(
+        group,
+        &brokers,
+        topics::ALERTS_CHANGED,
+        topics::DELIVERIES_REQUESTED,
+        public_ui_url,
+        producer,
+        store,
+        ConcurrentConfig::from_env("ROUTER", DEFAULT_LANES),
+        shutdown,
+    )
+    .await
 }
 
-async fn handle_message(
-    msg: &BorrowedMessage<'_>,
-    producer: &FutureProducer,
-    store: &RouterStore,
-    public_ui_url: &str,
+/// Jak `run_router_with`, ale z jawnymi topikami wejścia/wyjścia i konfiguracją współbieżności
+/// (izolowane testy integracyjne; produkcyjnie topiki są stałe).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_router_on_topics(
+    group: &str,
+    brokers: &str,
+    input_topic: &str,
+    output_topic: &str,
+    public_ui_url: String,
+    producer: FutureProducer,
+    store: RouterStore,
+    config: ConcurrentConfig,
+    shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let alert: AlertChanged = match common::kafka::decode(msg) {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::warn!(error = %e, "router: undecodable AlertChanged message, skipped");
-            return Ok(());
-        }
+    let consumer = concurrent_consumer(brokers, group, &[input_topic])?;
+    let handler = RouterHandler {
+        producer,
+        store,
+        public_ui_url: Arc::from(public_ui_url),
+        output_topic: Arc::from(output_topic),
     };
+    run_concurrent(consumer, config, shutdown, move |_| handler.clone()).await
+}
 
-    let snapshot = store.load_full();
-    let requests = route_alert(&snapshot, &alert, public_ui_url);
-    let key = alert.alert_id.to_string();
+/// Bezstanowy handler `alerts.changed` (stan = migawka reguł w `RouterStore`).
+#[derive(Clone)]
+struct RouterHandler {
+    producer: FutureProducer,
+    store: RouterStore,
+    public_ui_url: Arc<str>,
+    output_topic: Arc<str>,
+}
 
-    for req in &requests {
-        common::kafka::publish(producer, topics::DELIVERIES_REQUESTED, &key, req).await?;
+impl LaneHandler for RouterHandler {
+    async fn handle(&mut self, msg: &OwnedMessage) -> anyhow::Result<()> {
+        let alert: AlertChanged = match serde_json::from_slice(msg.payload().unwrap_or_default()) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(error = %e, "router: undecodable AlertChanged message, skipped");
+                return Ok(());
+            }
+        };
+
+        let snapshot = self.store.load_full();
+        let requests = route_alert(&snapshot, &alert, &self.public_ui_url);
+        let key = alert.alert_id.to_string();
+
+        futures::future::try_join_all(
+            requests
+                .iter()
+                .map(|req| common::kafka::publish(&self.producer, &self.output_topic, &key, req)),
+        )
+        .await?;
+
+        if !requests.is_empty() {
+            tracing::info!(
+                alert_id = %alert.alert_id,
+                episode = alert.episode,
+                transition = ?alert.transition,
+                deliveries = requests.len(),
+                "routed alert to deliveries.requested"
+            );
+        }
+
+        Ok(())
     }
-
-    if !requests.is_empty() {
-        tracing::info!(
-            alert_id = %alert.alert_id,
-            episode = alert.episode,
-            transition = ?alert.transition,
-            deliveries = requests.len(),
-            "routed alert to deliveries.requested"
-        );
-    }
-
-    Ok(())
 }

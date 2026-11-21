@@ -65,15 +65,17 @@ Each box is a separate binary (`crates/<name>`), each double-bordered box is a K
 
 ## Performance
 
-Measured with `loadgen` (HTTP + Kafka, 3 schemas, 50% duplicates), 12 partitions, all services in Docker on a single laptop. Methodology, scripts and full results: [`docs/LOADTEST.md`](docs/LOADTEST.md).
+Measured with `loadgen` (HTTP + Kafka, 3 schemas, 50% duplicates), 12 partitions, all services plus the load generator on one Docker Desktop VM (14 CPU, 4 GB RAM), so these are lower bounds. Every stage consumes Kafka concurrently (per-key lanes, offsets committed strictly in order after the handler succeeds). Methodology, scripts and full results: [`docs/LOADTEST.md`](docs/LOADTEST.md), [`loadtest/RESULTS.md`](loadtest/RESULTS.md).
 
-| Setup | Throughput | End-to-end latency (`delivered_at − received_at`) | Max lag |
-|---|---|---|---|
-| 1 instance of each service | 500 msg/s, 0 errors | email p50 **9.5 ms**, p99 **20.9 ms** | 3 (`sender`) |
-| `lifecycle` ×2, `sender` ×2 | 500 msg/s, 0 errors | p50 17–123 ms, p99 186–235 ms (depends on channel) | 28 (`sender`) |
-| Rule evaluation (`crates/condition`) | ~93,000 events/s at 100 rules | ~10.8 µs / event | n/a |
+| Setup | Sustained throughput | End-to-end latency (`delivered_at − received_at`) |
+|---|---|---|
+| 1 instance of each service, before concurrent consumers | 450 msg/s | seconds once saturated (p50 2.5 s at 500 msg/s) |
+| 1 instance of each service, **now** | **1,500 msg/s** (2,000 borderline), 0 errors | p50 **12 ms**, p99 **187 ms** at 1,500 msg/s; p50 11 ms, p99 44 ms at 1,000 msg/s |
+| lifecycle ×4, router ×4, sender ×2, runbooks ×2, ingest ×2 (HTTP) | 1,500 msg/s; normalizer alone reaches ~5,000 msg/s | bottleneck moves to `runbooks`, dedup and Postgres |
+| Duplicate storm (`DUP_RATIO=1.0`, 3 hot fingerprints), scaled | 3,000 msg/s | lag ≤ 1,009, drains in 3.4 s |
+| Rule evaluation (`crates/condition`) | ~93,000 events/s at 100 rules | ~10.8 µs / event |
 
-Dedup is verified numerically: the sum of alert counters grows by exactly the number of events sent, with no duplicate `idempotency_key`. An earlier measurement exposed a bottleneck in `sender` (lag ~10k), which concurrent processing removed.
+Correctness holds in every run: the sum of alert counters equals the number of events sent, there are no duplicate `idempotency_key` rows, and all consumer lags return to zero. Under overload the system degrades by queueing, not by dropping events: ingest accepted 10,000 msg/s with no errors.
 
 ## Action safety
 

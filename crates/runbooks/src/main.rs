@@ -7,6 +7,8 @@
 //! - `author` – `RunbookAuthor` (w MVP tylko `none`).
 
 mod engine;
+#[cfg(test)]
+mod it;
 mod matching;
 mod notify;
 mod store;
@@ -17,11 +19,14 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
+/// Domyślny maks. rozmiar puli Postgresa (nadpisywany przez `DB_MAX_CONNECTIONS`, zob. docs/LOADTEST.md).
+const DB_POOL_DEFAULT: u32 = 6;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     common::init_tracing("runbooks");
     let config = common::Config::from_env();
-    let pool = common::db::connect_and_migrate(&config.database_url).await?;
+    let pool = common::db::connect_and_migrate_with(&config.database_url, DB_POOL_DEFAULT).await?;
 
     let author = author::from_env()?;
     tracing::info!(provider = author.name(), "runbook author");

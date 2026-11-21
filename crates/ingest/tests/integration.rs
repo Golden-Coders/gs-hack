@@ -293,7 +293,7 @@ async fn ensure_topic_creates_and_is_idempotent() {
 async fn kafka_source_added_without_restart() {
     let dir = std::env::temp_dir().join(format!("ingest-src-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let pool = common::db::connect_and_migrate(DB).await.unwrap();
+    let pool = common::db::sqlx::PgPool::connect(DB).await.unwrap();
     let p = producer();
     let ctx = Arc::new(sources::Ctx {
         brokers: BROKERS.into(),
