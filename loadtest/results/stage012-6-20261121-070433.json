@@ -1,0 +1,536 @@
+{
+  "args": {
+    "project": "gsload",
+    "rates": "300,400,450,500,600",
+    "step_secs": 30,
+    "per_loadgen": 2500,
+    "dup_ratio": "0.5",
+    "mode": "both",
+    "drain_timeout": 180,
+    "no_stop": true,
+    "label": "stage012-6"
+  },
+  "steps": [
+    {
+      "target_rate": 300,
+      "loadgens": 1,
+      "secs": 30,
+      "sent": 8997,
+      "errors": 0,
+      "achieved_rate": 299.9,
+      "lag_at_end_of_load": 13,
+      "backlog_secs": 0.04,
+      "drained": true,
+      "drain_secs": 5.5,
+      "events_counted": 8997,
+      "new_alerts": 4584,
+      "deliveries": 6926,
+      "e2e_processed_rate": 246.0,
+      "max_lag": {
+        "lifecycle-normalizer": 22,
+        "lifecycle-dedup": 104,
+        "router": 1,
+        "runbooks": 1,
+        "sender": 5,
+        "sender-retry": 0,
+        "ingest-source-trades": 8
+      },
+      "stage_rate_per_s": {
+        "lifecycle-normalizer": 305.9,
+        "lifecycle-dedup": 302.7,
+        "router": 153.9,
+        "runbooks": 153.9,
+        "sender": 231.7,
+        "sender-retry": 0.0,
+        "ingest-source-trades": 154.9
+      },
+      "cpu_pct": {
+        "sender-1": {
+          "avg": 12.6,
+          "max": 19.5
+        },
+        "api-1": {
+          "avg": 0.4,
+          "max": 0.6
+        },
+        "runbooks-1": {
+          "avg": 11.9,
+          "max": 15.8
+        },
+        "ingest-1": {
+          "avg": 6.8,
+          "max": 9.4
+        },
+        "router-1": {
+          "avg": 5.6,
+          "max": 7.9
+        },
+        "lifecycle-1": {
+          "avg": 17.1,
+          "max": 24.2
+        },
+        "postgres-1": {
+          "avg": 22.7,
+          "max": 29.8
+        },
+        "mock-targets-1": {
+          "avg": 0.6,
+          "max": 0.7
+        },
+        "mailpit-1": {
+          "avg": 11.4,
+          "max": 16.9
+        },
+        "redpanda-1": {
+          "avg": 28.8,
+          "max": 40.1
+        },
+        "loadgen-run-647415cd2356": {
+          "avg": 4.3,
+          "max": 5.2
+        }
+      },
+      "mem": {
+        "sender-1": "6.18MiB",
+        "api-1": "3.312MiB",
+        "runbooks-1": "6.227MiB",
+        "ingest-1": "4.957MiB",
+        "router-1": "5.008MiB",
+        "lifecycle-1": "24.59MiB",
+        "postgres-1": "116.9MiB",
+        "mock-targets-1": "3.031MiB",
+        "mailpit-1": "64.16MiB",
+        "redpanda-1": "369.1MiB"
+      },
+      "latency": {
+        "email": {
+          "n": 6922,
+          "p50_ms": 11.1,
+          "p99_ms": 595.6
+        },
+        "phone": {
+          "n": 2,
+          "p50_ms": 40.8,
+          "p99_ms": 40.8
+        },
+        "sms": {
+          "n": 2,
+          "p50_ms": 42.0,
+          "p99_ms": 42.1
+        }
+      },
+      "pg_connections": "23",
+      "verdict": "SUSTAINED",
+      "t_start": 1795240869.5244591
+    },
+    {
+      "target_rate": 400,
+      "loadgens": 1,
+      "secs": 30,
+      "sent": 11997,
+      "errors": 0,
+      "achieved_rate": 399.9,
+      "lag_at_end_of_load": 31,
+      "backlog_secs": 0.08,
+      "drained": true,
+      "drain_secs": 3.3,
+      "events_counted": 11997,
+      "new_alerts": 6029,
+      "deliveries": 8989,
+      "e2e_processed_rate": 347.8,
+      "max_lag": {
+        "lifecycle-normalizer": 7,
+        "lifecycle-dedup": 18,
+        "router": 3,
+        "runbooks": 2,
+        "sender": 8,
+        "sender-retry": 0,
+        "ingest-source-trades": 3
+      },
+      "stage_rate_per_s": {
+        "lifecycle-normalizer": 400.2,
+        "lifecycle-dedup": 400.2,
+        "router": 200.8,
+        "runbooks": 201.0,
+        "sender": 299.6,
+        "sender-retry": 0.0,
+        "ingest-source-trades": 200.3
+      },
+      "cpu_pct": {
+        "sender-1": {
+          "avg": 18.1,
+          "max": 24.0
+        },
+        "api-1": {
+          "avg": 0.6,
+          "max": 0.8
+        },
+        "runbooks-1": {
+          "avg": 17.7,
+          "max": 20.6
+        },
+        "ingest-1": {
+          "avg": 9.3,
+          "max": 11.0
+        },
+        "router-1": {
+          "avg": 7.9,
+          "max": 10.0
+        },
+        "lifecycle-1": {
+          "avg": 23.0,
+          "max": 27.8
+        },
+        "postgres-1": {
+          "avg": 30.2,
+          "max": 37.6
+        },
+        "mock-targets-1": {
+          "avg": 0.8,
+          "max": 0.9
+        },
+        "mailpit-1": {
+          "avg": 16.1,
+          "max": 18.7
+        },
+        "redpanda-1": {
+          "avg": 35.5,
+          "max": 44.2
+        },
+        "loadgen-run-b8d64f63d974": {
+          "avg": 4.7,
+          "max": 5.5
+        }
+      },
+      "mem": {
+        "loadgen-run-b8d64f63d974": "4.52MiB",
+        "sender-1": "6.617MiB",
+        "api-1": "3.309MiB",
+        "runbooks-1": "6.445MiB",
+        "ingest-1": "5.469MiB",
+        "router-1": "5.051MiB",
+        "lifecycle-1": "46.45MiB",
+        "postgres-1": "154.5MiB",
+        "mock-targets-1": "3.203MiB",
+        "mailpit-1": "68.55MiB",
+        "redpanda-1": "399.2MiB"
+      },
+      "latency": {
+        "email": {
+          "n": 8989,
+          "p50_ms": 11.6,
+          "p99_ms": 45.6
+        }
+      },
+      "pg_connections": "23",
+      "verdict": "SUSTAINED",
+      "t_start": 1795240911.2801979
+    },
+    {
+      "target_rate": 450,
+      "loadgens": 1,
+      "secs": 30,
+      "sent": 13496,
+      "errors": 0,
+      "achieved_rate": 449.9,
+      "lag_at_end_of_load": 41,
+      "backlog_secs": 0.09,
+      "drained": true,
+      "drain_secs": 4.5,
+      "events_counted": 13496,
+      "new_alerts": 6786,
+      "deliveries": 10243,
+      "e2e_processed_rate": 377.3,
+      "max_lag": {
+        "lifecycle-normalizer": 5,
+        "lifecycle-dedup": 25,
+        "router": 3,
+        "runbooks": 3,
+        "sender": 6,
+        "sender-retry": 0,
+        "ingest-source-trades": 3
+      },
+      "stage_rate_per_s": {
+        "lifecycle-normalizer": 449.3,
+        "lifecycle-dedup": 449.9,
+        "router": 225.6,
+        "runbooks": 225.7,
+        "sender": 341.0,
+        "sender-retry": 0.0,
+        "ingest-source-trades": 224.7
+      },
+      "cpu_pct": {
+        "sender-1": {
+          "avg": 20.1,
+          "max": 21.6
+        },
+        "api-1": {
+          "avg": 0.6,
+          "max": 0.8
+        },
+        "runbooks-1": {
+          "avg": 19.9,
+          "max": 22.2
+        },
+        "ingest-1": {
+          "avg": 10.4,
+          "max": 11.3
+        },
+        "router-1": {
+          "avg": 8.8,
+          "max": 10.2
+        },
+        "lifecycle-1": {
+          "avg": 25.3,
+          "max": 27.4
+        },
+        "postgres-1": {
+          "avg": 34.2,
+          "max": 38.8
+        },
+        "mock-targets-1": {
+          "avg": 0.8,
+          "max": 1.0
+        },
+        "mailpit-1": {
+          "avg": 19.6,
+          "max": 30.7
+        },
+        "redpanda-1": {
+          "avg": 39.4,
+          "max": 43.0
+        },
+        "loadgen-run-197284b0bcf0": {
+          "avg": 4.8,
+          "max": 5.5
+        }
+      },
+      "mem": {
+        "sender-1": "6.848MiB",
+        "api-1": "3.309MiB",
+        "runbooks-1": "6.594MiB",
+        "ingest-1": "5.559MiB",
+        "router-1": "5.176MiB",
+        "lifecycle-1": "73.18MiB",
+        "postgres-1": "181.7MiB",
+        "mock-targets-1": "3.199MiB",
+        "mailpit-1": "72.49MiB",
+        "redpanda-1": "430.8MiB"
+      },
+      "latency": {
+        "email": {
+          "n": 10243,
+          "p50_ms": 12.0,
+          "p99_ms": 68.1
+        }
+      },
+      "pg_connections": "23",
+      "verdict": "SUSTAINED",
+      "t_start": 1795240950.906068
+    },
+    {
+      "target_rate": 500,
+      "loadgens": 1,
+      "secs": 30,
+      "sent": 14995,
+      "errors": 0,
+      "achieved_rate": 499.8,
+      "lag_at_end_of_load": 50,
+      "backlog_secs": 0.1,
+      "drained": true,
+      "drain_secs": 4.5,
+      "events_counted": 14995,
+      "new_alerts": 7484,
+      "deliveries": 11219,
+      "e2e_processed_rate": 419.8,
+      "max_lag": {
+        "lifecycle-normalizer": 7,
+        "lifecycle-dedup": 35,
+        "router": 3,
+        "runbooks": 3,
+        "sender": 7,
+        "sender-retry": 0,
+        "ingest-source-trades": 5
+      },
+      "stage_rate_per_s": {
+        "lifecycle-normalizer": 500.1,
+        "lifecycle-dedup": 500.0,
+        "router": 249.1,
+        "runbooks": 248.9,
+        "sender": 373.9,
+        "sender-retry": 0.0,
+        "ingest-source-trades": 250.0
+      },
+      "cpu_pct": {
+        "sender-1": {
+          "avg": 22.3,
+          "max": 26.5
+        },
+        "api-1": {
+          "avg": 0.6,
+          "max": 0.8
+        },
+        "runbooks-1": {
+          "avg": 21.6,
+          "max": 27.1
+        },
+        "ingest-1": {
+          "avg": 11.0,
+          "max": 13.1
+        },
+        "router-1": {
+          "avg": 9.5,
+          "max": 11.1
+        },
+        "lifecycle-1": {
+          "avg": 27.0,
+          "max": 31.2
+        },
+        "postgres-1": {
+          "avg": 37.2,
+          "max": 44.9
+        },
+        "mock-targets-1": {
+          "avg": 0.9,
+          "max": 1.2
+        },
+        "mailpit-1": {
+          "avg": 21.0,
+          "max": 24.4
+        },
+        "redpanda-1": {
+          "avg": 43.2,
+          "max": 51.3
+        },
+        "loadgen-run-d37a396086ed": {
+          "avg": 5.2,
+          "max": 5.9
+        }
+      },
+      "mem": {
+        "sender-1": "6.938MiB",
+        "api-1": "3.309MiB",
+        "runbooks-1": "6.648MiB",
+        "ingest-1": "5.613MiB",
+        "router-1": "5.203MiB",
+        "lifecycle-1": "97.62MiB",
+        "postgres-1": "213.3MiB",
+        "mock-targets-1": "3.227MiB",
+        "mailpit-1": "73.37MiB",
+        "redpanda-1": "465.7MiB"
+      },
+      "latency": {
+        "email": {
+          "n": 11219,
+          "p50_ms": 13.5,
+          "p99_ms": 95.3
+        }
+      },
+      "pg_connections": "23",
+      "verdict": "SUSTAINED",
+      "t_start": 1795240991.7951648
+    },
+    {
+      "target_rate": 600,
+      "loadgens": 1,
+      "secs": 30,
+      "sent": 17994,
+      "errors": 0,
+      "achieved_rate": 599.8,
+      "lag_at_end_of_load": 73,
+      "backlog_secs": 0.12,
+      "drained": true,
+      "drain_secs": 4.5,
+      "events_counted": 17994,
+      "new_alerts": 8944,
+      "deliveries": 13436,
+      "e2e_processed_rate": 500.9,
+      "max_lag": {
+        "lifecycle-normalizer": 25,
+        "lifecycle-dedup": 104,
+        "router": 4,
+        "runbooks": 4,
+        "sender": 8,
+        "sender-retry": 0,
+        "ingest-source-trades": 25
+      },
+      "stage_rate_per_s": {
+        "lifecycle-normalizer": 600.0,
+        "lifecycle-dedup": 598.2,
+        "router": 297.6,
+        "runbooks": 297.4,
+        "sender": 445.1,
+        "sender-retry": 0.0,
+        "ingest-source-trades": 300.0
+      },
+      "cpu_pct": {
+        "sender-1": {
+          "avg": 26.6,
+          "max": 31.5
+        },
+        "api-1": {
+          "avg": 0.6,
+          "max": 0.8
+        },
+        "runbooks-1": {
+          "avg": 25.5,
+          "max": 31.2
+        },
+        "ingest-1": {
+          "avg": 12.4,
+          "max": 13.9
+        },
+        "router-1": {
+          "avg": 11.2,
+          "max": 13.0
+        },
+        "lifecycle-1": {
+          "avg": 31.6,
+          "max": 36.7
+        },
+        "postgres-1": {
+          "avg": 47.6,
+          "max": 66.5
+        },
+        "mock-targets-1": {
+          "avg": 1.1,
+          "max": 1.4
+        },
+        "mailpit-1": {
+          "avg": 24.2,
+          "max": 28.5
+        },
+        "redpanda-1": {
+          "avg": 46.0,
+          "max": 55.5
+        },
+        "loadgen-run-1e00829efa65": {
+          "avg": 5.8,
+          "max": 6.3
+        }
+      },
+      "mem": {
+        "sender-1": "7.035MiB",
+        "api-1": "3.133MiB",
+        "runbooks-1": "6.711MiB",
+        "ingest-1": "5.77MiB",
+        "router-1": "5.23MiB",
+        "lifecycle-1": "135.6MiB",
+        "postgres-1": "235.2MiB",
+        "mock-targets-1": "3.141MiB",
+        "mailpit-1": "83.36MiB",
+        "redpanda-1": "447.1MiB"
+      },
+      "latency": {
+        "email": {
+          "n": 13436,
+          "p50_ms": 24.4,
+          "p99_ms": 220.7
+        }
+      },
+      "pg_connections": "23",
+      "verdict": "SUSTAINED",
+      "t_start": 1795241032.643179
+    }
+  ]
+}
