@@ -7,15 +7,31 @@ Interfejs webowy dla dyżurnych i autorów konfiguracji: feed alertów na żywo,
 ## Requirements
 
 ### Requirement: Feed alertów na żywo
-UI SHALL pokazywać listę alertów aktualizowaną w czasie rzeczywistym przez push (bez odświeżania strony), z filtrem „mój zespół / wszystkie” oraz stanem, severity, licznikiem i czasem ostatniego wystąpienia.
+UI SHALL pokazywać listę alertów aktualizowaną w czasie rzeczywistym przez push (bez odświeżania strony), z filtrem „mój zespół / wszystkie” oraz stanem, severity (z uwzględnieniem nadpisania przez dopasowane reguły), `rule_ids`, `teams`, kolorem, licznikiem i czasem ostatniego wystąpienia; `GET /alerts?team=<id>` SHALL filtrować alerty po wyliczonych zespołach dopasowanych reguł.
 
 #### Scenario: Nowy alert
 - **WHEN** system otwiera nowy alert dla zespołu użytkownika
 - **THEN** alert pojawia się w feedzie w ciągu kilku sekund bez odświeżania strony
 
+#### Scenario: Filtr po zespole i nadpisanie severity w GET /alerts
+- **GIVEN** otwarty alert pasujący do reguły `settlements-prod` (zespół `settlements`, `severity_override: critical`, `color: red`)
+- **WHEN** klient wywołuje `GET /alerts?team=settlements`
+- **THEN** odpowiedź zawiera ten alert z `rule_ids: ["settlements-prod"]`, `teams: ["settlements"]`, `severity: "critical"`, `color: "red"` i wyrenderowanym tytułem reguły, a alerty innych zespołów są pominięte
+
 #### Scenario: Utrata połączenia
 - **WHEN** połączenie push zostaje zerwane i przywrócone
 - **THEN** UI uzupełnia zmiany, które nastąpiły w czasie przerwy
+
+### Requirement: Uwierzytelnianie API i SSE
+Wszystkie trasy API poza `/health` i preflightem CORS `OPTIONS` SHALL wymagać statycznego tokenu (`Authorization: Bearer <API_TOKEN>`, a dla strumienia SSE `/stream` także alternatywnie parametru query `?token=<API_TOKEN>`).
+
+#### Scenario: Brak lub błędny token
+- **WHEN** klient wywołuje `GET /alerts` lub `GET /stream` bez poprawnego tokenu
+- **THEN** API odpowiada `401 Unauthorized` z `{"error": "unauthorized"}`
+
+#### Scenario: Poprawny token dla SSE
+- **WHEN** klient łączy się z `GET /stream?token=<API_TOKEN>`
+- **THEN** API zwraca `200 OK` z `Content-Type: text/event-stream` i zdarzeniem `hello`
 
 ### Requirement: Wybór tożsamości
 UI SHALL pozwalać wybrać, jako która osoba działa użytkownik; ten wybór SHALL określać filtr „mój zespół” i autora działań zapisywanych w dzienniku.
