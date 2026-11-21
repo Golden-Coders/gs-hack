@@ -1,0 +1,10 @@
+name: restart_service
+kind: http
+risk: high
+description: Restartuje instancję usługi (zawsze wymaga zatwierdzenia)
+params_schema: { type: object, required: [service], properties: { service: { type: string } } }
+http:
+  method: POST
+  url: "http://mock-targets:8090/restart_service"
+  body: '{"service": "{{service}}"}'
+  timeout_ms: 5000

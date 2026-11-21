@@ -1132,8 +1132,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "common",
  "contracts",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -1643,11 +1647,21 @@ name = "runbooks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
+ "axum",
+ "chrono",
  "common",
  "condition",
  "contracts",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

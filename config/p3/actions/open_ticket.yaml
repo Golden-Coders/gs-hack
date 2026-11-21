@@ -1,0 +1,12 @@
+name: open_ticket
+kind: http
+risk: low
+description: Zakłada ticket w systemie zgłoszeń
+params_schema: { type: object, properties: { summary: { type: string } } }
+http:
+  method: POST
+  url: "http://mock-targets:8090/open_ticket"
+  headers:
+    Authorization: "Bearer ${TICKET_API_TOKEN}"
+  body: '{"summary": "{{summary}}", "fingerprint": "{{fingerprint}}"}'
+  timeout_ms: 5000

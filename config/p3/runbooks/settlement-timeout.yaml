@@ -1,0 +1,17 @@
+# Appendix B (Settlements). Parametry kroków to szablony z wartościami alertu.
+runbook: settlement-timeout
+title: Settlement timeout
+matches: { type: WORKFLOW_FAILED, "error.code": TIMEOUT }
+steps:
+  - check: "Is counterparty-service healthy?"
+    action: http_get
+    url: "http://mock-targets:8090/counterparty-service/health"
+  - text: "Retry workflow {{raw.workflowId}}"
+    action: retry_workflow
+    workflowId: "{{raw.workflowId}}"
+    approval: none
+  - if: "retry fails twice"
+    text: "Escalate to counterparty-support"
+    action: escalate
+    team: counterparty-support
+    approval: required
