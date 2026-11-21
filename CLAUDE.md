@@ -22,6 +22,7 @@ Implementację prowadź przez `/openspec-apply-change alerting-service-mvp`, ogr
 |---|---|---|---|
 | P1 Ingest i cykl życia | Krzysztof Jet | 2, 3, 4, 5 | `crates/ingest`, `crates/lifecycle`, `crates/loadgen`, `crates/api/src/p1.rs`, `migrations/1xxx_p1_*`, `config/p1/`, `docs/LOADTEST.md` |
 | P2 Reguły, routing, dostarczanie | Krzysztof Wojt | 6, 7, 8, 9 | `crates/condition`, `crates/router`, `crates/sender`, `crates/api/src/p2.rs`, `migrations/2xxx_p2_*`, `config/p2/` |
+| **P1+P2 pipeline** (od 2026-11-21) | Krzysztof Jet, Krzysztof Wojt | 19 | katalogi P1 i P2 + `crates/api/src/stream.rs`, `scripts/e2e/` |
 | P3 Runbooki i akcje | Kostek | 10, 11, 12 | `crates/runbooks`, `crates/mock-targets`, `crates/api/src/p3.rs`, `migrations/3xxx_p3_*`, `config/p3/` |
 | P4 UI, dokumentacja, demo | Damian (TypeScript, bez Rusta) | 13–17 | `ui/`, `README.md`, `docs/MOCKS.md`, `docs/DEMO.md`, `config/demo/`, cel `demo` w `Makefile` |
 
@@ -107,4 +108,4 @@ Eskalacja przy braku ack, „Zapisz jako runbook” z incydentu, propozycje zmia
 ## Znane otwarte kwestie
 
 - design.md D10 zakłada `rule_ids` w `AlertChanged`, ale lifecycle nie zna reguł. Propozycja: `runbooks` czyta warunek przypiętej reguły z tabeli `rules` tylko do odczytu (tak jak router czyta runbooki MANUAL). Do potwierdzenia przez P2/P3.
-- Właściciel docelowej implementacji SSE `/stream` w `api` (konsumpcja `alerts.changed` + `ui.events`): domyślnie P1, do ustalenia na stand-upie.
+- SSE `/stream` w `api` (konsumpcja `alerts.changed` + `ui.events`) to nadal szkielet z Fazy 0; realizacja w pipeline P1+P2, etap 19.B.
