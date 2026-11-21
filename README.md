@@ -1,26 +1,26 @@
 # Alerting Service
 
-Elastyczny serwis alertingowy w Rust + Kafka + Postgres. Przyjmuje zdarzenia w **dowolnym schemacie**, skleja duplikaty w jeden alert z licznikiem, kieruje alerty do właściwych osób na **ich preferowanych kanałach** i prowadzi przez **runbooki** z akcjami, które wymagają zatwierdzenia człowieka. Całość skaluje się poziomo i działa bez restartu przy zmianie konfiguracji.
+A flexible alerting service built with Rust, Kafka and Postgres. It ingests events in **any schema**, folds duplicates into a single alert with a counter, routes alerts to the right people on **their preferred channels**, and guides operators through **runbooks** whose risky actions require human approval. It scales horizontally and picks up configuration changes without a restart.
 
-Treść zadania: [`docs/exercise.md`](docs/exercise.md) · Architektura od środka: [`docs/ARCHITEKTURA.md`](docs/ARCHITEKTURA.md) · Specyfikacja: [`openspec/specs/`](openspec/specs/)
+Task description: [`docs/exercise.md`](docs/exercise.md) · Architecture in depth: [`docs/ARCHITEKTURA.md`](docs/ARCHITEKTURA.md) (Polish) · Specification: [`openspec/specs/`](openspec/specs/)
 
-## Uruchomienie
+## Quick start
 
-Wymagany tylko Docker z Compose v2 (~4 GB RAM).
+Only Docker with Compose v2 is required (~4 GB RAM).
 
 ```bash
 git clone https://github.com/Golden-Coders/gs-hack && cd gs-hack
-make demo          # build + up + dane i scenariusz demo
+make demo          # build + up + demo data and scenario
 ```
 
-| Co | Adres |
+| What | Address |
 |---|---|
-| UI (konsola operatora, login: `anna`/`jan`/`ola`/`piotr`/`tomek`, hasło `haslo`) | http://localhost:5173 |
+| UI (operator console; login: `anna` / `jan` / `ola` / `piotr` / `tomek`, password `haslo`) | http://localhost:5173 |
 | API (REST + SSE `/stream`, `Authorization: Bearer dev-token`) | http://localhost:8080 |
-| Ingest HTTP | http://localhost:8081/ingest |
-| Mailpit (wysłane e-maile) | http://localhost:8025 |
+| HTTP ingest | http://localhost:8081/ingest |
+| Mailpit (sent emails) | http://localhost:8025 |
 
-Pierwsze zdarzenie (wyślij dwa razy: licznik alertu wzrośnie zamiast powstać nowy alert):
+Send your first event. Send it twice: the alert counter goes up instead of a new alert being created.
 
 ```bash
 curl -X POST localhost:8081/ingest -H 'Content-Type: application/json' -d '{
@@ -30,104 +30,104 @@ curl -X POST localhost:8081/ingest -H 'Content-Type: application/json' -d '{
               "error": {"code": "TIMEOUT", "message": "Counterparty service did not respond in 5000 ms"}}}'
 ```
 
-## Architektura
+## Architecture
 
 ```mermaid
 flowchart LR
     HTTP["HTTP /ingest"] --> RAW[[events.raw]]
-    KSRC["Kafka: topiki źródłowe"] --> RAW
+    KSRC["Kafka: source topics"] --> RAW
     RAW --> NORM["lifecycle: normalizer"]
-    NORM -- "brak mappingu" --> UNM[[events.unmapped]]
-    NORM --> EN[["events.normalized<br/>(klucz = fingerprint)"]]
-    EN --> DEDUP["lifecycle: dedup + stan alertu"]
+    NORM -- "no mapping" --> UNM[[events.unmapped]]
+    NORM --> EN[["events.normalized<br/>(key = fingerprint)"]]
+    EN --> DEDUP["lifecycle: dedup + alert state"]
     DEDUP --> AC[[alerts.changed]]
-    AC --> ROUTER["router: reguły → osoby → kanały"]
-    AC --> RB["runbooks: kroki, akcje, zatwierdzenia"]
+    AC --> ROUTER["router: rules → people → channels"]
+    AC --> RB["runbooks: steps, actions, approvals"]
     ROUTER --> DR[[deliveries.requested]]
     RB -- "escalate / notify" --> DR
     DR --> SENDER["sender: UI / Email / SMS / Phone"]
-    SENDER -- "błąd" --> RETRY[[deliveries.retry]] --> SENDER
-    SENDER -- "wyczerpane" --> DLQ[[deliveries.dlq]]
+    SENDER -- "error" --> RETRY[[deliveries.retry]] --> SENDER
+    SENDER -- "exhausted" --> DLQ[[deliveries.dlq]]
     AC & SENDER --> API["api: REST + SSE"] <--> UI["UI (React)"]
     API -- "ack / resolve / approve" --> CMD[[*.commands]]
 ```
 
-Każdy prostokąt to osobna binarka (`crates/<nazwa>`), każda podwójna ramka to topik Kafki, stan i konfiguracja są w Postgresie.
+Each box is a separate binary (`crates/<name>`), each double-bordered box is a Kafka topic, and state and configuration live in Postgres.
 
-**Kluczowe decyzje:**
+**Key decisions:**
 
-- **Skalowalność.** Każdy etap to grupa konsumentów Kafki; topiki mają 12 partycji, więc etap skaluje się do 12 instancji bez zmian w kodzie. Dedup jest partycjonowany po fingerprincie: jeden fingerprint trafia zawsze do jednej instancji, więc nie potrzeba rozproszonych blokad.
-- **Single writer.** Stan alertu zmienia wyłącznie `lifecycle`, stan runbooka wyłącznie `runbooks`; reszta wysyła komendy na `*.commands`. Brak wyścigów o stan.
-- **At-least-once + idempotencja.** Offset jest commitowany po zapisaniu skutków. Każdy skutek ma klucz idempotencji (dostarczenie `(alert, epizod, osoba, kanał)`, krok runbooka `(run, krok, próba)`, akcja HTTP z `Idempotency-Key`).
-- **Elastyczność bez kodu.** Nowy schemat zdarzeń = plik `mapping` (JSONPath → pola alertu + fingerprint), nowa reguła = YAML z warunkami, nowa akcja = YAML. Zdarzenie nieznanego schematu trafia na `events.unmapped` i czeka na mapping, a po jego dodaniu zostaje przetworzone. Konfiguracja żyje w Postgresie i propaguje się przez `NOTIFY`, bez restartu.
-- **Kanały i fallback.** Kanały wynikają z preferencji osób (np. `critical → sms` w godzinach pracy, poza nimi `email`). Błąd przejściowy: ponowienia (1 s, 5 s, 30 s); błąd trwały: następny kanał w łańcuchu; wyczerpany łańcuch: DLQ. UI jest zawsze ostatnim kanałem.
-- **Runbooki z bramkami zatwierdzeń.** `*.yaml` = runbook automatyczny (kroki po kolei, krok `approval: required` lub akcja `risk: high` czeka na człowieka), `*.md`/`*.txt` = runbook ręczny dołączany do powiadomień. Nieznana akcja degraduje się do kroku ręcznego zamiast wywracać runbook.
+- **Scalability.** Every stage is a Kafka consumer group. Topics have 12 partitions, so each stage scales to 12 instances with no code changes. Dedup is partitioned by fingerprint: one fingerprint always lands on one instance, so no distributed locks are needed.
+- **Single writer.** Only `lifecycle` changes alert state and only `runbooks` changes runbook state; everything else sends commands to `*.commands`. No races over state.
+- **At-least-once with idempotency.** Offsets are committed after side effects are stored. Every side effect has an idempotency key (delivery `(alert, episode, person, channel)`, runbook step `(run, step, attempt)`, HTTP action with an `Idempotency-Key` header).
+- **Flexibility without code.** A new event schema is a `mapping` file (JSONPath → alert fields + fingerprint), a new rule is YAML with conditions, a new action is YAML. An event with an unknown schema goes to `events.unmapped` and waits for a mapping; once one is added it is processed. Configuration lives in Postgres and propagates via `NOTIFY`, with no restart.
+- **Channels and fallback.** Channels come from each person's preferences (e.g. `critical → sms` during working hours, `email` otherwise). Transient error: retries (1 s, 5 s, 30 s). Permanent error: next channel in the chain. Chain exhausted: DLQ. The UI is always the last fallback channel.
+- **Runbooks with approval gates.** `*.yaml` is an automatic runbook (steps run in order; a step with `approval: required` or an action with `risk: high` waits for a human). `*.md` / `*.txt` is a manual runbook attached to notifications. An unknown action degrades to a manual step instead of breaking the runbook.
 
-## Wydajność
+## Performance
 
-Zmierzone `loadgen` (HTTP + Kafka, 3 schematy, 50% duplikatów), 12 partycji, wszystkie serwisy w Dockerze na jednym laptopie. Metodyka, skrypty i pełne wyniki: [`docs/LOADTEST.md`](docs/LOADTEST.md).
+Measured with `loadgen` (HTTP + Kafka, 3 schemas, 50% duplicates), 12 partitions, all services in Docker on a single laptop. Methodology, scripts and full results: [`docs/LOADTEST.md`](docs/LOADTEST.md).
 
-| Konfiguracja | Przepustowość | Latencja e2e (`delivered_at − received_at`) | Max lag |
+| Setup | Throughput | End-to-end latency (`delivered_at − received_at`) | Max lag |
 |---|---|---|---|
-| 1 instancja każdego serwisu | 500 msg/s, 0 błędów | email p50 **9,5 ms**, p99 **20,9 ms** | 3 (`sender`) |
-| `lifecycle` ×2, `sender` ×2 | 500 msg/s, 0 błędów | p50 17–123 ms, p99 186–235 ms (zależnie od kanału) | 28 (`sender`) |
-| Ewaluacja reguł (`crates/condition`) | ~93 000 zdarzeń/s przy 100 regułach | ~10,8 µs / zdarzenie | n/d |
+| 1 instance of each service | 500 msg/s, 0 errors | email p50 **9.5 ms**, p99 **20.9 ms** | 3 (`sender`) |
+| `lifecycle` ×2, `sender` ×2 | 500 msg/s, 0 errors | p50 17–123 ms, p99 186–235 ms (depends on channel) | 28 (`sender`) |
+| Rule evaluation (`crates/condition`) | ~93,000 events/s at 100 rules | ~10.8 µs / event | n/a |
 
-Dedup zweryfikowany liczbowo: suma liczników alertów rośnie dokładnie o liczbę wysłanych zdarzeń, bez duplikatów `idempotency_key`. Pomiar wcześniejszy ujawnił wąskie gardło w `sender` (lag ~10 tys.), które usunęło współbieżne przetwarzanie.
+Dedup is verified numerically: the sum of alert counters grows by exactly the number of events sent, with no duplicate `idempotency_key`. An earlier measurement exposed a bottleneck in `sender` (lag ~10k), which concurrent processing removed.
 
-## Bezpieczeństwo akcji
+## Action safety
 
-- Wykonujemy wyłącznie akcje z rejestru; akcja `risk: high` **zawsze** wymaga zatwierdzenia, niezależnie od treści runbooka.
-- Host akcji HTTP musi być na `ACTION_HOST_ALLOWLIST`; przekierowania poza listę są blokowane, rozmiar odpowiedzi ograniczony.
-- Sekrety w konfiguracji tylko jako `${ENV}`; szablony (`minijinja`) w sandboxie bez dostępu do plików i zmiennych środowiskowych.
-- Audyt: każda zmiana stanu alertu i kroku runbooka trafia do dziennika (kto, co, kiedy, wynik).
-- Uwierzytelnianie: sesje operatorów (PBKDF2 w Postgresie, `POST /auth/login`), tożsamość wiązana po stronie serwera.
+- Only actions from the registry are executed; an action with `risk: high` **always** requires approval, regardless of what the runbook says.
+- The host of an HTTP action must be on `ACTION_HOST_ALLOWLIST`; redirects outside the list are blocked and response size is capped.
+- Secrets in configuration are only `${ENV}` references; templates (`minijinja`) run in a sandbox with no access to files or environment variables.
+- Audit: every alert and runbook step state change is written to a log (who, what, when, result).
+- Authentication: operator sessions (PBKDF2 in Postgres, `POST /auth/login`), identity bound server-side.
 
-## Rozszerzanie
+## Extending
 
-Formaty plików = typy z `crates/contracts/src/config.rs`, przykłady w [`config/`](config/README.md); wszystko też edytowalne z UI.
+File formats are the types in `crates/contracts/src/config.rs`, with examples in [`config/`](config/README.md); everything is also editable from the UI.
 
-| Chcę dodać | Jak |
+| To add | How |
 |---|---|
-| źródło Kafki | `config/sources/<nazwa>.yaml` (`topic`, `schema`, `format`) |
-| schemat zdarzeń | `config/mappings/<schema>.yaml` albo klik w UI na zdarzeniu UNMAPPED |
-| regułę | `config/rules/<id>.yaml`: `condition` (all/any/not; `eq, ne, in, gt, gte, lt, lte, contains, regex, exists, glob`), `recipients`, `presentation` |
-| akcję runbooka | `config/actions/<nazwa>.yaml` (`kind: http`, `risk`, URL z allowlisty) |
-| runbook | `config/runbooks/*.yaml` (automatyczny) lub `*.md` / `*.txt` (ręczny) |
-| kanał dostarczania | jeden adapter implementujący `ChannelAdapter` w `crates/sender`; retry, fallback, DLQ i idempotencja są wspólne |
+| a Kafka source | `config/sources/<name>.yaml` (`topic`, `schema`, `format`) |
+| an event schema | `config/mappings/<schema>.yaml`, or click through an UNMAPPED event in the UI |
+| a rule | `config/rules/<id>.yaml`: `condition` (all/any/not; `eq, ne, in, gt, gte, lt, lte, contains, regex, exists, glob`), `recipients`, `presentation` |
+| a runbook action | `config/actions/<name>.yaml` (`kind: http`, `risk`, URL from the allowlist) |
+| a runbook | `config/runbooks/*.yaml` (automatic) or `*.md` / `*.txt` (manual) |
+| a delivery channel | one adapter implementing `ChannelAdapter` in `crates/sender`; retry, fallback, DLQ and idempotency are shared |
 
-Opcjonalnie runbook w wolnym tekście można zamienić na kroki przez LLM (`LLM_PROVIDER=local|api`, domyślnie wyłączone w produkcie). Do modelu trafia tylko opis runbooka po redakcji URL-i, IP i hostów, bez danych alertów; wynik klasyfikuje rejestr akcji i zawsze wymaga akceptacji człowieka.
+Optionally, a free-text runbook can be turned into steps by an LLM (`LLM_PROVIDER=local|api`, off by default in the product). Only the runbook description is sent to the model, after redacting URLs, IPs and hosts, and never any alert data. The action registry classifies the result and a human must always accept it.
 
-## Struktura repo
+## Repository layout
 
-| Ścieżka | Co |
+| Path | What |
 |---|---|
-| `crates/contracts`, `crates/common` | typy zdarzeń, konfiguracji, topiki, klucze idempotencji; Kafka, Postgres |
-| `crates/ingest`, `crates/lifecycle` | przyjmowanie zdarzeń, normalizacja, dedup, cykl życia alertu |
-| `crates/condition`, `crates/router`, `crates/sender` | warunki i szablony, routing, dostarczanie |
-| `crates/runbooks`, `crates/mock-targets` | silnik runbooków, rejestr akcji, udawane usługi |
-| `crates/api` | REST + SSE dla UI ([`contracts/openapi.yaml`](contracts/openapi.yaml)) |
-| `crates/loadgen` | generator ruchu i skrypty pomiarowe |
-| `config/`, `migrations/` | konfiguracja (seed + edycja na żywo), schemat Postgresa |
-| `ui/` | konsola operatora (React + Vite + TypeScript) |
-| `scripts/e2e/` | testy end-to-end |
+| `crates/contracts`, `crates/common` | event, config and topic types, idempotency keys; Kafka, Postgres |
+| `crates/ingest`, `crates/lifecycle` | event intake, normalization, dedup, alert lifecycle |
+| `crates/condition`, `crates/router`, `crates/sender` | conditions and templates, routing, delivery |
+| `crates/runbooks`, `crates/mock-targets` | runbook engine, action registry, fake services |
+| `crates/api` | REST + SSE for the UI ([`contracts/openapi.yaml`](contracts/openapi.yaml)) |
+| `crates/loadgen` | traffic generator and measurement scripts |
+| `config/`, `migrations/` | configuration (seed + live editing), Postgres schema |
+| `ui/` | operator console (React + Vite + TypeScript) |
+| `scripts/e2e/` | end-to-end tests |
 
-## Testy
+## Tests
 
 ```bash
-cargo test --workspace                     # testy jednostkowe (część wymaga działającego Postgresa)
-scripts/e2e/first-flow.sh                  # pierwszy przepływ end-to-end
-scripts/e2e/appendix-a.sh                  # 3 schematy + dedup 500 + reopen
-scripts/e2e/runbooks.sh                    # runbooki AUTOMATIC i MANUAL
-scripts/e2e/resilience.sh                  # restarty serwisów, fallback kanałów, DLQ
+cargo test --workspace                     # unit tests (some need a running Postgres)
+scripts/e2e/first-flow.sh                  # first end-to-end flow
+scripts/e2e/appendix-a.sh                  # 3 schemas + dedup of 500 + reopen
+scripts/e2e/runbooks.sh                    # AUTOMATIC and MANUAL runbooks
+scripts/e2e/resilience.sh                  # service restarts, channel fallback
 ```
 
-## Co jest symulowane
+## What is simulated
 
-SMS i telefon (mock), SMTP (Mailpit), usługi, na których działają akcje runbooków (`mock-targets`). Podmiana na prawdziwych dostawców: [`docs/MOCKS.md`](docs/MOCKS.md).
+SMS and phone (mock), SMTP (Mailpit), and the services that runbook actions act on (`mock-targets`). Swapping in real providers: [`docs/MOCKS.md`](docs/MOCKS.md).
 
-## Użycie AI
+## Use of AI
 
-- **Narzędzia:** Claude Code z workflow OpenSpec (propose, apply) do planowania i implementacji; wymagania mają scenariusze służące jako przypadki testowe ([`openspec/`](openspec/)).
-- **Kontrola:** każdą zmianę przeglądał człowiek przed merge'em; typecheck, clippy i testy musiały przechodzić. Kod wygenerowany przez AI podlega tym samym regułom bezpieczeństwa co ręczny.
-- **Prywatność:** do narzędzi AI trafiał wyłącznie kod repozytorium i syntetyczne dane z `crates/contracts/fixtures/`, bez danych produkcyjnych i prawdziwych sekretów.
+- **Tools:** Claude Code with the OpenSpec workflow (propose, apply) for planning and implementation; requirements have scenarios that serve as test cases ([`openspec/`](openspec/)).
+- **Oversight:** a human reviewed every change before merge; typecheck, clippy and tests had to pass. AI-generated code is subject to the same security rules as hand-written code.
+- **Privacy:** only this repository's code and synthetic data from `crates/contracts/fixtures/` were sent to AI tools, never production data or real secrets.
