@@ -1,7 +1,7 @@
 // Prymitywy UI wspólne dla wszystkich ekranów (bez wiedzy o domenie), na komponentach ADS (design.md D5).
 // API eksportów sprzed migracji zachowane, żeby ekrany zmieniały się minimalnie. Kolory/odstępy tylko z tokenów.
 // Klasy `card`, `field`, `segmented` zostają jako zaczepy układu dla CSS ekranów (usuwane w fazie 3).
-import { useId, useState, type ReactElement, type ReactNode } from "react";
+import { forwardRef, useId, useState, type ReactElement, type ReactNode } from "react";
 import Button from "@atlaskit/button/new";
 import ButtonGroup from "@atlaskit/button/button-group";
 import { ErrorMessage, HelperMessage, Label } from "@atlaskit/form";
@@ -16,6 +16,7 @@ import AdsTabs, { Tab, TabList, TabPanel } from "@atlaskit/tabs";
 import AdsTextArea from "@atlaskit/textarea";
 import Textfield from "@atlaskit/textfield";
 import { token } from "@atlaskit/tokens";
+import Tooltip from "@atlaskit/tooltip";
 import { Copy } from "lucide-react";
 import { adsIcon } from "./icons";
 import { statusOf, type StatusDomain, type StatusValue } from "./status";
@@ -150,21 +151,23 @@ export function Tabs<T extends string>(props: {
   tabs: { value: T; label: ReactNode }[];
   value: T;
   onChange: (v: T) => void;
-  /** Nazwa grupy zakładek (zachowana w API; ADS TabList nie przyjmuje etykiety). */
+  /** Nazwa grupy zakładek — ADS TabList nie przyjmuje etykiety, więc nazywa ją otaczająca grupa. */
   label: string;
   children?: ReactNode;
 }) {
-  const { tabs, value, onChange, children } = props;
+  const { tabs, value, onChange, label, children } = props;
   const id = useId();
   return (
-    <AdsTabs id={id} selected={Math.max(0, tabs.findIndex((t) => t.value === value))} onChange={(i) => onChange(tabs[i].value)}>
-      <TabList>
-        {tabs.map((t) => (
-          <Tab key={t.value}>{t.label}</Tab>
-        ))}
-      </TabList>
-      {children !== undefined && tabs.map((t) => <TabPanel key={t.value}>{t.value === value ? children : null}</TabPanel>)}
-    </AdsTabs>
+    <div role="group" aria-label={label}>
+      <AdsTabs id={id} selected={Math.max(0, tabs.findIndex((t) => t.value === value))} onChange={(i) => onChange(tabs[i].value)}>
+        <TabList>
+          {tabs.map((t) => (
+            <Tab key={t.value}>{t.label}</Tab>
+          ))}
+        </TabList>
+        {children !== undefined && tabs.map((t) => <TabPanel key={t.value}>{t.value === value ? children : null}</TabPanel>)}
+      </AdsTabs>
+    </div>
   );
 }
 
@@ -261,9 +264,13 @@ export function CopyButton({ text, label = "Kopiuj" }: { text: string; label?: s
   }
   return (
     <>
-      <Button spacing="compact" iconBefore={CopyIcon} onClick={copy} aria-label={`${label}: ${text}`}>
-        {label}
-      </Button>
+      <Tooltip content={text}>
+        {(tooltipProps) => (
+          <Button {...tooltipProps} spacing="compact" iconBefore={CopyIcon} onClick={copy} aria-label={`${label}: ${text}`}>
+            {label}
+          </Button>
+        )}
+      </Tooltip>
       <span role="status">
         {status !== "idle" && (
           <Text size="small" color={status === "ok" ? "color.text.success" : "color.text.danger"}>
@@ -336,10 +343,11 @@ type TextfieldProps = Parameters<typeof Textfield>[0];
 type TextAreaProps = Parameters<typeof AdsTextArea>[0];
 
 /** Pole tekstowe (Textfield); przyjmuje propsy natywnego `<input>`, `aria-invalid` z `Field` zaznacza błąd. */
-export function TextInput({ disabled, ...props }: TextfieldProps & { disabled?: boolean }) {
+// forwardRef: ekrany ustawiają fokus przez ref (ActionForm → pole „Nazwa”).
+export const TextInput = forwardRef<HTMLInputElement, TextfieldProps & { disabled?: boolean }>(function TextInput({ disabled, ...props }, ref) {
   // eslint-disable-next-line @atlaskit/design-system/no-readonly-or-disabled-inputs -- prymityw przekazuje `disabled` z ekranu
-  return <Textfield {...props} isDisabled={props.isDisabled ?? disabled} isInvalid={props.isInvalid ?? props["aria-invalid"] === true} />;
-}
+  return <Textfield {...props} ref={ref} isDisabled={props.isDisabled ?? disabled} isInvalid={props.isInvalid ?? props["aria-invalid"] === true} />;
+});
 
 /** Pole wielowierszowe (TextArea); jak `TextInput`. */
 export function TextArea({ disabled, ...props }: TextAreaProps & { disabled?: boolean }) {

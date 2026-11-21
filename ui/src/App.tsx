@@ -12,19 +12,23 @@ import {
   SideNavigation,
   type CustomItemComponentProps,
 } from "@atlaskit/side-navigation";
+import { lazy, Suspense } from "react";
 import { Box } from "@atlaskit/primitives/compiled";
 import { matchPath, NavLink, Route, Routes, useLocation } from "react-router-dom";
-import AlertFeed from "./screens/AlertFeed";
-import AlertDetail from "./screens/AlertDetail";
-import Approvals from "./screens/Approvals";
-import MockOutbox from "./screens/MockOutbox";
-import Rules from "./screens/Rules";
-import Mappings from "./screens/Mappings";
-import Actions from "./screens/Actions";
-import Runbooks from "./screens/Runbooks";
-import People from "./screens/People";
-import DevComponents from "./screens/DevComponents";
 import SessionBar from "./components/SessionBar";
+import { Loading } from "./ui/primitives";
+import AlertFeed from "./screens/AlertFeed";
+
+// D14: ekrany poza startowym feedem w osobnych chunkach (główny chunk > 500 kB), patrz bundle.md.
+const AlertDetail = lazy(() => import("./screens/AlertDetail"));
+const Approvals = lazy(() => import("./screens/Approvals"));
+const MockOutbox = lazy(() => import("./screens/MockOutbox"));
+const Rules = lazy(() => import("./screens/Rules"));
+const Mappings = lazy(() => import("./screens/Mappings"));
+const Actions = lazy(() => import("./screens/Actions"));
+const Runbooks = lazy(() => import("./screens/Runbooks"));
+const People = lazy(() => import("./screens/People"));
+const DevComponents = lazy(() => import("./screens/DevComponents"));
 
 const NAV: { to: string; label: string; group: "ops" | "config" }[] = [
   { to: "/", label: "Alerty", group: "ops" },
@@ -87,6 +91,7 @@ export default function App() {
         </LeftSidebar>
         <Main id="tresc" skipLinkTitle="Treść">
           <Box padding="space.300">
+            <Suspense fallback={<Loading />}>
             <Routes>
               <Route path="/" element={<AlertFeed />} />
               <Route path="/alerts/:alertId" element={<AlertDetail />} />
@@ -99,6 +104,7 @@ export default function App() {
               <Route path="/people" element={<People />} />
               <Route path="/dev/components" element={<DevComponents />} />
             </Routes>
+            </Suspense>
           </Box>
         </Main>
       </Content>

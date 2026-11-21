@@ -1,8 +1,5 @@
-/* Most zmiennych (D4): stare zmienne jako aliasy tokenów ADS (`var(--ds-*)`), bez surowych kolorów.
-   Ekrany przestają ich używać w fazie 3; zostaje tylko paleta reguł (--red … --gray), nadawana w konfiguracji reguły. */
+/* Paleta reguł (D4): nazwy kolorów z konfiguracji reguły → tokeny akcentowe ADS (components/colors.ts). */
 :root {
-  --bg: var(--ds-surface); --surface: var(--ds-surface); --surface-muted: var(--ds-surface-sunken); --border: var(--ds-border);
-  --text: var(--ds-text); --text-muted: var(--ds-text-subtle); --accent: var(--ds-link); --focus: var(--ds-border-focused);
   --red: var(--ds-text-accent-red); --red-bg: var(--ds-background-accent-red-subtlest);
   --orange: var(--ds-text-accent-orange); --orange-bg: var(--ds-background-accent-orange-subtlest);
   --yellow: var(--ds-text-accent-yellow); --yellow-bg: var(--ds-background-accent-yellow-subtlest);
@@ -10,30 +7,13 @@
   --blue: var(--ds-text-accent-blue); --blue-bg: var(--ds-background-accent-blue-subtlest);
   --purple: var(--ds-text-accent-purple); --purple-bg: var(--ds-background-accent-purple-subtlest);
   --gray: var(--ds-text-accent-gray); --gray-bg: var(--ds-background-accent-gray-subtlest);
-  --radius: var(--ds-radius-medium); --space-1: var(--ds-space-050); --space-2: var(--ds-space-100); --space-3: var(--ds-space-150);
-  --space-4: var(--ds-space-200); --space-6: var(--ds-space-300);
-  --font-mono: var(--ds-font-family-code);
 }
 :focus-visible { outline: var(--ds-border-width-focused) solid var(--ds-border-focused); outline-offset: var(--ds-space-025); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
-/* Klasy dla niezmigrowanych ekranów (natywne kontrolki i stare klasy); usuwane w zadaniu 3.5.
-   `:where()` = specyficzność 0, żeby nie nadpisywać stylów komponentów ADS. */
-:where(button) { font: inherit; cursor: pointer; border: var(--ds-border-width) solid var(--ds-border); background: var(--ds-background-neutral-subtle); color: var(--ds-text); border-radius: var(--ds-radius-small); padding: var(--ds-space-075) var(--ds-space-150); }
-:where(button:hover:not(:disabled)) { background: var(--ds-background-neutral-subtle-hovered); }
-:where(button:disabled) { cursor: not-allowed; color: var(--ds-text-disabled); background: var(--ds-background-disabled); }
-:where(button.primary) { background: var(--ds-background-brand-bold); border-color: var(--ds-background-brand-bold); color: var(--ds-text-inverse); }
-:where(button.primary:hover:not(:disabled)) { background: var(--ds-background-brand-bold-hovered); }
-:where(button.danger) { color: var(--ds-text-danger); border-color: var(--ds-border-danger); }
-:where(input, select, textarea) { font: inherit; color: var(--ds-text); background: var(--ds-background-input); border: var(--ds-border-width) solid var(--ds-border-input); border-radius: var(--ds-radius-small); padding: var(--ds-space-075) var(--ds-space-100); }
-:where(input[type="checkbox"], input[type="radio"]) { padding: 0; }
-:where(input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"]) { border-color: var(--ds-border-danger); }
 .muted { color: var(--ds-text-subtle); }
 .mono { font-family: var(--ds-font-family-code); font-size: 0.93em; }
-.error-box { color: var(--ds-text-danger); background: var(--ds-background-danger); border-radius: var(--ds-radius-medium); padding: var(--ds-space-100) var(--ds-space-150); }
 .field-hint { font: var(--ds-font-body-small); color: var(--ds-text-subtle); }
 .field-error { font: var(--ds-font-body-small); color: var(--ds-text-danger); font-weight: var(--ds-font-weight-semibold); }
-main table:not(.data-table) th { text-align: left; }
 .dev-components .row { display: flex; gap: var(--ds-space-075); flex-wrap: wrap; align-items: center; }
-.feed-table-wrap { position: relative; } /* jak .table-wrap w ui.css; znika z migracją feedu (G1) */
