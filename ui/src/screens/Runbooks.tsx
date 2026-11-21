@@ -2,11 +2,15 @@
 // Edycja wyłącznie w plikach – tasks.md 15.4.
 import { api, type Schemas } from "../api/client";
 import { useResource } from "../api/useResource";
-import { Badge } from "../components/Badges";
+import { CodeBlock } from "@atlaskit/code";
+import Heading from "@atlaskit/heading";
+import { Text } from "@atlaskit/primitives/compiled";
+import Lozenge from "@atlaskit/lozenge";
+import SectionMessage from "@atlaskit/section-message";
 import Markdown from "../components/Markdown";
 import ConditionView from "../components/ConditionView";
 import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
-import { Empty, ErrorBox, Loading } from "../ui/primitives";
+import { Empty, ErrorBox, Loading, PageHeader, StatusLozenge } from "../ui/primitives";
 import "./Runbooks.css";
 
 type Runbook = Schemas["RunbookDef"];
@@ -26,20 +30,18 @@ function StepItem({ step }: { step: Step }) {
       <div>
         <div className="step-head">
           <span className="step-text">{step.text}</span>
-          <Badge tone="gray">{STEP_TYPE[step.type] ?? step.type}</Badge>
-          <Badge tone={step.automation === "automated" ? "blue" : "yellow"}>
-            {step.automation === "automated" ? "automatyczny" : "ręczny"}
-          </Badge>
-          {step.approval === "required" && <Badge tone="orange">wymaga zatwierdzenia</Badge>}
+          <Lozenge>{STEP_TYPE[step.type] ?? step.type}</Lozenge>
+          <StatusLozenge domain="stepAutomation" value={step.automation} />
+          {step.approval === "required" && <StatusLozenge domain="approval" value={step.approval} />}
           <span className="runbook-meta mono">{step.id}</span>
         </div>
         {step.action && (
           <div className="step-action">
-            <span className="runbook-meta">akcja:</span>
+            <Text size="small" color="color.text.subtle">akcja:</Text>
             <span className="mono">{step.action}</span>
           </div>
         )}
-        {hasParams && <pre className="step-params">{JSON.stringify(step.params, null, 2)}</pre>}
+        {hasParams && <CodeBlock language="json" text={JSON.stringify(step.params, null, 2)} />}
         {step.condition && <div className="step-condition">Jeśli (tylko opis, nie jest wykonywane): {step.condition}</div>}
       </div>
     </li>
@@ -54,7 +56,7 @@ function RunbookItem({ rb }: { rb: Runbook }) {
     <details className="runbook">
       <summary>
         <span className="runbook-title">{rb.title}</span>
-        <Badge tone={isManual ? "gray" : "blue"}>{isManual ? "ręczny" : "automatyczny"}</Badge>
+        <StatusLozenge domain="runbookKind" value={rb.kind} />
         <span className="runbook-meta mono">{rb.id}</span>
         {!isManual && <span className="runbook-meta">{steps.length} kroków</span>}
         {ruleIds.length > 0 && <span className="runbook-meta">reguły: {ruleIds.length}</span>}
@@ -62,11 +64,11 @@ function RunbookItem({ rb }: { rb: Runbook }) {
       <div className="runbook-body">
         <SourceFile path={rb.source_file} />
         <section>
-          <h3>Dopasowanie (matches)</h3>
+          <Heading size="xsmall" as="h3">Dopasowanie (matches)</Heading>
           <ConditionView condition={rb.matches} />
         </section>
         <section>
-          <h3>Przypięte reguły (rule_ids)</h3>
+          <Heading size="xsmall" as="h3">Przypięte reguły (rule_ids)</Heading>
           {ruleIds.length ? (
             <div className="rule-chips">
               {ruleIds.map((id) => (
@@ -76,17 +78,17 @@ function RunbookItem({ rb }: { rb: Runbook }) {
               ))}
             </div>
           ) : (
-            <span className="muted">brak – runbook dopasowuje się tylko po warunku</span>
+            <Text color="color.text.subtle">brak – runbook dopasowuje się tylko po warunku</Text>
           )}
         </section>
         {isManual ? (
           <section>
-            <h3>Treść (dołączana do powiadomień)</h3>
-            {rb.body ? <Markdown source={rb.body} /> : <span className="muted">brak treści</span>}
+            <Heading size="xsmall" as="h3">Treść (dołączana do powiadomień)</Heading>
+            {rb.body ? <Markdown source={rb.body} /> : <Text color="color.text.subtle">brak treści</Text>}
           </section>
         ) : (
           <section>
-            <h3>Kroki ({steps.length})</h3>
+            <Heading size="xsmall" as="h3">Kroki ({steps.length})</Heading>
             {steps.length ? (
               <ol className="steps">
                 {steps.map((s) => (
@@ -94,7 +96,7 @@ function RunbookItem({ rb }: { rb: Runbook }) {
                 ))}
               </ol>
             ) : (
-              <span className="muted">brak kroków</span>
+              <Text color="color.text.subtle">brak kroków</Text>
             )}
           </section>
         )}
@@ -112,26 +114,27 @@ export default function Runbooks() {
 
   return (
     <section>
-      <h1>Runbooki</h1>
+      <PageHeader>Runbooki</PageHeader>
       <ReadOnlyNote>
         Runbooki edytuje się w plikach konfiguracyjnych (wskazanych przy każdym runbooku); zmiany są ładowane bez restartu.
       </ReadOnlyNote>
 
       {errors.length > 0 && (
-        <div className="error-box runbook-errors" role="alert">
-          <strong>Nie załadowano plików runbooków ({errors.length}):</strong>
-          <ul>
-            {errors.map((e, i) => (
-              <li key={i}>
-                <span className="mono">
-                  {e.file}
-                  {e.line != null ? `:${e.line}` : ""}
-                </span>
-                {" – "}
-                {e.error}
-              </li>
-            ))}
-          </ul>
+        <div role="alert" className="runbook-errors">
+          <SectionMessage appearance="error" headingLevel="h2" title={`Nie załadowano plików runbooków (${errors.length})`}>
+            <ul>
+              {errors.map((e, i) => (
+                <li key={i}>
+                  <span className="mono">
+                    {e.file}
+                    {e.line != null ? `:${e.line}` : ""}
+                  </span>
+                  {" – "}
+                  {e.error}
+                </li>
+              ))}
+            </ul>
+          </SectionMessage>
         </div>
       )}
 
