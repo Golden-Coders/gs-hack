@@ -57,3 +57,14 @@ Wybrany wariant: `React.lazy` dla wszystkich ekranów poza startowym feedem (`Al
 Względem stanu po fazie 2: główny chunk −299 kB raw (−92 kB gzip); względem sprzed zmian (622.00 / 194.12 kB) nadal ×1.56 raw / ×1.44 gzip.
 
 Dlaczego główny chunk zostaje > 500 kB: nawet z leniwie ładowanymi wszystkimi ekranami (także `AlertFeed`) ma 947 kB — to sama powłoka i runtime ADS. Udział pakietów w głównym chunku (z source map, raw): `react-dom` 129 kB, `@atlaskit/react-select` 87 kB (`Select` w `SessionBar`), `@atlaskit/tokens` 58 kB, `@atlaskit/feature-gate-js-client` 58 kB + `@statsig/*` 75 kB + `@atlaskit/flag-client` 23 kB (flagi funkcji ciągnięte przez pakiety ADS, nieużywane przez aplikację), `@atlaskit/primitives` 55 kB, `@atlaskit/top-layer` 40 kB, `react-router` 38 kB, `@atlaskit/button` 31 kB, `@atlaskit/page-layout` 29 kB, `@atlaskit/dynamic-table` 28 kB (feed), `lucide-react` 22 kB. Zejście poniżej progu wymagałoby `manualChunks` (podział na pliki bez zmniejszenia tego, co ładuje się przy starcie) albo usunięcia powłoki ADS — poza zakresem; próg traktujemy jako znany wyjątek (D14).
+
+## Po fazie 5 (zadanie 5.7: skróty klawiszowe, akcje zbiorcze i paleta komend)
+
+| Plik | raw | gzip |
+|---|---|---|
+| `dist/assets/index-*.css` | 108.32 kB | 22.44 kB |
+| `dist/assets/index-*.js` (główny) | 1 058.24 kB | 307.39 kB |
+| `CommandPalette` / `@atlaskit/menu` / `@atlaskit/modal-dialog` w powłoce | włączone do powłoki | ~88 kB raw / ~28 kB gzip |
+| `index-*.js` (refractor, dynamiczny) | 616.32 kB | 222.13 kB |
+
+Wzrost głównego chunka JS o ~88 kB wynika z dołączenia `CommandPalette` (`ModalDialog` + `@atlaskit/menu`) do głównej powłoki aplikacji (`App.tsx`), dostępnej globalnie pod skrótem `⌘K`/`Ctrl+K`. Główny chunk stabilny, bramka zielona.
