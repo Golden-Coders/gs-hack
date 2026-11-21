@@ -10,12 +10,12 @@ Kontynuacja zarchiwizowanego `alerting-service-mvp` (numery w nawiasach kwadrato
 
 - [ ] 2.1 [19.F1 → 18.4] `scripts/e2e/resilience.sh`: ruch z `loadgen`, w trakcie `docker compose stop mailpit`, wyłączenie SMS przez `PUT /mock/channels/sms`, restart kolejno `ingest`, `lifecycle`, `router`, `sender`; weryfikacja: liczba alertów = liczba unikalnych fingerprintów, brak duplikatów kluczy idempotencji w `deliveries`, fallback i DLQ widoczne w API
 - [x] 2.2 Wyjaśnić różnicę 3 alertów względem unikalnych fingerprintów z pomiaru 1 (14 928 vs 14 931, rozgrzewka 1 019 vs 1 022); weryfikacja: przyczyna opisana w `docs/LOADTEST.md` (błąd liczenia w `loadgen` albo utrata w potoku — wtedy poprawka z testem)
-- [ ] 2.3 [19.G1 → 18.5] `docker compose up -d --scale lifecycle=2 --scale sender=2` pod obciążeniem; weryfikacja: dedup poprawny (jak w 2.1), pomiar dopisany do `docs/LOADTEST.md`
+- [x] 2.3 [19.G1 → 18.5] `docker compose up -d --scale lifecycle=2 --scale sender=2` pod obciążeniem; weryfikacja: dedup poprawny (jak w 2.1), pomiar dopisany do `docs/LOADTEST.md`
 - [ ] 2.4 (opcjonalne, po 2.3) `sender`: przetwarzanie współbieżne z commitem offsetów w kolejności + pula połączeń SMTP (design, ustalenie 4); weryfikacja: `cargo test -p sender` zielone, test idempotencji bez zmian, lag `sender` przy 500 msg/s nie rośnie
 
 ## 3. Pomiar końcowy (P1+P2)
 
-- [ ] 3.1 [19.H2 → 5.3] Pomiar końcowy w `docs/LOADTEST.md` na obrazach z `main` (ustalenie 1), z rozbiciem p50/p99 na kanały, także bez email; weryfikacja: wiersz „Pomiar końcowy” wypełniony (msg/s, p50, p99, max lag, konfiguracja, komenda)
+- [x] 3.1 [19.H2 → 5.3] Pomiar końcowy w `docs/LOADTEST.md` na obrazach z `main` (ustalenie 1), z rozbiciem p50/p99 na kanały, także bez email; weryfikacja: wiersz „Pomiar końcowy” wypełniony (msg/s, p50, p99, max lag, konfiguracja, komenda)
 
 ## 4. Weryfikacja UI na prawdziwym backendzie (P4)
 
