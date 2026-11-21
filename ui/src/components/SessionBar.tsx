@@ -27,16 +27,30 @@ export default function SessionBar() {
     <div className="session">
       <label>
         Działam jako
-        <select value={personId ?? ""} onChange={(e) => setPersonId(e.target.value || null)}>
-          {!personId && <option value="">—</option>}
-          {personId && !people.some((p) => p.id === personId) && <option value={personId}>{personId}</option>}
-          {people.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        {people.length ? (
+          <select value={personId ?? ""} onChange={(e) => setPersonId(e.target.value || null)}>
+            {!personId && <option value="">—</option>}
+            {personId && !people.some((p) => p.id === personId) && <option value={personId}>{personId}</option>}
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          // Lista osób niedostępna (np. backend bez /people) – identyfikator wpisany ręcznie.
+          <input
+            defaultValue={personId ?? ""}
+            placeholder="np. anna"
+            aria-describedby="person-hint"
+            onBlur={(e) => setPersonId(e.target.value.trim() || null)}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+          />
+        )}
       </label>
+      {!people.length && (
+        <div id="person-hint" className="session-hint">Lista osób niedostępna – wpisz identyfikator.</div>
+      )}
       <label>
         Backend
         <select value={backend} onChange={(e) => switchBackend(e.target.value as Backend)}>

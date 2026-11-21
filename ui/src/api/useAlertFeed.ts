@@ -2,9 +2,10 @@
 // - alert_changed → pełne podsumowanie z `GET /alerts/{id}` (zdarzenie nie ma tytułu, zespołów ani severity po regule)
 // - ui_event alert_count → licznik i ostatnie wystąpienie w miejscu (bez zapytania, bo bywa ich setki)
 // - resync → scalenie alertów dociągniętych po przerwie
-import { useCallback, useEffect, useState } from "react";
+// - gdy strumień milczy → okresowe GET /alerts (usePollWhenQuiet)
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Schemas } from "./client";
-import { useStream } from "./stream";
+import { usePollWhenQuiet, useStream } from "./stream";
 
 type Alert = Schemas["AlertSummary"];
 
@@ -14,6 +15,10 @@ export function useAlertFeed() {
   const [error, setError] = useState<string | null>(null);
   // id → czas ostatniej zmiany na żywo, do krótkiego wyróżnienia wiersza
   const [touched, setTouched] = useState<Map<string, number>>(new Map());
+
+  // Kopia stanu do porównań poza setState (dociąganie wyróżnia tylko faktycznie zmienione alerty).
+  const current = useRef(alerts);
+  current.current = alerts;
 
   const merge = useCallback((items: Alert[], live: boolean) => {
     setAlerts((prev) => {
@@ -30,6 +35,17 @@ export function useAlertFeed() {
       });
     }
   }, []);
+
+  const poll = useCallback(async () => {
+    const { data } = await api.GET("/alerts");
+    if (!data) return;
+    const changed = data.filter((a) => {
+      const old = current.current.get(a.id);
+      return !old || old.last_seen !== a.last_seen || old.state !== a.state || old.count !== a.count;
+    });
+    if (changed.length) merge(changed, true);
+  }, [merge]);
+  usePollWhenQuiet(() => void poll());
 
   const refetch = useCallback(
     async (alertId: string) => {
