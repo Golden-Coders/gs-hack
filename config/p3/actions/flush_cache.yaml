@@ -1,0 +1,10 @@
+name: flush_cache
+kind: http
+risk: high
+description: Flush the cache of a service
+http:
+  method: POST
+  url: "http://mock-targets:8090/cache/{{service}}/flush"
+  headers:
+    Authorization: "Bearer ${CACHE_ADMIN_TOKEN}"
+  timeout_ms: 5000

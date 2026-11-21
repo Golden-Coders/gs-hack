@@ -1,0 +1,10 @@
+name: retry_workflow
+kind: http
+risk: low
+description: Ponawia workflow o podanym workflowId
+params_schema: { type: object, required: [workflowId], properties: { workflowId: { type: string } } }
+http:
+  method: POST
+  url: "http://mock-targets:8090/retry_workflow"
+  body: '{"workflowId": "{{workflowId}}"}'
+  timeout_ms: 5000

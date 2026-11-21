@@ -72,23 +72,23 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 ## 10. Rejestr akcji i usługi docelowe (P3)
 
 - [ ] 10.1 Rejestr z akcjami wbudowanymi `http_get`, `escalate`, `notify` (te dwie publikują `deliveries.requested`); weryfikacja: test `escalate` tworzy zlecenia dla członków zespołu
-- [ ] 10.2 Akcje deklaratywne HTTP z tabeli `actions` + seed `config/p3/actions/`, szablony URL/body przez `condition`, referencje `${ENV}` do sekretów, hot reload; CRUD w `api/p3.rs`; weryfikacja: akcja dodana przez API jest dostępna bez restartu, sekret nie wycieka w odpowiedzi API
-- [ ] 10.3 Zabezpieczenia: allowlista hostów, brak przekierowań poza allowlistę, timeout, limit odpowiedzi, `risk: high` ⇒ approval; weryfikacja: testy scenariuszy z `action-registry` (host spoza allowlisty, wolna usługa, pominięcie zatwierdzenia)
-- [ ] 10.4 `mock-targets` z endpointami `retry_workflow`, `restart_service`, `open_ticket` i logiem wywołań (z obsługą `Idempotency-Key`); weryfikacja: wywołanie widoczne w `GET /calls`
+- [x] 10.2 Akcje deklaratywne HTTP z tabeli `actions` + seed `config/p3/actions/`, szablony URL/body przez `condition`, referencje `${ENV}` do sekretów, hot reload; CRUD w `api/p3.rs`; weryfikacja: akcja dodana przez API jest dostępna bez restartu, sekret nie wycieka w odpowiedzi API
+- [x] 10.3 Zabezpieczenia: allowlista hostów, brak przekierowań poza allowlistę, timeout, limit odpowiedzi, `risk: high` ⇒ approval; weryfikacja: testy scenariuszy z `action-registry` (host spoza allowlisty, wolna usługa, pominięcie zatwierdzenia)
+- [x] 10.4 `mock-targets` z endpointami `retry_workflow`, `restart_service`, `open_ticket` i logiem wywołań (z obsługą `Idempotency-Key`); weryfikacja: wywołanie widoczne w `GET /calls`
 
 ## 11. Runbooki (P3)
 
-- [ ] 11.1 Tabela `runbooks` + ładowanie `config/p3/runbooks/` (AUTOMATIC z YAML, MANUAL z `.md`/`.txt` z nagłówkiem `matches`), walidacja z błędami per plik, hot reload; seed: trzy runbooki z Appendix B; weryfikacja: niepoprawny plik nie psuje pozostałych
-- [ ] 11.2 Kroki z nieznaną akcją → `manual` + licznik w `unhandled_actions`; kroki `if` → `note`; ponowna klasyfikacja po dodaniu akcji; weryfikacja: scenariusze „Runbook od jury z nieznaną akcją” i „Dodanie brakującej akcji”
+- [x] 11.1 Tabela `runbooks` + ładowanie `config/p3/runbooks/` (AUTOMATIC z YAML, MANUAL z `.md`/`.txt` z nagłówkiem `matches`), walidacja z błędami per plik, hot reload; seed: trzy runbooki z Appendix B; weryfikacja: niepoprawny plik nie psuje pozostałych
+- [x] 11.2 Kroki z nieznaną akcją → `manual` + licznik w `unhandled_actions`; kroki `if` → `note`; ponowna klasyfikacja po dodaniu akcji; weryfikacja: scenariusze „Runbook od jury z nieznaną akcją” i „Dodanie brakującej akcji”
 - [ ] 11.3 Dopasowanie (`matches`, skrót do reguły), sortowanie wg szczegółowości, podstawianie wartości; endpoint runbooków per alert w `api/p3.rs`; weryfikacja: scenariusze „Wiele pasujących runbooków” i „Parametr akcji”
-- [ ] 11.4 Interfejs `RunbookAuthor` z dostawcą `none` (LLM poza MVP); weryfikacja: crate kompiluje się z `LLM_PROVIDER=none`
+- [x] 11.4 Interfejs `RunbookAuthor` z dostawcą `none` (LLM poza MVP); weryfikacja: crate kompiluje się z `LLM_PROVIDER=none`
 
 ## 12. Wykonanie runbooków (P3)
 
 - [ ] 12.1 Konsument `alerts.changed` tworzący `runbook_runs` raz na epizod (klucz z D9); weryfikacja: 500 zdarzeń → 1 uruchomienie; reopen → nowe uruchomienie
-- [ ] 12.2 Maszyna stanów kroków (sekwencja, `waiting_manual`, `waiting_approval`, `failed`) z zapisem przed wykonaniem i wznowieniem po restarcie; weryfikacja: test „Restart w trakcie runbooka”
-- [ ] 12.3 Komendy `runbooks.commands` (approve, reject, done z notatką, retry, skip) i endpointy w `api/p3.rs`, w tym kolejka zatwierdzeń; weryfikacja: testy scenariuszy `runbook-execution`
-- [ ] 12.4 Dziennik działań (`audit_log`) z autorem, epizodem i wynikiem + `ui.events` przy każdej zmianie kroku; weryfikacja: endpoint dziennika zwraca chronologiczną historię
+- [x] 12.2 Maszyna stanów kroków (sekwencja, `waiting_manual`, `waiting_approval`, `failed`) z zapisem przed wykonaniem i wznowieniem po restarcie; weryfikacja: test „Restart w trakcie runbooka”
+- [x] 12.3 Komendy `runbooks.commands` (approve, reject, done z notatką, retry, skip) i endpointy w `api/p3.rs`, w tym kolejka zatwierdzeń; weryfikacja: testy scenariuszy `runbook-execution`
+- [x] 12.4 Dziennik działań (`audit_log`) z autorem, epizodem i wynikiem + `ui.events` przy każdej zmianie kroku; weryfikacja: endpoint dziennika zwraca chronologiczną historię
 
 ## 13. UI — fundamenty (P4)
 
