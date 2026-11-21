@@ -30,6 +30,7 @@ const DEFAULT_LOCAL_MODEL: &str = "qwen2.5:7b";
 const DEFAULT_API_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_API_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const MAX_LLM_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Dane wejściowe do wygenerowania szkicu runbooka z tekstu.
 #[derive(Debug, Clone)]
@@ -148,15 +149,30 @@ impl OpenAiCompatAuthor {
             req = req.bearer_auth(key);
         }
 
-        let resp = req.send().await.map_err(|e| {
+        let mut resp = req.send().await.map_err(|e| {
             if e.is_timeout() {
                 AuthorError::Timeout(self.timeout_ms)
             } else {
-                AuthorError::Upstream(e.to_string())
+                AuthorError::Upstream(e.without_url().to_string())
             }
         })?;
         let status = resp.status().as_u16();
-        let body = resp.text().await.map_err(|e| AuthorError::Upstream(e.to_string()))?;
+        let mut buf = Vec::new();
+        while let Some(chunk) = resp.chunk().await.map_err(|e| {
+            if e.is_timeout() {
+                AuthorError::Timeout(self.timeout_ms)
+            } else {
+                AuthorError::Upstream(e.without_url().to_string())
+            }
+        })? {
+            if buf.len() + chunk.len() > MAX_LLM_RESPONSE_BYTES {
+                return Err(AuthorError::Upstream(format!(
+                    "odpowiedź LLM przekracza limit {MAX_LLM_RESPONSE_BYTES} B"
+                )));
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        let body = String::from_utf8_lossy(&buf).into_owned();
         Ok((status, body))
     }
 
@@ -209,8 +225,8 @@ impl OpenAiCompatAuthor {
         }
 
         if !(200..300).contains(&status) {
-            let snippet: String = body.chars().take(300).collect();
-            return Err(AuthorError::Upstream(format!("HTTP {status}: {snippet}")));
+            tracing::warn!(status, provider = self.provider, "LLM upstream returned non-2xx status");
+            return Err(AuthorError::Upstream(format!("HTTP {status}")));
         }
 
         let content = extract_message_content(&body)?;
@@ -282,8 +298,9 @@ fn env_non_empty(name: &str) -> Option<String> {
 fn build_system_prompt(actions: &[&ActionDef]) -> String {
     let mut catalog = String::new();
     for a in actions {
-        let desc = a.description.as_deref().unwrap_or("brak opisu");
-        let schema = a.params_schema.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "{}".into());
+        let desc = redact::redact(a.description.as_deref().unwrap_or("brak opisu")).text;
+        let schema_raw = a.params_schema.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "{}".into());
+        let schema = redact::redact(&schema_raw).text;
         catalog.push_str(&format!("- `{}` (risk: {:?}): {} | params_schema: {}\n", a.name, a.risk, desc, schema));
     }
     format!(
@@ -492,10 +509,10 @@ fn build_and_classify_draft(
         source_file: None,
         version: 0,
     };
-    let resolved = registry.classify(&draft);
+    let mut resolved = registry.classify(&draft);
 
     let mut warnings = Vec::new();
-    for (orig, cls) in before.iter().zip(resolved.steps.iter()) {
+    for (orig, cls) in before.iter().zip(resolved.steps.iter_mut()) {
         if let Some(action_name) = &cls.action {
             if cls.automation == Automation::Manual {
                 warnings.push(format!(
@@ -509,10 +526,67 @@ fn build_and_classify_draft(
                     cls.id
                 ));
             }
+            if action_name == "http_get" {
+                cls.approval = Approval::Required;
+                warnings.push(format!(
+                    "Krok {}: wygenerowano akcję `http_get` — wymuszono zatwierdzenie i zweryfikuj parametr `url` przed zapisaniem.",
+                    cls.id
+                ));
+            }
+        }
+
+        let known_params: Option<HashSet<String>> = cls
+            .action
+            .as_deref()
+            .and_then(|name| registry.get(name))
+            .and_then(|a| a.params_schema.as_ref())
+            .and_then(|schema| {
+                let mut set = HashSet::new();
+                if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+                    set.extend(props.keys().cloned());
+                }
+                if let Some(req_keys) = schema.get("required").and_then(Value::as_array) {
+                    set.extend(req_keys.iter().filter_map(Value::as_str).map(str::to_string));
+                }
+                (!set.is_empty()).then_some(set)
+            });
+
+        for (key, val) in &cls.params {
+            if let Some(ref allowed_keys) = known_params {
+                if !allowed_keys.contains(key) {
+                    warnings.push(format!(
+                        "Krok {}: niezweryfikowany parametr `{key}` spoza schematu akcji — sprawdź przed zapisaniem.",
+                        cls.id
+                    ));
+                }
+            }
+            validate_param_templates(&cls.id, key, val, &mut warnings)?;
         }
     }
 
     Ok((resolved, warnings))
+}
+
+fn validate_param_templates(step_id: &str, key: &str, val: &Value, warnings: &mut Vec<String>) -> Result<(), AuthorError> {
+    match val {
+        Value::String(s) => {
+            condition::validate_template(s).map_err(|e| {
+                AuthorError::InvalidResponse(format!("krok {step_id}: niepoprawny szablon w parametrze `{key}`: {e}"))
+            })?;
+            if s.contains("[REDACTED_") {
+                warnings.push(format!(
+                    "Krok {step_id}: parametr `{key}` zawiera zredagowany placeholder — uzupełnij wartość przed zapisaniem."
+                ));
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                validate_param_templates(step_id, key, item, warnings)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn slugify(input: &str) -> String {
@@ -725,6 +799,7 @@ mod tests {
         let req = DraftRequest { id: None, title: None, text: "Check service".into(), matches: None, rule_ids: vec![] };
         let err = author.draft(&req, &[]).await.unwrap_err();
         assert!(matches!(err, AuthorError::Upstream(_)));
+        assert!(!err.to_string().contains("boom"), "raw upstream error body should not be reflected: {err}");
 
         let (bad_url, _) = spawn_mock_llm(
             StatusCode::OK,
@@ -734,5 +809,82 @@ mod tests {
         let author2 = OpenAiCompatAuthor::new("local", bad_url, "qwen2.5:7b".into(), None, 5000).unwrap();
         let err2 = author2.draft(&req, &[]).await.unwrap_err();
         assert!(matches!(err2, AuthorError::InvalidResponse(_)));
+    }
+
+    #[tokio::test]
+    async fn redacts_system_prompt_and_caps_oversized_llm_response() {
+        let mut actions = sample_actions();
+        actions[0].description = Some("Calls https://secret.corp/api with Bearer tok_secret123".into());
+        actions[0].params_schema = Some(json!({
+            "type": "object",
+            "required": ["service"],
+            "properties": { "service": { "type": "string", "default": "db-01.prod.internal" } }
+        }));
+
+        let llm_content = json!({
+            "title": "Health check",
+            "steps": [{
+                "id": "s1",
+                "type": "check",
+                "text": "Check health",
+                "action": "http_get",
+                "params": [
+                    {"key": "url", "value": "[REDACTED_URL_1]"},
+                    {"key": "extra_param", "value": "val"}
+                ],
+                "approval": "none",
+                "condition": null
+            }]
+        });
+        let (base_url, captured) = spawn_mock_llm(
+            StatusCode::OK,
+            json!({ "choices": [{ "message": { "content": llm_content.to_string() } }] }),
+        )
+        .await;
+        let author = OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let req = DraftRequest { id: None, title: None, text: "Check service".into(), matches: None, rule_ids: vec![] };
+        let outcome = author.draft(&req, &actions).await.unwrap();
+
+        let sent = captured.lock().unwrap();
+        let sys_msg = sent[0]["messages"][0]["content"].as_str().unwrap();
+        assert!(!sys_msg.contains("secret.corp"));
+        assert!(!sys_msg.contains("tok_secret123"));
+        assert!(!sys_msg.contains("db-01.prod.internal"));
+
+        // LLM-drafted http_get requires approval and emits warnings for http_get, unverified param, and redacted placeholder.
+        assert_eq!(outcome.draft.steps[0].approval, Approval::Required);
+        assert!(outcome.warnings.iter().any(|w| w.contains("http_get")));
+        assert!(outcome.warnings.iter().any(|w| w.contains("extra_param")));
+        assert!(outcome.warnings.iter().any(|w| w.contains("placeholder")));
+
+        // Oversized LLM response (> 1 MiB) is rejected.
+        let huge = "x".repeat(MAX_LLM_RESPONSE_BYTES + 1024);
+        let (huge_url, _) = spawn_mock_llm(StatusCode::OK, json!({ "padding": huge })).await;
+        let huge_author = OpenAiCompatAuthor::new("local", huge_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let err = huge_author.draft(&req, &[]).await.unwrap_err();
+        assert!(matches!(err, AuthorError::Upstream(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_template_in_llm_generated_params() {
+        let registry = Registry::new(sample_actions());
+        let req = DraftRequest { id: None, title: None, text: "test".into(), matches: None, rule_ids: vec![] };
+        let payload = LlmDraftPayload {
+            title: "Bad".into(),
+            steps: vec![LlmStep {
+                id: "s1".into(),
+                step_type: StepType::Action,
+                text: "Restart".into(),
+                action: Some("restart_service".into()),
+                params: LlmParams::Pairs(vec![ParamPair {
+                    key: "service".into(),
+                    value: json!("{{env.DATABASE_URL}}"),
+                }]),
+                approval: Approval::None,
+                condition: None,
+            }],
+        };
+        let err = build_and_classify_draft(&req, payload, &registry).unwrap_err();
+        assert!(matches!(err, AuthorError::InvalidResponse(_)));
     }
 }

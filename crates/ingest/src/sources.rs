@@ -121,12 +121,15 @@ pub async fn ensure_topic(brokers: &str, topic: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Buduje (format, schema, payload) z wiadomości: gotowa koperta albo dane wg konfiguracji źródła.
+/// Buduje (format, schema, payload) z wiadomości: zawsze wymusza autorytatywne `def.format` i `def.schema`.
+/// Rozpakowuje `payload` tylko wtedy, gdy wiadomość jest kopertą o zgodnym `format` i `schema`.
 pub fn build(def: &SourceDef, bytes: &[u8]) -> Result<(String, String, Value), ParseError> {
     let json: Option<Value> = serde_json::from_slice(bytes).ok();
     if let Some(Value::Object(o)) = &json {
         if let (Some(Value::String(f)), Some(Value::String(s)), Some(p)) = (o.get("format"), o.get("schema"), o.get("payload")) {
-            return Ok((f.clone(), s.clone(), parse_payload(f, p)?));
+            if f == &def.format && s == &def.schema {
+                return Ok((def.format.clone(), def.schema.clone(), parse_payload(&def.format, p)?));
+            }
         }
     }
     let payload = match def.format.as_str() {
@@ -162,10 +165,24 @@ mod tests {
     }
 
     #[test]
-    fn envelope_message_passes_unchanged() {
-        let msg = br#"{"format":"json","schema":"other.v2","payload":{"x":1}}"#;
+    fn envelope_matching_source_unwraps_payload() {
+        let msg = br#"{"format":"json","schema":"src.v1","payload":{"x":1}}"#;
         let (f, s, p) = build(&def("json"), msg).unwrap();
-        assert_eq!((f.as_str(), s.as_str(), p), ("json", "other.v2", json!({"x": 1})));
+        assert_eq!((f.as_str(), s.as_str(), p), ("json", "src.v1", json!({"x": 1})));
+    }
+
+    #[test]
+    fn envelope_cannot_override_source_schema_or_format() {
+        let schema_override = br#"{"format":"json","schema":"other.v2","payload":{"x":1}}"#;
+        let (f, s, p) = build(&def("json"), schema_override).unwrap();
+        assert_eq!(f, "json");
+        assert_eq!(s, "src.v1");
+        assert_eq!(p, json!({"format": "json", "schema": "other.v2", "payload": {"x": 1}}));
+
+        let format_override = br#"{"format":"yaml","schema":"src.v1","payload":"a: 1\n"}"#;
+        let (f, s, _) = build(&def("json"), format_override).unwrap();
+        assert_eq!(f, "json");
+        assert_eq!(s, "src.v1");
     }
 
     #[test]

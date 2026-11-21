@@ -15,7 +15,7 @@ use contracts::{topics, Actor, AlertCommand, AlertCommandKind};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::error::{db_err, err, opt_json, parse_uuid, require_person_id, ApiResult};
+use crate::error::{db_err, err, opt_json, parse_uuid, ApiResult};
 use crate::rules_eval::{enrich_alert, load_enabled_rules, AlertEnrichment, CompiledRule};
 use crate::AppState;
 
@@ -90,30 +90,22 @@ async fn list_alerts(State(st): State<AppState>, Query(q): Query<AlertsQuery>) -
     let team_filter = q.team.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let rules = load_enabled_rules(&st.db).await;
 
-    let rows = if team_filter.is_some() {
-        let sql = format!(
-            "SELECT {ALERT_COLS} FROM alerts WHERE ($1::text IS NULL OR state = $1) \
-             AND ($2::timestamptz IS NULL OR updated_at > $2) ORDER BY updated_at DESC"
-        );
-        sqlx::query(&sql)
-            .bind(q.state)
-            .bind(q.since)
-            .fetch_all(&st.db)
-            .await
-            .map_err(db_err)?
+    let query_limit = if team_filter.is_some() {
+        (limit * 20).clamp(2000, 10_000)
     } else {
-        let sql = format!(
-            "SELECT {ALERT_COLS} FROM alerts WHERE ($1::text IS NULL OR state = $1) \
-             AND ($2::timestamptz IS NULL OR updated_at > $2) ORDER BY updated_at DESC LIMIT $3"
-        );
-        sqlx::query(&sql)
-            .bind(q.state)
-            .bind(q.since)
-            .bind(limit)
-            .fetch_all(&st.db)
-            .await
-            .map_err(db_err)?
+        limit
     };
+    let sql = format!(
+        "SELECT {ALERT_COLS} FROM alerts WHERE ($1::text IS NULL OR state = $1) \
+         AND ($2::timestamptz IS NULL OR updated_at > $2) ORDER BY updated_at DESC LIMIT $3"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(q.state)
+        .bind(q.since)
+        .bind(query_limit)
+        .fetch_all(&st.db)
+        .await
+        .map_err(db_err)?;
 
     let mut out = Vec::with_capacity(rows.len().min(limit as usize));
     for r in &rows {
@@ -179,9 +171,15 @@ async fn episodes(State(st): State<AppState>, Path(id): Path<String>) -> ApiResu
 }
 
 /// Publishes a command to `alerts.commands`; state is mutated solely by `lifecycle` (single writer).
-async fn command(st: AppState, id: String, headers: HeaderMap, kind: AlertCommandKind) -> ApiResult<StatusCode> {
+async fn command(
+    st: AppState,
+    id: String,
+    auth: crate::auth::AuthenticatedOperator,
+    headers: HeaderMap,
+    kind: AlertCommandKind,
+) -> ApiResult<StatusCode> {
     let id = parse_uuid(&id, "alert_id")?;
-    let person_id = require_person_id(&headers)?;
+    let person_id = crate::auth::resolve_verified_person_id(&st, &auth, &headers).await?;
     let fingerprint: String = fetch_alert(&st, id).await?.get("fingerprint");
     let cmd = AlertCommand {
         alert_id: id,
@@ -196,12 +194,22 @@ async fn command(st: AppState, id: String, headers: HeaderMap, kind: AlertComman
     Ok(StatusCode::ACCEPTED)
 }
 
-async fn ack(State(st): State<AppState>, Path(id): Path<String>, h: HeaderMap) -> ApiResult<StatusCode> {
-    command(st, id, h, AlertCommandKind::Ack).await
+async fn ack(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    axum::Extension(auth): axum::Extension<crate::auth::AuthenticatedOperator>,
+    h: HeaderMap,
+) -> ApiResult<StatusCode> {
+    command(st, id, auth, h, AlertCommandKind::Ack).await
 }
 
-async fn resolve(State(st): State<AppState>, Path(id): Path<String>, h: HeaderMap) -> ApiResult<StatusCode> {
-    command(st, id, h, AlertCommandKind::Resolve).await
+async fn resolve(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    axum::Extension(auth): axum::Extension<crate::auth::AuthenticatedOperator>,
+    h: HeaderMap,
+) -> ApiResult<StatusCode> {
+    command(st, id, auth, h, AlertCommandKind::Resolve).await
 }
 
 #[cfg(test)]
@@ -313,13 +321,33 @@ mod tests {
         let s = server().await;
         let fp = uniq("fp");
         let id = s.insert_alert(&fp, "open", 0).await;
+        sqlx::query("INSERT INTO people (id, name, contacts, working_hours) VALUES ('ala', 'Ala', '{}'::jsonb, '{}'::jsonb) ON CONFLICT (id) DO NOTHING")
+            .execute(&s.st.db)
+            .await
+            .unwrap();
 
-        let (st, _) = s.http("POST", &format!("/alerts/{id}/ack"), &[], None).await;
-        assert_eq!(st, 400);
-        let (st, _) = s.http("POST", &format!("/alerts/{}/ack", Uuid::new_v4()), &[("X-Person-Id", "ala")], None).await;
+        // Unverified X-Person-Id with shared API_TOKEN is rejected (403).
+        let (st, _) = s.http("POST", &format!("/alerts/{id}/ack"), &[("X-Person-Id", "ala")], None).await;
+        assert_eq!(st, 403);
+
+        // Authenticate via server-side session bound to 'ala'.
+        let sess = s.st.auth.create_session("ala".into());
+        let auth_hdr = format!("Bearer {sess}");
+
+        // Spoofed X-Person-Id mismatching authenticated session is rejected (403).
+        let (st, _, _) = s
+            .http_raw("POST", &format!("/alerts/{id}/ack"), &[("Authorization", &auth_hdr), ("X-Person-Id", "bob")], None)
+            .await;
+        assert_eq!(st, 403);
+
+        let (st, _, _) = s
+            .http_raw("POST", &format!("/alerts/{}/ack", Uuid::new_v4()), &[("Authorization", &auth_hdr)], None)
+            .await;
         assert_eq!(st, 404);
 
-        let (st, _) = s.http("POST", &format!("/alerts/{id}/ack"), &[("X-Person-Id", "ala")], None).await;
+        let (st, _, _) = s
+            .http_raw("POST", &format!("/alerts/{id}/ack"), &[("Authorization", &auth_hdr)], None)
+            .await;
         assert_eq!(st, 202);
         let cmd = find_command(id).await;
         assert_eq!(cmd.fingerprint, fp);
@@ -332,10 +360,18 @@ mod tests {
     async fn resolve_accepted() {
         let s = server().await;
         let id = s.insert_alert(&uniq("fp"), "open", 0).await;
-        let (st, _) = s.http("POST", &format!("/alerts/{id}/resolve"), &[("X-Person-Id", "bob")], None).await;
+        sqlx::query("INSERT INTO people (id, name, contacts, working_hours) VALUES ('bob', 'Bob', '{}'::jsonb, '{}'::jsonb) ON CONFLICT (id) DO NOTHING")
+            .execute(&s.st.db)
+            .await
+            .unwrap();
+        let sess = s.st.auth.create_session("bob".into());
+        let auth_hdr = format!("Bearer {sess}");
+        let (st, _, _) = s
+            .http_raw("POST", &format!("/alerts/{id}/resolve"), &[("Authorization", &auth_hdr)], None)
+            .await;
         assert_eq!(st, 202);
         let (st, _) = s.http("POST", &format!("/alerts/{id}/resolve"), &[], None).await;
-        assert_eq!(st, 400);
+        assert_eq!(st, 403);
         s.cleanup().await;
     }
 
@@ -371,7 +407,7 @@ mod tests {
         assert_eq!(st, 200);
 
         let (st, _, _) = s.http_raw("GET", &format!("/alerts?limit=1&token={tok}"), &[], None).await;
-        assert_eq!(st, 200);
+        assert_eq!(st, 401);
         let (st, _, _) = s.http_raw("GET", "/alerts?token=zly", &[], None).await;
         assert_eq!(st, 401);
 

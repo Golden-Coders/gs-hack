@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         executor: registry::Executor::new(config.action_host_allowlist.clone()),
         snapshot,
         public_ui_url: config.public_ui_url.clone(),
+        active_runs: Default::default(),
     });
     engine.resume_all().await?;
     let consumer = tokio::spawn(engine.clone().consume(config.kafka_brokers.clone()));

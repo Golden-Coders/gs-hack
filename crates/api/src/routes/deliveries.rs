@@ -226,7 +226,13 @@ async fn put_mock_channel(
     let parsed_channel: Channel = serde_json::from_value(Value::String(channel.clone()))
         .map_err(|_| err(StatusCode::BAD_REQUEST, "invalid channel", &channel))?;
     let channel_str = match parsed_channel {
-        Channel::Ui => "ui",
+        Channel::Ui => {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "invalid channel",
+                "ui channel is mandatory fallback and cannot be disabled",
+            ));
+        }
         Channel::Email => "email",
         Channel::Sms => "sms",
         Channel::Phone => "phone",

@@ -1,7 +1,7 @@
 //! Common HTTP error responses, parameter parsers, and database helpers for the API.
 
 use axum::{
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     Json,
 };
 use common::db::sqlx::{
@@ -36,7 +36,7 @@ pub fn err_with_line(
 
 pub fn db_err(e: sqlx::Error) -> (StatusCode, Json<Value>) {
     tracing::error!(error = %e, "db error");
-    err(StatusCode::INTERNAL_SERVER_ERROR, "database error", e)
+    err(StatusCode::INTERNAL_SERVER_ERROR, "database error", "database error")
 }
 
 pub fn parse_uuid(s: &str, field: &str) -> ApiResult<Uuid> {
@@ -45,13 +45,4 @@ pub fn parse_uuid(s: &str, field: &str) -> ApiResult<Uuid> {
 
 pub fn opt_json(r: &PgRow, col: &str) -> Value {
     r.get::<Option<SqlJson<Value>>, _>(col).map_or(Value::Null, |j| j.0)
-}
-
-pub fn require_person_id(headers: &HeaderMap) -> ApiResult<String> {
-    headers
-        .get("x-person-id")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "missing X-Person-Id header", "wymagany nagłówek X-Person-Id"))
-        .map(str::to_string)
 }

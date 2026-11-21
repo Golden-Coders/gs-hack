@@ -46,6 +46,8 @@ impl ConsumerContext for RebalanceContext {
     }
 }
 
+const MAX_PERMANENT_FLUSH_FAILURES: u32 = 5;
+
 struct AlertEntry {
     alert_id: Uuid,
     episode: i32,
@@ -57,6 +59,37 @@ struct AlertEntry {
     /// Inkrementy licznika jeszcze niezapisane w bazie.
     pending_delta: i64,
     dirty: bool,
+    /// Liczba kolejnych trwałych błędów flusha.
+    flush_failures: u32,
+}
+
+impl AlertEntry {
+    /// Rejestruje błąd flusha; zwraca `true` jeśli przekroczono limit trwałych błędów i wyczyszczono `dirty`.
+    fn record_flush_failure(&mut self, permanent: bool) -> bool {
+        if !permanent {
+            return false;
+        }
+        self.flush_failures = self.flush_failures.saturating_add(1);
+        if self.flush_failures > MAX_PERMANENT_FLUSH_FAILURES {
+            self.dirty = false;
+            self.pending_delta = 0;
+            self.flush_failures = 0;
+            return true;
+        }
+        false
+    }
+}
+
+fn sanitize_event(ev: &mut CanonicalEvent) {
+    crate::mapping::strip_nuls_str(&mut ev.schema);
+    crate::mapping::strip_nuls_str(&mut ev.source);
+    crate::mapping::strip_nuls_str(&mut ev.title);
+    crate::mapping::strip_nuls_str(&mut ev.fingerprint);
+    ev.fingerprint = crate::mapping::bound_fingerprint(std::mem::take(&mut ev.fingerprint));
+    crate::mapping::strip_nuls_value(&mut ev.raw);
+    for val in ev.fields.values_mut() {
+        crate::mapping::strip_nuls_value(val);
+    }
 }
 
 fn enum_str<T: Serialize>(v: &T) -> String {
@@ -97,17 +130,29 @@ impl Dedup {
         .fetch_optional(&self.pool)
         .await?;
         let Some(row) = row else { return Ok(false) };
+        let alert_id: Uuid = row.get("id");
         let last_event: Option<Value> = row.get("last_event");
+        let last_event = match last_event {
+            Some(v) => match serde_json::from_value(v) {
+                Ok(ev) => Some(ev),
+                Err(e) => {
+                    tracing::warn!(%alert_id, fingerprint, error = %e, "dedup: failed to deserialize last_event from db");
+                    None
+                }
+            },
+            None => None,
+        };
         let entry = AlertEntry {
-            alert_id: row.get("id"),
+            alert_id,
             episode: row.get("episode"),
             state: enum_parse(&row.get::<String, _>("state"))?,
             severity: enum_parse(&row.get::<String, _>("severity"))?,
             count: row.get("count"),
             last_seen: row.get("last_seen"),
-            last_event: last_event.and_then(|v| serde_json::from_value(v).ok()),
+            last_event,
             pending_delta: 0,
             dirty: false,
+            flush_failures: 0,
         };
         self.cache.insert(fingerprint.to_string(), entry);
         Ok(true)
@@ -115,34 +160,51 @@ impl Dedup {
 
     /// Zapisuje nagromadzone inkrementy jednego alertu i wysyła `AlertCount` na `ui.events`.
     async fn flush_one(&mut self, fingerprint: &str) -> Result<()> {
-        let Some(e) = self.cache.get_mut(fingerprint) else { return Ok(()) };
+        let Some(e) = self.cache.get(fingerprint) else { return Ok(()) };
         if !e.dirty {
             return Ok(());
         }
+        let (alert_id, episode, pending_delta, last_seen) = (e.alert_id, e.episode, e.pending_delta, e.last_seen);
+        let mut last_event_json = e.last_event.as_ref().map(serde_json::to_value).transpose()?;
+        if let Some(ref mut v) = last_event_json {
+            crate::mapping::strip_nuls_value(v);
+        }
+
+        let mut tx = self.pool.begin().await?;
         // Delta zamiast nadpisania – dwie instancje po rebalansie nie zepsują sobie licznika.
         let row = common::db::sqlx::query(
             "UPDATE alerts SET count = count + $1, last_seen = GREATEST(last_seen, $2), last_event = COALESCE($3, last_event),
                     updated_at = now()
              WHERE id = $4 AND episode = $5 RETURNING count",
         )
-        .bind(e.pending_delta)
-        .bind(e.last_seen)
-        .bind(e.last_event.as_ref().and_then(|ev| serde_json::to_value(ev).ok()))
-        .bind(e.alert_id)
-        .bind(e.episode)
-        .fetch_optional(&self.pool)
+        .bind(pending_delta)
+        .bind(last_seen)
+        .bind(&last_event_json)
+        .bind(alert_id)
+        .bind(episode)
+        .fetch_optional(&mut *tx)
         .await?;
-        if let Some(row) = &row {
-            e.count = row.get("count");
+        let new_count: Option<i64> = if let Some(row) = &row {
+            let count: i64 = row.get("count");
             common::db::sqlx::query("UPDATE alert_episodes SET count = count + $1 WHERE alert_id = $2 AND episode = $3")
-                .bind(e.pending_delta)
-                .bind(e.alert_id)
-                .bind(e.episode)
-                .execute(&self.pool)
+                .bind(pending_delta)
+                .bind(alert_id)
+                .bind(episode)
+                .execute(&mut *tx)
                 .await?;
+            Some(count)
+        } else {
+            None
+        };
+        tx.commit().await?;
+
+        let e = self.cache.get_mut(fingerprint).expect("checked above");
+        if let Some(c) = new_count {
+            e.count = c;
         }
         e.pending_delta = 0;
         e.dirty = false;
+        e.flush_failures = 0;
         let ui = UiEvent {
             alert_id: Some(e.alert_id),
             kind: UiEventKind::AlertCount,
@@ -160,7 +222,19 @@ impl Dedup {
         let dirty: Vec<String> = self.cache.iter().filter(|(_, e)| e.dirty).map(|(k, _)| k.clone()).collect();
         for fp in dirty {
             if let Err(e) = self.flush_one(&fp).await {
-                tracing::warn!(error = %e, "dedup: flush failed, will retry");
+                let permanent = crate::is_permanent_pg_error(&e);
+                if let Some(entry) = self.cache.get_mut(&fp) {
+                    if entry.record_flush_failure(permanent) {
+                        tracing::error!(
+                            fingerprint = %fp,
+                            alert_id = %entry.alert_id,
+                            error = %e,
+                            "dedup: permanent flush failure threshold exceeded, clearing dirty flag"
+                        );
+                        continue;
+                    }
+                }
+                tracing::warn!(fingerprint = %fp, error = %e, "dedup: flush failed, will retry");
             }
         }
     }
@@ -185,7 +259,8 @@ impl Dedup {
         self.publish(&self.topics.alerts_changed, &ch.alert_id.to_string(), ch).await;
     }
 
-    async fn handle_event(&mut self, ev: CanonicalEvent) -> Result<()> {
+    async fn handle_event(&mut self, mut ev: CanonicalEvent) -> Result<()> {
+        sanitize_event(&mut ev);
         let fp = ev.fingerprint.clone();
         if !self.load(&fp).await? {
             if ev.resolved {
@@ -272,6 +347,7 @@ impl Dedup {
                 last_event: Some(ev.clone()),
                 pending_delta: 0,
                 dirty: false,
+                flush_failures: 0,
             },
         );
         let ch = self.changed(&fp, Transition::Opened, None, ev);
@@ -319,6 +395,7 @@ impl Dedup {
         e.last_event = Some(ev.clone());
         e.pending_delta = 0;
         e.dirty = false;
+        e.flush_failures = 0;
         let ch = self.changed(fp, Transition::Reopened, None, ev);
         self.emit(&ch).await;
         Ok(())
@@ -332,8 +409,12 @@ impl Dedup {
             let e = &self.cache[fp];
             (e.alert_id, e.episode, e.state)
         };
-        let actor_json = serde_json::to_value(&actor)?;
-        let ev_json = ev.as_ref().map(serde_json::to_value).transpose()?;
+        let mut actor_json = serde_json::to_value(&actor)?;
+        crate::mapping::strip_nuls_value(&mut actor_json);
+        let mut ev_json = ev.as_ref().map(serde_json::to_value).transpose()?;
+        if let Some(ref mut v) = ev_json {
+            crate::mapping::strip_nuls_value(v);
+        }
         let (alerts_sql, ep_sql) = match t {
             Transition::Acked => (
                 "UPDATE alerts SET state = 'acked', acked_by = $1, last_event = COALESCE($2, last_event), updated_at = now()
@@ -467,7 +548,13 @@ pub async fn run_dedup_with(
                     Ok(m) => m,
                     Err(e) => {
                         tracing::warn!(error = %e, "dedup: kafka error");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        tokio::select! {
+                            _ = shutdown.changed() => {
+                                d.flush_all().await;
+                                return Ok(());
+                            }
+                            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                        }
                         continue;
                     }
                 };
@@ -475,15 +562,95 @@ pub async fn run_dedup_with(
                 if rebalanced.swap(false, Ordering::SeqCst) {
                     d.on_rebalance().await;
                 }
-                // At-least-once: ponawiamy do skutku, commit dopiero po zapisie skutków.
+                // At-least-once: ponawiamy do skutku (z limitem dla trwałych błędów danych/indeksu Postgresa),
+                // commit dopiero po zapisie skutków.
+                let mut permanent_failures = 0u32;
                 while let Err(e) = d.handle(&msg).await {
+                    if crate::is_permanent_pg_error(&e) {
+                        permanent_failures += 1;
+                        if permanent_failures >= crate::MAX_PERMANENT_RETRIES {
+                            tracing::error!(error = %e, retries = permanent_failures, "dedup: permanent postgres error, skipping message");
+                            break;
+                        }
+                    }
                     tracing::warn!(error = %e, "dedup: processing failed, retrying");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::select! {
+                        _ = shutdown.changed() => {
+                            d.flush_all().await;
+                            return Ok(());
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
                 }
                 if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
                     tracing::warn!(error = %e, "dedup: commit failed");
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_entry() -> AlertEntry {
+        AlertEntry {
+            alert_id: Uuid::new_v4(),
+            episode: 1,
+            state: AlertState::Open,
+            severity: Severity::Error,
+            count: 2,
+            last_seen: chrono::Utc::now(),
+            last_event: None,
+            pending_delta: 1,
+            dirty: true,
+            flush_failures: 0,
+        }
+    }
+
+    #[test]
+    fn dirty_flag_cleared_after_permanent_flush_failure_threshold() {
+        let mut entry = sample_entry();
+        // Transient errors never clear dirty.
+        for _ in 0..10 {
+            assert!(!entry.record_flush_failure(false));
+            assert!(entry.dirty);
+        }
+        // Up to 5 permanent failures keep dirty=true.
+        for _ in 0..MAX_PERMANENT_FLUSH_FAILURES {
+            assert!(!entry.record_flush_failure(true));
+            assert!(entry.dirty);
+        }
+        // 6th permanent failure (> 5) clears dirty and pending_delta so cache eviction can reclaim it.
+        assert!(entry.record_flush_failure(true));
+        assert!(!entry.dirty);
+        assert_eq!(entry.pending_delta, 0);
+        assert_eq!(entry.flush_failures, 0);
+    }
+
+    #[test]
+    fn sanitize_event_strips_nuls_and_bounds_fingerprint() {
+        let mut ev = CanonicalEvent {
+            event_id: Uuid::new_v4(),
+            schema: "s\0v1".into(),
+            source: "http\0".into(),
+            severity: Severity::Warning,
+            title: "hello\0world".into(),
+            fingerprint: format!("fp\0|{}", "x".repeat(1000)),
+            resolved: false,
+            fields: serde_json::Map::from_iter([("k".into(), json!("v\0"))]),
+            raw: json!({"a\0": "b\0"}),
+            received_at: chrono::Utc::now(),
+            mapping_version: 1,
+        };
+        sanitize_event(&mut ev);
+        assert_eq!(ev.schema, "sv1");
+        assert_eq!(ev.source, "http");
+        assert_eq!(ev.title, "helloworld");
+        assert!(!ev.fingerprint.contains('\0'));
+        assert!(ev.fingerprint.len() <= crate::mapping::MAX_FINGERPRINT_BYTES);
+        assert_eq!(ev.fields["k"], json!("v"));
+        assert_eq!(ev.raw, json!({"a": "b"}));
     }
 }

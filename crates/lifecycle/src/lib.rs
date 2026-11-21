@@ -46,3 +46,43 @@ impl Default for Topics {
         Self::with_prefix("")
     }
 }
+
+/// Maksymalna liczba ponowień dla trwałych błędów danych/indeksu Postgresa przed pominięciem wiadomości.
+pub(crate) const MAX_PERMANENT_RETRIES: u32 = 5;
+
+/// Rozpoznaje trwałe kody błędów Postgresa (klasa `22*` Data Exception oraz `54000` Program Limit Exceeded).
+pub(crate) fn is_permanent_sqlstate(code: &str) -> bool {
+    code.starts_with("22") || code == "54000"
+}
+
+/// Sprawdza, czy łańcuch błędów zawiera trwały błąd danych/indeksu z Postgresa.
+pub(crate) fn is_permanent_pg_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(sqlx_err) = cause.downcast_ref::<common::db::sqlx::Error>() {
+            if let Some(db_err) = sqlx_err.as_database_error() {
+                if let Some(code) = db_err.code() {
+                    if is_permanent_sqlstate(&code) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permanent_sqlstate_classification() {
+        assert!(is_permanent_sqlstate("22021")); // invalid byte sequence (NUL)
+        assert!(is_permanent_sqlstate("22001")); // string data right truncation
+        assert!(is_permanent_sqlstate("22P02")); // invalid text representation
+        assert!(is_permanent_sqlstate("54000")); // program limit exceeded (btree index row size)
+        assert!(!is_permanent_sqlstate("40001")); // serialization failure (transient)
+        assert!(!is_permanent_sqlstate("57P01")); // admin shutdown (transient)
+        assert!(!is_permanent_sqlstate("08006")); // connection failure (transient)
+    }
+}

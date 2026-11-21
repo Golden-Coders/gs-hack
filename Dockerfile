@@ -22,9 +22,11 @@ RUN cargo build --release --bins
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN useradd -r -u 10001 appuser
 WORKDIR /app
 COPY --from=builder /app/target/release/ingest /app/target/release/lifecycle /app/target/release/router \
      /app/target/release/sender /app/target/release/runbooks /app/target/release/api \
      /app/target/release/mock-targets /app/target/release/loadgen /usr/local/bin/
 COPY config /app/config
 ENV CONFIG_DIR=/app/config RUST_LOG=info
+USER appuser

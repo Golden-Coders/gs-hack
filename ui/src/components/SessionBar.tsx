@@ -1,10 +1,10 @@
-// Przełącznik backendu (mock / prawdziwy) i wybór tożsamości („działam jako”).
+// Przełącznik backendu (mock / prawdziwy) i uwierzytelniona sesja operatora („działam jako”).
 import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
 import { Stack, Text } from "@atlaskit/primitives/compiled";
 import StreamIndicator from "./StreamIndicator";
-import { Field, Select, TextInput } from "../ui/primitives";
-import { API_URL, backend, setPersonId, switchBackend, usePersonId, type Backend } from "../api/session";
+import { Field, Select } from "../ui/primitives";
+import { API_URL, backend, loginAs, logout, switchBackend, usePersonId, type Backend } from "../api/session";
 
 const BACKENDS: { value: Backend; label: string }[] = [
   { value: "mock", label: "mock (Prism)" },
@@ -17,45 +17,58 @@ export default function SessionBar() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.GET("/people").then(({ data, error }) => {
-      if (error || !data) {
-        setError("Nie udało się pobrać osób");
-        return;
-      }
-      setPeople(data.people);
-      // Pierwsze uruchomienie albo osoba zniknęła z konfiguracji → pierwsza z listy.
-      if (data.people.length && !data.people.some((p) => p.id === personId)) {
-        setPersonId(data.people[0].id);
-      }
-    }, () => setError(`Brak połączenia z ${API_URL}`));
+    api.GET("/people").then(
+      ({ data, error }) => {
+        if (error || !data) {
+          setError("Nie udało się pobrać osób");
+          return;
+        }
+        setPeople(data.people);
+        if (data.people.length && !data.people.some((p) => p.id === personId)) {
+          void loginAs(data.people[0].id).catch((e: unknown) =>
+            setError(e instanceof Error ? e.message : "Błąd logowania"),
+          );
+        }
+      },
+      () => setError(`Brak połączenia z ${API_URL}`),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- lista osób pobierana raz na start
   }, []);
 
   const personOptions = [
-    ...(!personId ? [{ value: "", label: "—" }] : []),
-    ...(personId && !people.some((p) => p.id === personId) ? [{ value: personId, label: personId }] : []),
+    ...(!personId ? [{ value: "", label: "— nie zalogowano —" }] : []),
     ...people.map((p) => ({ value: p.id, label: p.name })),
   ];
 
+  async function handleSelect(nextId: string) {
+    setError(null);
+    if (!nextId) {
+      await logout();
+      return;
+    }
+    try {
+      await loginAs(nextId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Błąd logowania");
+    }
+  }
+
   return (
     <Stack space="space.100">
-      {people.length ? (
-        <Field label="Działam jako">
-          {(f) => <Select {...f} value={personId ?? ""} options={personOptions} onChange={(v) => setPersonId(v || null)} />}
-        </Field>
-      ) : (
-        // Lista osób niedostępna (np. backend bez /people) – identyfikator wpisany ręcznie.
-        <Field label="Działam jako" hint="Lista osób niedostępna – wpisz identyfikator (np. anna).">
-          {(f) => (
-            <TextInput
-              {...f}
-              isCompact
-              defaultValue={personId ?? ""}
-              onBlur={(e) => setPersonId(e.target.value.trim() || null)}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-            />
-          )}
-        </Field>
+      <Field label="Działam jako">
+        {(f) => (
+          <Select
+            {...f}
+            value={personId ?? ""}
+            options={personOptions}
+            onChange={(v) => void handleSelect(v)}
+          />
+        )}
+      </Field>
+      {personId && (
+        <button type="button" onClick={() => void logout()}>
+          Wyloguj
+        </button>
       )}
       <Field label="Backend">
         {(f) => <Select {...f} value={backend} options={BACKENDS} onChange={(v) => switchBackend(v as Backend)} />}

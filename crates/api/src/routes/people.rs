@@ -43,7 +43,9 @@ async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
     if people_count > 0 && teams_count > 0 {
         return;
     }
-    let path = resolve_config_path(config_dir, "people.yaml");
+    let Some(path) = resolve_config_path(config_dir, "people.yaml") else {
+        return;
+    };
     let Ok(text) = std::fs::read_to_string(&path) else {
         return;
     };

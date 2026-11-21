@@ -568,16 +568,20 @@ export function guessSchema(root: GroupNode): string {
   return "";
 }
 
+const FORBIDDEN_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** Szkielet zdarzenia z listy ścieżek pól (`raw.payload.desk` -> { raw: { payload: { desk: "" } } }). */
 export function skeletonFromFields(paths: string[]): Record<string, unknown> {
   const root: Record<string, unknown> = {};
   for (const p of paths) {
     const parts = p.split(".");
+    if (parts.some((part) => FORBIDDEN_PATH_SEGMENTS.has(part))) continue;
     let cur = root;
     parts.forEach((part, i) => {
-      if (i === parts.length - 1) cur[part] = cur[part] ?? "";
+      const own = Object.prototype.hasOwnProperty.call(cur, part);
+      if (i === parts.length - 1) cur[part] = own ? (cur[part] ?? "") : "";
       else {
-        const next = cur[part];
+        const next = own ? cur[part] : undefined;
         cur[part] = isObj(next) ? next : {};
         cur = cur[part] as Record<string, unknown>;
       }
