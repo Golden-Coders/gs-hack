@@ -111,10 +111,18 @@ Przebieg główny: 500 msg/s przez 60 s osiągnięte bez błędów po stronie `i
 - **Latencja:** wszystkie 22 483 dostarczenia z okna to `email` (reguły kierują ruch z `loadgen` na e-mail), więc wiersz
   „bez email” z `latency.sql` jest pusty; p50/p99 w tabeli to kanał email i są zdominowane przez kolejkę w `sender`
   (p50 26 s, p99 40 s), nie przez sam SMTP. Na pustym systemie (first-flow, sms/phone) e2e to ~30 ms.
-- **Dedup poprawny:** suma liczników w `alerts` wzrosła dokładnie o liczbę wysłanych zdarzeń (2 582 → 4 581 → 34 576 = +1 999 +29 995),
-  nowych alertów w przebiegu głównym 14 928 przy 14 931 unikalnych fingerprintach z `loadgen` (rozgrzewka: 1 019 vs 1 022) —
-  różnica 3 na przebieg, prawdopodobnie liczenie po stronie generatora (kolizja fingerprintów np. w `alertmanager`), do wyjaśnienia
-  w F1. Brak duplikatów `idempotency_key` w `deliveries`.
+- **Dedup poprawny (wyjaśnienie różnicy 3 alertów — zadanie 2.2):** suma liczników w `alerts` wzrosła dokładnie o liczbę wysłanych zdarzeń (2 582 → 4 581 → 34 576 = +1 999 +29 995),
+  natomiast liczba nowych wierszy w `alerts` była mniejsza o dokładnie **3** od liczby unikalnych fingerprintów raportowanej przez `loadgen`
+  (rozgrzewka: 1 019 nowych alertów vs 1 022 unikalnych fingerprintów; przebieg główny: 14 928 vs 14 931).
+  **Przyczyna (brak utraty w potoku):** w `crates/loadgen/src/lib.rs` (`Generator::next_event`) przy `duplicate == true` generator wysyła niezmienione
+  zdarzenia bazowe z 3 fixtures (`workflow.v1|order-settlement|validate-counterparty|TIMEOUT`, `alertmanager|HighErrorRate|payments-api|eu-west`,
+  `trade.rejected.v2|T-998877`) i wlicza te 3 bazowe identyfikatory do `Generator::unique_identities()` dla bieżącego przebiegu.
+  Ponieważ pomiar 1 uruchamiano na niepustej bazie (po wcześniejszych testach `first-flow.sh` / `appendix-a.sh`), te 3 bazowe alerty
+  **już istniały w tabeli `alerts` w stanie `open`** — więc `lifecycle-dedup` poprawnie zdeduplikował zdarzenia duplikatowe na istniejących 3 alertach
+  (podbijając ich `count`), zamiast tworzyć 3 nowe wiersze. Każdy z unikalnych sufiksów `-{now_ms}` (1 019 i 14 928) utworzył dokładnie 1 nowy alert;
+  brak duplikatów `idempotency_key` w `deliveries`. W skryptach E2E na niepustej bazie (np. `resilience.sh`) należy oczekiwać `delta(alerts) == unique_identities`
+  tylko na czystej bazie lub z `DUP_RATIO=0`, a przy `DUP_RATIO > 0` na niepustej bazie `delta(alerts) == unique_identities - (liczba już istniejących bazowych fingerprintów ∈ {0..3})`,
+  podczas gdy `delta(sum(alerts.count)) == wysłane` zawsze zachodzi dokładnie.
 - **Ruch obcy:** równolegle na stosie chodziły pojedyncze testy e2e innej sesji (pomijalne wobec 30 tys. zdarzeń).
 - **Rekomendacja:** optymalizować `sender`: (1) przetwarzanie współbieżne — np. `split_partition_queue` / zadanie per partycja albo
   ograniczona współbieżność (`buffer_unordered`) z commitem offsetu po kolei; (2) pula/ponowne użycie połączeń SMTP zamiast
