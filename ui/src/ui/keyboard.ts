@@ -1,4 +1,3 @@
-// Skróty klawiszowe list (design.md D9). `isTypingTarget` jest czyste (bez DOM) — testowalne atrapami w node.
 import { useEffect, useRef, useState } from "react";
 
 /** Minimalny kształt elementu DOM potrzebny do decyzji; prawdziwy `Element` go spełnia. */
@@ -8,7 +7,6 @@ export type KeyTarget = {
   closest?: (selector: string) => unknown;
 };
 
-// Pola tekstowe, listy wyboru, kombo (react-select) i wnętrze okien dialogowych (modal > paleta > lista).
 const TYPING_SELECTOR = '[role="combobox"], [role="dialog"], [contenteditable=""], [contenteditable="true"]';
 
 /** Czy zdarzenie klawiatury pochodzi z miejsca, w którym jednoklawiszowe skróty muszą ustąpić. */
@@ -43,7 +41,6 @@ export function useListKeyboard({ keys, enabled, onOpen, onAction }: ListKeyboar
   keysRef.current = keys;
   handlers.current = { onOpen, onAction };
 
-  // Bieżący wiersz zniknął (np. zatwierdzony) → najbliższy sąsiad na tej samej pozycji.
   let index = activeRef.current === null ? -1 : keys.indexOf(activeRef.current);
   if (activeRef.current !== null && index < 0) {
     index = Math.min(lastIndexRef.current, keys.length - 1);
@@ -74,7 +71,6 @@ export function useListKeyboard({ keys, enabled, onOpen, onAction }: ListKeyboar
       if (key === "j" || key === "ArrowDown") move(1);
       else if (key === "k" || key === "ArrowUp") move(-1);
       else if (key === "Enter") {
-        // Enter na fokusowanym linku/przycisku robi swoje.
         if (target?.closest?.("a, button") || activeRef.current === null) return;
         open?.(activeRef.current);
       } else if (key === "x" || key === "a" || key === "r") act?.(key, activeRef.current);
@@ -89,7 +85,6 @@ export function useListKeyboard({ keys, enabled, onOpen, onAction }: ListKeyboar
     return () => window.removeEventListener("keydown", onKey);
   }, [enabled]);
 
-  // Bieżący wiersz ma być widoczny po przesunięciu.
   useEffect(() => {
     document.querySelector(".kb-current")?.scrollIntoView?.({ block: "nearest" });
   }, [activeKey]);

@@ -25,13 +25,19 @@ fn transition_str(t: Transition) -> &'static str {
 
 /// Przejście stanu alertu: `(fingerprint, episode, transition)`.
 pub fn alert_transition(fingerprint: &str, episode: i32, transition: Transition) -> String {
-    format!("alert:{fingerprint}:{episode}:{}", transition_str(transition))
+    format!(
+        "alert:{fingerprint}:{episode}:{}",
+        transition_str(transition)
+    )
 }
 
 /// Dostarczenie: `(alert_id, episode, person_id, channel)` – co najwyżej jedno
 /// powiadomienie osoby na kanale o danym epizodzie.
 pub fn delivery(alert_id: Uuid, episode: i32, person_id: &str, channel: Channel) -> String {
-    format!("delivery:{alert_id}:{episode}:{person_id}:{}", channel_str(channel))
+    format!(
+        "delivery:{alert_id}:{episode}:{person_id}:{}",
+        channel_str(channel)
+    )
 }
 
 /// Uruchomienie runbooka: `(alert_id, episode, runbook_id)` – raz na epizod.
@@ -52,10 +58,22 @@ mod tests {
     #[test]
     fn keys_are_stable_and_distinct() {
         let a = Uuid::nil();
-        assert_eq!(delivery(a, 1, "anna", Channel::Sms), format!("delivery:{a}:1:anna:sms"));
-        assert_ne!(delivery(a, 1, "anna", Channel::Sms), delivery(a, 2, "anna", Channel::Sms));
-        assert_eq!(alert_transition("F", 2, Transition::Reopened), "alert:F:2:reopened");
-        assert_eq!(runbook_run(a, 1, "settlement-timeout"), format!("run:{a}:1:settlement-timeout"));
+        assert_eq!(
+            delivery(a, 1, "anna", Channel::Sms),
+            format!("delivery:{a}:1:anna:sms")
+        );
+        assert_ne!(
+            delivery(a, 1, "anna", Channel::Sms),
+            delivery(a, 2, "anna", Channel::Sms)
+        );
+        assert_eq!(
+            alert_transition("F", 2, Transition::Reopened),
+            "alert:F:2:reopened"
+        );
+        assert_eq!(
+            runbook_run(a, 1, "settlement-timeout"),
+            format!("run:{a}:1:settlement-timeout")
+        );
         assert_eq!(step(a, "s1", 0), format!("step:{a}:s1:0"));
     }
 }

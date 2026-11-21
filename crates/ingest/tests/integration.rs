@@ -4,9 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use common::kafka::{
     self,
-    rdkafka::{
-        producer::{FutureProducer, FutureRecord},
-    },
+    rdkafka::producer::{FutureProducer, FutureRecord},
 };
 use contracts::{topics, Envelope};
 use ingest::{http, sources};
@@ -24,14 +22,21 @@ fn producer() -> FutureProducer {
 async fn start_http() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let router = http::app(http::AppState { producer: producer() });
+    let router = http::app(http::AppState {
+        producer: producer(),
+    });
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{addr}")
 }
 
 /// Szuka na `events.raw` koperty ze wskazanym `schema` (nowa grupa, od początku).
 async fn find_raw(schema: &str, timeout: Duration) -> Option<Envelope> {
-    let consumer = kafka::consumer(BROKERS, &format!("test-{}", Uuid::new_v4()), &[topics::EVENTS_RAW]).unwrap();
+    let consumer = kafka::consumer(
+        BROKERS,
+        &format!("test-{}", Uuid::new_v4()),
+        &[topics::EVENTS_RAW],
+    )
+    .unwrap();
     let deadline = tokio::time::Instant::now() + timeout;
     while let Ok(res) = tokio::time::timeout_at(deadline, consumer.recv()).await {
         let Ok(msg) = res else { continue };
@@ -45,7 +50,9 @@ async fn find_raw(schema: &str, timeout: Duration) -> Option<Envelope> {
 }
 
 async fn expect_raw(schema: &str) -> Envelope {
-    find_raw(schema, Duration::from_secs(15)).await.expect("no envelope on events.raw")
+    find_raw(schema, Duration::from_secs(15))
+        .await
+        .expect("no envelope on events.raw")
 }
 
 fn uniq(prefix: &str) -> String {
@@ -56,7 +63,12 @@ fn uniq(prefix: &str) -> String {
 async fn post_ingest_valid_envelope() {
     let base = start_http().await;
     let schema = uniq("t.valid");
-    let r = reqwest::Client::new().post(format!("{base}/ingest")).json(&json!({"format":"json","schema":schema,"payload":{"a":1}})).send().await.unwrap();
+    let r = reqwest::Client::new()
+        .post(format!("{base}/ingest"))
+        .json(&json!({"format":"json","schema":schema,"payload":{"a":1}}))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::ACCEPTED);
     let body: Value = r.json().await.unwrap();
     let id: Uuid = body["event_id"].as_str().unwrap().parse().unwrap();
@@ -72,12 +84,20 @@ async fn post_ingest_missing_fields_400_and_nothing_published() {
     let base = start_http().await;
     let c = reqwest::Client::new();
     let schema = uniq("t.missing");
-    // brak payload
-    let r = c.post(format!("{base}/ingest")).json(&json!({"format":"json","schema":schema})).send().await.unwrap();
+    let r = c
+        .post(format!("{base}/ingest"))
+        .json(&json!({"format":"json","schema":schema}))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     assert!(r.text().await.unwrap().contains("payload"));
-    // brak schema
-    let r = c.post(format!("{base}/ingest")).json(&json!({"format":"json","payload":{"marker":schema}})).send().await.unwrap();
+    let r = c
+        .post(format!("{base}/ingest"))
+        .json(&json!({"format":"json","payload":{"marker":schema}}))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     assert!(r.text().await.unwrap().contains("schema"));
     assert!(find_raw(&schema, Duration::from_secs(5)).await.is_none());
@@ -86,7 +106,12 @@ async fn post_ingest_missing_fields_400_and_nothing_published() {
 #[tokio::test]
 async fn post_ingest_non_json_body_400() {
     let base = start_http().await;
-    let r = reqwest::Client::new().post(format!("{base}/ingest")).body("not json").send().await.unwrap();
+    let r = reqwest::Client::new()
+        .post(format!("{base}/ingest"))
+        .body("not json")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -94,7 +119,12 @@ async fn post_ingest_non_json_body_400() {
 async fn post_ingest_xml_415_lists_formats() {
     let base = start_http().await;
     let schema = uniq("t.xml");
-    let r = reqwest::Client::new().post(format!("{base}/ingest")).json(&json!({"format":"xml","schema":schema,"payload":"<a/>"})).send().await.unwrap();
+    let r = reqwest::Client::new()
+        .post(format!("{base}/ingest"))
+        .json(&json!({"format":"xml","schema":schema,"payload":"<a/>"}))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     let t = r.text().await.unwrap();
     assert!(t.contains("json") && t.contains("yaml"), "{t}");
@@ -107,7 +137,13 @@ async fn post_ingest_schema_json_variants() {
     let c = reqwest::Client::new();
     for ct in ["application/json", "application/json; charset=utf-8"] {
         let schema = uniq("t.rawjson");
-        let r = c.post(format!("{base}/ingest/{schema}")).header("content-type", ct).body(r#"{"alert":"x"}"#).send().await.unwrap();
+        let r = c
+            .post(format!("{base}/ingest/{schema}"))
+            .header("content-type", ct)
+            .body(r#"{"alert":"x"}"#)
+            .send()
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::ACCEPTED, "{ct}");
         let env = expect_raw(&schema).await;
         assert_eq!(env.format, "json");
@@ -120,7 +156,13 @@ async fn post_ingest_schema_json_variants() {
 async fn post_ingest_schema_yaml() {
     let base = start_http().await;
     let schema = uniq("t.yaml");
-    let r = reqwest::Client::new().post(format!("{base}/ingest/{schema}")).header("content-type", "application/yaml").body("a: 1\nb: 2\n").send().await.unwrap();
+    let r = reqwest::Client::new()
+        .post(format!("{base}/ingest/{schema}"))
+        .header("content-type", "application/yaml")
+        .body("a: 1\nb: 2\n")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::ACCEPTED);
     let env = expect_raw(&schema).await;
     assert_eq!(env.format, "yaml");
@@ -131,11 +173,29 @@ async fn post_ingest_schema_yaml() {
 async fn post_ingest_schema_bad_requests() {
     let base = start_http().await;
     let c = reqwest::Client::new();
-    let r = c.post(format!("{base}/ingest/x")).header("content-type", "text/plain").body("hi").send().await.unwrap();
+    let r = c
+        .post(format!("{base}/ingest/x"))
+        .header("content-type", "text/plain")
+        .body("hi")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    let r = c.post(format!("{base}/ingest/x")).header("content-type", "application/json").body("{nope").send().await.unwrap();
+    let r = c
+        .post(format!("{base}/ingest/x"))
+        .header("content-type", "application/json")
+        .body("{nope")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
-    let r = c.post(format!("{base}/ingest/x")).header("content-type", "application/yaml").body("a: [oops").send().await.unwrap();
+    let r = c
+        .post(format!("{base}/ingest/x"))
+        .header("content-type", "application/yaml")
+        .body("a: [oops")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -145,9 +205,17 @@ fn partition_count(topic: &str) -> Option<usize> {
         config::ClientConfig,
         consumer::{BaseConsumer, Consumer},
     };
-    let c: BaseConsumer = ClientConfig::new().set("bootstrap.servers", BROKERS).create().unwrap();
-    let md = c.fetch_metadata(Some(topic), Duration::from_secs(10)).unwrap();
-    md.topics().iter().find(|t| t.name() == topic && t.error().is_none()).map(|t| t.partitions().len())
+    let c: BaseConsumer = ClientConfig::new()
+        .set("bootstrap.servers", BROKERS)
+        .create()
+        .unwrap();
+    let md = c
+        .fetch_metadata(Some(topic), Duration::from_secs(10))
+        .unwrap();
+    md.topics()
+        .iter()
+        .find(|t| t.name() == topic && t.error().is_none())
+        .map(|t| t.partitions().len())
 }
 
 /// Sprzątanie na końcu testu (także przy panice): zatrzymuje skaner, usuwa topiki i wiersze `ingest_errors`.
@@ -161,13 +229,19 @@ struct Cleanup {
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        let (topic, dir, scanner, source) = (self.topic.take(), self.dir.take(), self.scanner.take(), self.source.take());
-        // własny runtime w osobnym wątku: działa niezależnie od runtime'u testu (który może się już zamykać)
+        let (topic, dir, scanner, source) = (
+            self.topic.take(),
+            self.dir.take(),
+            self.scanner.take(),
+            self.source.take(),
+        );
         let _ = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
             rt.block_on(async move {
                 if let Some(d) = &dir {
-                    // skaner sam zatrzymuje konsumenta źródła po zniknięciu pliku (cykl 2 s)
                     let _ = std::fs::remove_dir_all(d);
                     tokio::time::sleep(Duration::from_secs(3)).await;
                 }
@@ -175,13 +249,26 @@ impl Drop for Cleanup {
                     h.abort();
                 }
                 if let Some(t) = topic {
-                    use common::kafka::rdkafka::{admin::{AdminClient, AdminOptions}, client::DefaultClientContext, config::ClientConfig};
-                    let admin: AdminClient<DefaultClientContext> = ClientConfig::new().set("bootstrap.servers", BROKERS).create().unwrap();
-                    let _ = admin.delete_topics(&[t.as_str()], &AdminOptions::new()).await;
+                    use common::kafka::rdkafka::{
+                        admin::{AdminClient, AdminOptions},
+                        client::DefaultClientContext,
+                        config::ClientConfig,
+                    };
+                    let admin: AdminClient<DefaultClientContext> = ClientConfig::new()
+                        .set("bootstrap.servers", BROKERS)
+                        .create()
+                        .unwrap();
+                    let _ = admin
+                        .delete_topics(&[t.as_str()], &AdminOptions::new())
+                        .await;
                 }
                 if let Some(src) = source {
                     if let Ok(pool) = common::db::connect_and_migrate(DB).await {
-                        let _ = common::db::sqlx::query("DELETE FROM ingest_errors WHERE source = $1").bind(src).execute(&pool).await;
+                        let _ =
+                            common::db::sqlx::query("DELETE FROM ingest_errors WHERE source = $1")
+                                .bind(src)
+                                .execute(&pool)
+                                .await;
                     }
                 }
             });
@@ -208,28 +295,43 @@ async fn kafka_source_added_without_restart() {
     std::fs::create_dir_all(&dir).unwrap();
     let pool = common::db::connect_and_migrate(DB).await.unwrap();
     let p = producer();
-    let ctx = Arc::new(sources::Ctx { brokers: BROKERS.into(), pool: pool.clone(), producer: p.clone() });
+    let ctx = Arc::new(sources::Ctx {
+        brokers: BROKERS.into(),
+        pool: pool.clone(),
+        producer: p.clone(),
+    });
     let scanner = tokio::spawn(sources::run_scanner(ctx, dir.to_string_lossy().into()));
     let mut cleanup = Cleanup::default();
     cleanup.dir = Some(dir.clone());
     cleanup.scanner = Some(scanner.abort_handle());
 
-    // źródło dodane PO starcie skanera
     tokio::time::sleep(Duration::from_millis(500)).await;
     let topic = uniq("test.src");
     let schema = uniq("t.kafka");
     cleanup.topic = Some(topic.clone());
     cleanup.source = Some(format!("kafka:{topic}"));
-    std::fs::write(dir.join("s.yaml"), format!("topic: {topic}\nschema: {schema}\nformat: json\n")).unwrap();
-    // poczekaj, aż skaner (2 s) uruchomi konsumenta, i wyślij wiadomości (earliest => nie zginą)
+    std::fs::write(
+        dir.join("s.yaml"),
+        format!("topic: {topic}\nschema: {schema}\nformat: json\n"),
+    )
+    .unwrap();
     tokio::time::sleep(Duration::from_secs(4)).await;
-    // topiku nie zakładamy ręcznie: ma go założyć skaner
-    assert_eq!(partition_count(&topic), Some(topics::PARTITIONS as usize), "skaner nie założył topiku");
+    assert_eq!(
+        partition_count(&topic),
+        Some(topics::PARTITIONS as usize),
+        "skaner nie założył topiku"
+    );
     let send = |payload: &'static str| {
         let p = p.clone();
         let topic = topic.clone();
         async move {
-            p.send(FutureRecord::to(&topic).key("k").payload(payload), Duration::from_secs(10)).await.map_err(|(e, _)| e).unwrap();
+            p.send(
+                FutureRecord::to(&topic).key("k").payload(payload),
+                Duration::from_secs(10),
+            )
+            .await
+            .map_err(|(e, _)| e)
+            .unwrap();
         }
     };
     send("{not json").await;
@@ -240,11 +342,14 @@ async fn kafka_source_added_without_restart() {
     assert_eq!(env.format, "json");
     assert_eq!(env.payload, json!({"k": "v"}));
 
-    // błąd parsowania -> ingest_errors
     let source = format!("kafka:{topic}");
     let mut n = 0i64;
     for _ in 0..30 {
-        n = common::db::sqlx::query_scalar("SELECT count(*) FROM ingest_errors WHERE source = $1").bind(&source).fetch_one(&pool).await.unwrap();
+        n = common::db::sqlx::query_scalar("SELECT count(*) FROM ingest_errors WHERE source = $1")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         if n > 0 {
             break;
         }

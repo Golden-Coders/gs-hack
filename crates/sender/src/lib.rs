@@ -50,7 +50,10 @@ pub struct OffsetTracker {
 
 impl OffsetTracker {
     pub fn track(&mut self, partition: i32, offset: i64) {
-        self.partitions.entry(partition).or_default().insert(offset, false);
+        self.partitions
+            .entry(partition)
+            .or_default()
+            .insert(offset, false);
     }
 
     /// Oznacza offset jako przetworzony i zwraca najwyższy ciągły ukończony offset tej partycji (jeśli okno się przesunęło).
@@ -100,13 +103,16 @@ fn commit_partition_offset(
 }
 
 pub use adapters::{
-    format_email_body, format_phone_body, format_sms_body, ChannelAdapter, EmailAdapter, PhoneMockAdapter, SendError,
-    SmsMockAdapter, UiAdapter,
+    format_email_body, format_phone_body, format_sms_body, ChannelAdapter, EmailAdapter,
+    PhoneMockAdapter, SendError, SmsMockAdapter, UiAdapter,
 };
-pub use engine::{ProcessOutcome, SenderConfig, SenderEngine, DEFAULT_BACKOFF_MS, DEFAULT_MAX_ATTEMPTS};
+pub use engine::{
+    ProcessOutcome, SenderConfig, SenderEngine, DEFAULT_BACKOFF_MS, DEFAULT_MAX_ATTEMPTS,
+};
 pub use store::{
-    channel_to_str, db, status_to_str, str_to_channel, str_to_status, ClaimOutcome, DeliveryBackend, DeliveryRecord,
-    InMemoryBackend, MockChannelState, MockMessage, PgKafkaBackend, UpsertDelivery,
+    channel_to_str, db, status_to_str, str_to_channel, str_to_status, ClaimOutcome,
+    DeliveryBackend, DeliveryRecord, InMemoryBackend, MockChannelState, MockMessage,
+    PgKafkaBackend, UpsertDelivery,
 };
 
 /// Sygnał zatrzymania dla pętli konsumentów (`true` = zatrzymaj).
@@ -115,8 +121,16 @@ pub type Shutdown = tokio::sync::watch::Receiver<bool>;
 /// Rola `sender`: konsumuje `deliveries.requested`, przetwarza zlecenia współbieżnie
 /// (limit `SENDER_CONCURRENCY`, domyślnie 32) z commitem offsetów ściśle w kolejności per partycja
 /// po zapisie skutków w Postgresie / Kafce (design D2, D8, D9, hardening 2.4).
-pub async fn run_sender(brokers: String, engine: SenderEngine, mut shutdown: Shutdown) -> anyhow::Result<()> {
-    let consumer = common::kafka::consumer(&brokers, topics::groups::SENDER, &[topics::DELIVERIES_REQUESTED])?;
+pub async fn run_sender(
+    brokers: String,
+    engine: SenderEngine,
+    mut shutdown: Shutdown,
+) -> anyhow::Result<()> {
+    let consumer = common::kafka::consumer(
+        &brokers,
+        topics::groups::SENDER,
+        &[topics::DELIVERIES_REQUESTED],
+    )?;
     let concurrency = sender_concurrency();
     tracing::info!(
         topic = topics::DELIVERIES_REQUESTED,
@@ -227,8 +241,16 @@ pub async fn run_sender(brokers: String, engine: SenderEngine, mut shutdown: Shu
 
 /// Rola `sender-retry`: konsumuje `deliveries.retry`, czeka do `not_before` (z możliwością
 /// przerwania przy shutdownie bez commitu offsetu) i ponawia dostarczenie przez `SenderEngine`.
-pub async fn run_sender_retry(brokers: String, engine: SenderEngine, mut shutdown: Shutdown) -> anyhow::Result<()> {
-    let consumer = common::kafka::consumer(&brokers, topics::groups::SENDER_RETRY, &[topics::DELIVERIES_RETRY])?;
+pub async fn run_sender_retry(
+    brokers: String,
+    engine: SenderEngine,
+    mut shutdown: Shutdown,
+) -> anyhow::Result<()> {
+    let consumer = common::kafka::consumer(
+        &brokers,
+        topics::groups::SENDER_RETRY,
+        &[topics::DELIVERIES_RETRY],
+    )?;
     tracing::info!(
         topic = topics::DELIVERIES_RETRY,
         group = topics::groups::SENDER_RETRY,
@@ -300,11 +322,12 @@ mod tests {
     fn compute_retry_wait_clamps_far_future_timestamps() {
         let now = Utc::now();
 
-        // Past or equal timestamp -> zero wait.
-        assert_eq!(compute_retry_wait(now - chrono::Duration::seconds(10), now), Duration::ZERO);
+        assert_eq!(
+            compute_retry_wait(now - chrono::Duration::seconds(10), now),
+            Duration::ZERO
+        );
         assert_eq!(compute_retry_wait(now, now), Duration::ZERO);
 
-        // Normal backoff within limit -> exact duration.
         assert_eq!(
             compute_retry_wait(now + chrono::Duration::seconds(30), now),
             Duration::from_secs(30)
@@ -314,7 +337,6 @@ mod tests {
             MAX_RETRY_WAIT
         );
 
-        // Forged far-future timestamp -> clamped to MAX_RETRY_WAIT.
         assert_eq!(
             compute_retry_wait(now + chrono::Duration::days(3650), now),
             MAX_RETRY_WAIT

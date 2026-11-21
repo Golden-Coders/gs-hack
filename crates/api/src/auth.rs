@@ -80,7 +80,7 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn from_hex(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
@@ -128,12 +128,13 @@ pub async fn ensure_auth_users_seeded(db: &PgPool, config_dir: &str) {
     crate::routes::people::ensure_people_seeded(db, config_dir).await;
 
     for (username, display_name) in SEED_USERS {
-        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM auth_users WHERE username = $1")
-            .bind(username)
-            .fetch_optional(db)
-            .await
-            .ok()
-            .flatten();
+        let exists: Option<i32> =
+            sqlx::query_scalar("SELECT 1 FROM auth_users WHERE username = $1")
+                .bind(username)
+                .fetch_optional(db)
+                .await
+                .ok()
+                .flatten();
         if exists.is_some() {
             continue;
         }
@@ -214,11 +215,18 @@ impl AuthStore {
     pub fn create_session(&self, person_id: String) -> String {
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let now = Instant::now();
-        let entry = SessionEntry { person_id, expires_at: now + SESSION_TTL };
+        let entry = SessionEntry {
+            person_id,
+            expires_at: now + SESSION_TTL,
+        };
         let mut map = self.sessions.write().unwrap_or_else(|e| e.into_inner());
         map.retain(|_, v| v.expires_at > now);
         if map.len() >= MAX_SESSIONS {
-            if let Some(oldest_key) = map.iter().min_by_key(|(_, v)| v.expires_at).map(|(k, _)| k.clone()) {
+            if let Some(oldest_key) = map
+                .iter()
+                .min_by_key(|(_, v)| v.expires_at)
+                .map(|(k, _)| k.clone())
+            {
                 map.remove(&oldest_key);
             }
         }
@@ -232,7 +240,9 @@ impl AuthStore {
         }
         let now = Instant::now();
         let map = self.sessions.read().unwrap_or_else(|e| e.into_inner());
-        map.get(token).filter(|e| e.expires_at > now).map(|e| e.person_id.clone())
+        map.get(token)
+            .filter(|e| e.expires_at > now)
+            .map(|e| e.person_id.clone())
     }
 
     pub fn revoke_session(&self, token: &str) {
@@ -352,13 +362,23 @@ pub async fn resolve_verified_person_id(
                 ));
             }
             header_person
-                .ok_or_else(|| err(StatusCode::BAD_REQUEST, "missing X-Person-Id header", "wymagany nagłówek X-Person-Id"))?
+                .ok_or_else(|| {
+                    err(
+                        StatusCode::BAD_REQUEST,
+                        "missing X-Person-Id header",
+                        "wymagany nagłówek X-Person-Id",
+                    )
+                })?
                 .to_string()
         }
     };
 
     if person_id.len() > 128 || person_id.chars().any(|c| c.is_control()) {
-        return Err(err(StatusCode::BAD_REQUEST, "invalid operator id", "nieprawidłowy identyfikator operatora"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid operator id",
+            "nieprawidłowy identyfikator operatora",
+        ));
     }
 
     let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM people WHERE id = $1")
@@ -408,7 +428,11 @@ pub fn protected_router() -> Router<AppState> {
         .route("/auth/logout", post(logout))
 }
 
-async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<LoginRequest>) -> Response {
+async fn login(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<LoginRequest>,
+) -> Response {
     ensure_auth_users_seeded(&st.db, &st.config.config_dir).await;
 
     let raw_user = req
@@ -420,10 +444,14 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
         .to_ascii_lowercase();
 
     if raw_user.is_empty() || raw_user.len() > 128 || raw_user.chars().any(|c| c.is_control()) {
-        return err(StatusCode::BAD_REQUEST, "invalid username", "Podaj poprawny login użytkownika").into_response();
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid username",
+            "Podaj poprawny login użytkownika",
+        )
+        .into_response();
     }
 
-    // 1. Logowanie hasłem z bazy `auth_users` (PBKDF2-HMAC-SHA256)
     if let Some(password) = req.password.as_deref() {
         let row: Option<(String, String, String, String)> = match sqlx::query_as(
             "SELECT person_id, display_name, password_salt, password_hash FROM auth_users WHERE LOWER(username) = $1",
@@ -437,17 +465,26 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
         };
 
         let Some((person_id, display_name, salt_hex, hash_hex)) = row else {
-            // Wykonaj sztuczną weryfikację PBKDF2, aby zabezpieczyć przed timing-attackiem (enumeracją kont z zewnątrz)
             let _ = verify_password(
                 password,
                 "00000000000000000000000000000000",
                 "0000000000000000000000000000000000000000000000000000000000000000",
             );
-            return err(StatusCode::UNAUTHORIZED, "unauthorized", "Nieprawidłowy login lub hasło").into_response();
+            return err(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Nieprawidłowy login lub hasło",
+            )
+            .into_response();
         };
 
         if !verify_password(password, &salt_hex, &hash_hex) {
-            return err(StatusCode::UNAUTHORIZED, "unauthorized", "Nieprawidłowy login lub hasło").into_response();
+            return err(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Nieprawidłowy login lub hasło",
+            )
+            .into_response();
         }
 
         let session_token = st.auth.create_session(person_id.clone());
@@ -462,12 +499,13 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
             })),
         )
             .into_response();
-        resp.headers_mut()
-            .insert(header::SET_COOKIE, session_cookie_header(&session_token, SESSION_TTL.as_secs()));
+        resp.headers_mut().insert(
+            header::SET_COOKIE,
+            session_cookie_header(&session_token, SESSION_TTL.as_secs()),
+        );
         return resp;
     }
 
-    // 2. Kompatybilność wsteczna dla testów API (`person_id` + `token`)
     let person_id = &raw_user;
     let presented = req
         .token
@@ -482,7 +520,12 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
         });
 
     let Some(presented) = presented else {
-        return err(StatusCode::UNAUTHORIZED, "unauthorized", "Podaj hasło logowania").into_response();
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "Podaj hasło logowania",
+        )
+        .into_response();
     };
 
     let credential_ok = if st.auth.has_user_tokens() {
@@ -493,7 +536,12 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
     };
 
     if !credential_ok {
-        return err(StatusCode::UNAUTHORIZED, "unauthorized", "Nieprawidłowy login lub hasło").into_response();
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "Nieprawidłowy login lub hasło",
+        )
+        .into_response();
     }
 
     let name: Option<String> = match sqlx::query_scalar("SELECT name FROM people WHERE id = $1")
@@ -506,7 +554,12 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
     };
 
     let Some(name) = name else {
-        return err(StatusCode::FORBIDDEN, "unknown operator", "osoba nie istnieje w katalogu people").into_response();
+        return err(
+            StatusCode::FORBIDDEN,
+            "unknown operator",
+            "osoba nie istnieje w katalogu people",
+        )
+        .into_response();
     };
 
     let session_token = st.auth.create_session(person_id.to_string());
@@ -521,8 +574,10 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
         })),
     )
         .into_response();
-    resp.headers_mut()
-        .insert(header::SET_COOKIE, session_cookie_header(&session_token, SESSION_TTL.as_secs()));
+    resp.headers_mut().insert(
+        header::SET_COOKIE,
+        session_cookie_header(&session_token, SESSION_TTL.as_secs()),
+    );
     resp
 }
 
@@ -534,7 +589,10 @@ async fn me(Extension(auth): Extension<AuthenticatedOperator>) -> impl IntoRespo
     }))
 }
 
-async fn logout(State(st): State<AppState>, Extension(auth): Extension<AuthenticatedOperator>) -> Response {
+async fn logout(
+    State(st): State<AppState>,
+    Extension(auth): Extension<AuthenticatedOperator>,
+) -> Response {
     if let Some(tok) = auth.session_token.as_deref() {
         st.auth.revoke_session(tok);
     }
@@ -548,7 +606,11 @@ async fn logout(State(st): State<AppState>, Extension(auth): Extension<Authentic
 mod tests {
     use super::*;
 
-    fn test_store(user_tokens: &str, proxy_header: Option<&str>, allow_unverified: bool) -> AuthStore {
+    fn test_store(
+        user_tokens: &str,
+        proxy_header: Option<&str>,
+        allow_unverified: bool,
+    ) -> AuthStore {
         AuthStore {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             user_tokens: Arc::new(parse_user_tokens(user_tokens)),
@@ -595,7 +657,10 @@ mod tests {
             header::COOKIE,
             HeaderValue::from_static("other=1; alerthub_session=abc123; theme=dark"),
         );
-        assert_eq!(extract_cookie(&h, SESSION_COOKIE_NAME).as_deref(), Some("abc123"));
+        assert_eq!(
+            extract_cookie(&h, SESSION_COOKIE_NAME).as_deref(),
+            Some("abc123")
+        );
         assert_eq!(extract_cookie(&h, "missing"), None);
     }
 }

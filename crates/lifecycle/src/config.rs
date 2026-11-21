@@ -53,7 +53,9 @@ async fn sqlx_exec_seed(pool: &PgPool, schema: &str, def: Value) -> anyhow::Resu
 
 /// Wczytuje wszystkie mappingi z bazy do `store`; niekompilujące się są pomijane (warn).
 pub async fn load_mappings(pool: &PgPool, store: &MappingStore) -> anyhow::Result<()> {
-    let rows = common::db::sqlx::query("SELECT schema, def, version FROM mappings").fetch_all(pool).await?;
+    let rows = common::db::sqlx::query("SELECT schema, def, version FROM mappings")
+        .fetch_all(pool)
+        .await?;
     let mut map = HashMap::new();
     for row in rows {
         let schema: String = row.get("schema");
@@ -77,7 +79,9 @@ pub async fn load_mappings(pool: &PgPool, store: &MappingStore) -> anyhow::Resul
 /// Sprawdza zmiany plików (po mtime) i wrzuca zmienione definicje do bazy.
 async fn scan_files(pool: &PgPool, dir: &Path, seen: &mut HashMap<PathBuf, SystemTime>) {
     for path in yaml_files(dir) {
-        let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) else { continue };
+        let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
+            continue;
+        };
         if seen.get(&path) == Some(&mtime) {
             continue;
         }
@@ -89,8 +93,9 @@ async fn scan_files(pool: &PgPool, dir: &Path, seen: &mut HashMap<PathBuf, Syste
                 continue;
             }
         };
-        let Ok(json) = serde_json::to_value(&def) else { continue };
-        // Upsert tylko, gdy definicja się różni; wtedy podbijamy wersję i powiadamiamy.
+        let Ok(json) = serde_json::to_value(&def) else {
+            continue;
+        };
         let res = common::db::sqlx::query(
             "INSERT INTO mappings (schema, def, version, updated_at) VALUES ($1, $2, 1, now())
              ON CONFLICT (schema) DO UPDATE SET def = EXCLUDED.def, version = mappings.version + 1, updated_at = now()
@@ -154,7 +159,6 @@ pub async fn run_config(
                     }
                 }
                 Ok(_) => {}
-                // PgListener łączy się ponownie sam; po błędzie robimy przeładowanie awaryjnie.
                 Err(e) => {
                     tracing::warn!(error = %e, "config listener error");
                     tokio::time::sleep(Duration::from_secs(1)).await;

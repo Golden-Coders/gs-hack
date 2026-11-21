@@ -18,7 +18,11 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::watch::channel(false);
     let mut tasks = tokio::task::JoinSet::new();
 
-    tasks.spawn(run_sender(config.kafka_brokers.clone(), engine.clone(), rx.clone()));
+    tasks.spawn(run_sender(
+        config.kafka_brokers.clone(),
+        engine.clone(),
+        rx.clone(),
+    ));
     tasks.spawn(run_sender_retry(config.kafka_brokers.clone(), engine, rx));
 
     tokio::select! {

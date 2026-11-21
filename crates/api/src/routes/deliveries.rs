@@ -144,8 +144,13 @@ async fn resend_delivery(
         req.chain_index = 0;
     }
 
-    let req_json = serde_json::to_value(&req)
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "serialize delivery request", e))?;
+    let req_json = serde_json::to_value(&req).map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "serialize delivery request",
+            e,
+        )
+    })?;
 
     sqlx::query(
         "UPDATE deliveries SET status = 'pending', attempts = 0, last_error = NULL, request = $2, updated_at = now() WHERE id = $1",
@@ -237,8 +242,13 @@ async fn put_mock_channel(
         Channel::Sms => "sms",
         Channel::Phone => "phone",
     };
-    let Json(req) =
-        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid request body", e.body_text()))?;
+    let Json(req) = body.map_err(|e| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "invalid request body",
+            e.body_text(),
+        )
+    })?;
 
     let mut tx = st.db.begin().await.map_err(db_err)?;
     sqlx::query(

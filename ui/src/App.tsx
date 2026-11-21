@@ -1,4 +1,3 @@
-// Decyzja człowieka (design.md D1): powłoka Nav 3 (page-layout + side-navigation), nie navigation-system.
 // eslint-disable-next-line @atlaskit/design-system/no-deprecated-imports -- j.w.
 import { Content, LeftSidebar, Main, PageLayout } from "@atlaskit/page-layout";
 // eslint-disable-next-line @atlaskit/design-system/no-deprecated-imports -- j.w.
@@ -22,7 +21,6 @@ import { Loading } from "./ui/primitives";
 import AlertFeed from "./screens/AlertFeed";
 import Login from "./screens/Login";
 
-// D14: ekrany poza startowym feedem w osobnych chunkach (główny chunk > 500 kB), patrz bundle.md.
 const AlertDetail = lazy(() => import("./screens/AlertDetail"));
 const Approvals = lazy(() => import("./screens/Approvals"));
 const MockOutbox = lazy(() => import("./screens/MockOutbox"));
@@ -44,7 +42,6 @@ const NAV: { to: string; label: string; group: "ops" | "config" }[] = [
   { to: "/people", label: "Teams", group: "config" },
 ];
 
-// Pozycja menu jako link routera (CustomItem `component`); NavLink sam ustawia aria-current="page".
 function NavLinkItem({ children, to, ...props }: CustomItemComponentProps & { to: string }) {
   return (
     <NavLink to={to} end={to === "/"} {...props}>

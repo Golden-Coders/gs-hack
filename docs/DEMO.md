@@ -10,7 +10,7 @@ Adresy: UI http://localhost:5173, Mailpit http://localhost:8025, mock-targets ht
 
 | Czas | Krok (komenda / klik) | Oczekiwany efekt |
 |---|---|---|
-| 0:00 | Slajd/narracja: architektura (`docs/diagram.md`), `make demo` | stack wstaje, generator wypisuje podsumowanie |
+| 0:00 | Slajd/narracja: architektura (README), `make demo` | stack wstaje, generator wypisuje podsumowanie |
 | 0:30 | UI → Alerty | alerty z 3 schematów Appendix A (workflow, alertmanager, trade); kolory/pola z reguł |
 | 1:00 | Dedup: skrypt (b) wysłał ×500 `WORKFLOW_FAILED` | jeden alert z licznikiem ≈ 500, nie 500 alertów; jedno powiadomienie |
 | 1:20 | Routing wg preferencji: alert `HighErrorRate` (payments, critical) do Anny | w ciągu 8:00–20:00 SMS (Skrzynka mocka), poza godzinami e-mail (Mailpit); zespół Settlements dostaje wg preferencji zespołu |

@@ -6,9 +6,9 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use common::kafka::rdkafka::producer::FutureProducer;
 use futures::{stream, StreamExt};
 use loadgen::{channel_for, Channel, Event, Generator, Mode, Settings};
-use common::kafka::rdkafka::producer::FutureProducer;
 use tokio::time::MissedTickBehavior;
 
 /// Krok planowania tempa: co 10 ms dolewamy `RATE * elapsed` zdarzeń.
@@ -59,7 +59,6 @@ async fn main() -> anyhow::Result<()> {
         if elapsed >= settings.duration {
             break;
         }
-        // Liczba zdarzeń, które powinny być już wysłane wg zadanego tempa.
         let due = (elapsed.as_secs_f64() * settings.rate as f64) as u64;
         let batch: Vec<Event> = (scheduled..due)
             .map(|seq| generator.next_event(channel_for(settings.mode, seq)))
@@ -84,7 +83,11 @@ async fn main() -> anyhow::Result<()> {
     println!("wysłane: {}", stats.sent);
     println!("błędy: {}", stats.errors);
     println!("zaplanowane: {}", scheduled);
-    println!("osiągnięte msg/s: {:.1} (czas {:.2} s)", stats.sent as f64 / elapsed, elapsed);
+    println!(
+        "osiągnięte msg/s: {:.1} (czas {:.2} s)",
+        stats.sent as f64 / elapsed,
+        elapsed
+    );
     println!(
         "wygenerowane: {}, duplikaty: {} ({:.1}%), unikalne fingerprinty: {}",
         generator.generated(),
@@ -105,7 +108,11 @@ async fn send(
 ) -> anyhow::Result<()> {
     match event.channel {
         Channel::Http => {
-            http.post(ingest_url).json(&event.body).send().await?.error_for_status()?;
+            http.post(ingest_url)
+                .json(&event.body)
+                .send()
+                .await?
+                .error_for_status()?;
             Ok(())
         }
         Channel::Kafka => {

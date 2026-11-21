@@ -1,6 +1,3 @@
-// Alert w wyglądzie wg prezentacji dopasowanej reguły: tytuł, treść, wybrane pola z wyróżnieniem, kolor.
-// Szablony renderuje backend (`condition`), tu tylko pokazujemy wynik z `AlertDetail`.
-// Kolor z reguły (paleta → tokeny akcentowe ADS) to wyjątek od reguły czerwieni: nadaje go konfiguracja.
 import Heading from "@atlaskit/heading";
 import { Inline, Stack, Text } from "@atlaskit/primitives/compiled";
 import { token } from "@atlaskit/tokens";

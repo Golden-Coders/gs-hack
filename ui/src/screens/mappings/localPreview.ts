@@ -1,6 +1,3 @@
-// Przybliżony podgląd mappingu liczony w przeglądarce – zapas na wypadek, gdy `POST /mappings/preview`
-// nie jest dostępny (backend zwraca 501). Źródłem prawdy jest backend (crate lifecycle); tu tylko prosta ścieżka
-// i warunki-liście, więc wynik jest oznaczany w UI jako „lokalny”.
 import type { Mapping, Cond, Severity } from "./draft";
 import { getAt, parseConditionField, parseJsonPath } from "../../lib/paths";
 

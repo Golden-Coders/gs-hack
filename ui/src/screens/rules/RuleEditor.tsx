@@ -1,8 +1,3 @@
-// Przejrzysty, maksymalnie prosty edytor reguły:
-// 1. Panel komunikacji z AI (gotowy do podpięcia pod backend)
-// 2. Nazwa + priorytet
-// 3. Płaska, czytelna lista warunków (Pole -> Operator -> Wartość)
-// 4. Wybór odbiorców (Zespoły / Osoby)
 import { useEffect, useMemo, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
@@ -78,7 +73,6 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Panel AI (połączony z lokalnym modelem Ollama i tool-callami przez POST /rules/draft)
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -99,7 +93,6 @@ export default function RuleEditor({ initial, people, teams, onSaved, onDeleted,
       id: isNew ? slugify(name) || "nowa-regula" : f.id,
     }));
 
-  // Płaska lista warunków z głównej grupy (prosto i czytelnie)
   const leaves: LeafNode[] = useMemo(() => {
     const direct = form.root.children.filter((c): c is LeafNode => c.kind === "leaf");
     return direct.length > 0 ? direct : findLeaves(form.root);

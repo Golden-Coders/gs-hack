@@ -30,13 +30,19 @@ async fn main() -> anyhow::Result<()> {
     let port = common::Config::port("API", 8080);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, "api listening");
-    axum::serve(listener, app).with_graceful_shutdown(common::shutdown_signal()).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(common::shutdown_signal())
+        .await?;
     Ok(())
 }
 
 fn cors_layer(public_ui_url: &str) -> CorsLayer {
     let mut origins: Vec<HeaderValue> = Vec::new();
-    for raw in [public_ui_url.trim_end_matches('/'), "http://localhost:5173", "http://127.0.0.1:5173"] {
+    for raw in [
+        public_ui_url.trim_end_matches('/'),
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ] {
         if raw.is_empty() {
             continue;
         }
@@ -72,7 +78,6 @@ fn router(state: AppState) -> Router {
         .route("/stream", get(stream::sse))
         .merge(auth::protected_router())
         .merge(routes::router())
-        // Everything above requires authentication; `/health` and `/auth/login` below are public.
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .merge(auth::public_router())
         .route("/health", get(|| async { "ok" }))
@@ -98,15 +103,22 @@ async fn require_token(State(state): State<AppState>, mut req: Request, next: Ne
         .map(str::to_string);
     let cookie_tok = auth::extract_cookie(req.headers(), auth::SESSION_COOKIE_NAME);
 
-    // 1. Server-issued operator session (Bearer, HttpOnly cookie, or ?token= on /stream)
     let stream_query_tok: Option<String> = (req.uri().path() == "/stream")
         .then(|| {
             req.uri().query().and_then(|q| {
-                q.split('&').find_map(|kv| kv.strip_prefix("token=").map(str::to_string))
+                q.split('&')
+                    .find_map(|kv| kv.strip_prefix("token=").map(str::to_string))
             })
         })
         .flatten();
-    for candidate in [bearer.as_deref(), cookie_tok.as_deref(), stream_query_tok.as_deref()].into_iter().flatten() {
+    for candidate in [
+        bearer.as_deref(),
+        cookie_tok.as_deref(),
+        stream_query_tok.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         if let Some(person_id) = state.auth.lookup_session(candidate) {
             req.extensions_mut().insert(auth::AuthenticatedOperator {
                 person_id: Some(person_id),
@@ -117,7 +129,6 @@ async fn require_token(State(state): State<AppState>, mut req: Request, next: Ne
         }
     }
 
-    // 2. Per-operator static token (API_USER_TOKENS)
     if let Some(tok) = bearer.as_deref() {
         if let Some(person_id) = state.auth.lookup_user_token(tok) {
             req.extensions_mut().insert(auth::AuthenticatedOperator {
@@ -129,10 +140,13 @@ async fn require_token(State(state): State<AppState>, mut req: Request, next: Ne
         }
     }
 
-    // 3. Shared service API_TOKEN (or ?token= on /stream only)
     let expected = state.config.api_token.as_str();
     if expected.is_empty() {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "unauthorized" }))).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "unauthorized" })),
+        )
+            .into_response();
     }
     let expected_bytes = expected.as_bytes();
     let header_ok = bearer
@@ -140,8 +154,10 @@ async fn require_token(State(state): State<AppState>, mut req: Request, next: Ne
         .is_some_and(|t| constant_time_eq(t.as_bytes(), expected_bytes));
     let query_ok = req.uri().path() == "/stream"
         && req.uri().query().is_some_and(|q| {
-            q.split('&')
-                .any(|kv| kv.strip_prefix("token=").is_some_and(|t| constant_time_eq(t.as_bytes(), expected_bytes)))
+            q.split('&').any(|kv| {
+                kv.strip_prefix("token=")
+                    .is_some_and(|t| constant_time_eq(t.as_bytes(), expected_bytes))
+            })
         });
     if header_ok || query_ok {
         let proxy_person = state.auth.trusted_proxy_header().and_then(|hdr| {
@@ -164,7 +180,11 @@ async fn require_token(State(state): State<AppState>, mut req: Request, next: Ne
         });
         next.run(req).await
     } else {
-        (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "unauthorized" }))).into_response()
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "unauthorized" })),
+        )
+            .into_response()
     }
 }
 

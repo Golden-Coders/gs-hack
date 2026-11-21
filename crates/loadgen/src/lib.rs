@@ -7,19 +7,15 @@
 //! Duplikat = payload bez zmian (ten sam fingerprint co poprzedni bazowy).
 //! Unikat = zmienione pole fingerprintu z sufiksem `-<n>` (dla `trade.rejected.v2`: `tradeId = T-<n>`).
 
-use std::{
-    collections::HashSet,
-    fmt::Display,
-    str::FromStr,
-    time::Duration,
-};
+use std::{collections::HashSet, fmt::Display, str::FromStr, time::Duration};
 
 use anyhow::bail;
 use serde_json::Value;
 
 /// Fixtures z `crates/contracts` (koperty `{format, schema, payload}`).
 const WORKFLOW_FIXTURE: &str = include_str!("../../contracts/fixtures/events/workflow_failed.json");
-const ALERTMANAGER_FIXTURE: &str = include_str!("../../contracts/fixtures/events/alertmanager_high_error_rate.json");
+const ALERTMANAGER_FIXTURE: &str =
+    include_str!("../../contracts/fixtures/events/alertmanager_high_error_rate.json");
 const TRADE_FIXTURE: &str = include_str!("../../contracts/fixtures/events/trade_rejected.json");
 
 /// Tryb wysyłki z `MODE`.
@@ -38,7 +34,9 @@ impl FromStr for Mode {
             "http" => Ok(Mode::Http),
             "kafka" => Ok(Mode::Kafka),
             "both" => Ok(Mode::Both),
-            other => Err(format!("nieznany tryb {other:?}, dozwolone: http|kafka|both")),
+            other => Err(format!(
+                "nieznany tryb {other:?}, dozwolone: http|kafka|both"
+            )),
         }
     }
 }
@@ -146,8 +144,14 @@ pub struct Generator {
 impl Generator {
     /// `seed` – losowość duplikatów; `suffix_start` – początek sufiksów unikatów.
     pub fn new(dup_ratio: f64, seed: u64, suffix_start: u64) -> Self {
-        let parse = |s: &str| -> Value { serde_json::from_str(s).expect("fixture z contracts jest poprawnym JSON") };
-        let bases = [parse(WORKFLOW_FIXTURE), parse(ALERTMANAGER_FIXTURE), parse(TRADE_FIXTURE)];
+        let parse = |s: &str| -> Value {
+            serde_json::from_str(s).expect("fixture z contracts jest poprawnym JSON")
+        };
+        let bases = [
+            parse(WORKFLOW_FIXTURE),
+            parse(ALERTMANAGER_FIXTURE),
+            parse(TRADE_FIXTURE),
+        ];
         let base_identities = [Schema::Workflow, Schema::Alertmanager, Schema::Trade]
             .map(|s| identity(s, &bases[s as usize]));
         Self {
@@ -191,7 +195,13 @@ impl Generator {
             Channel::Http => envelope,
             Channel::Kafka => envelope.get("payload").cloned().unwrap_or(Value::Null),
         };
-        Event { channel, schema, body, identity, duplicate }
+        Event {
+            channel,
+            schema,
+            body,
+            identity,
+            duplicate,
+        }
     }
 
     pub fn generated(&self) -> u64 {
@@ -256,7 +266,10 @@ impl Settings {
             bail!("RATE musi być > 0");
         }
         if !(0.0..=1.0).contains(&settings.dup_ratio) {
-            bail!("DUP_RATIO musi być w zakresie 0.0–1.0, jest {}", settings.dup_ratio);
+            bail!(
+                "DUP_RATIO musi być w zakresie 0.0–1.0, jest {}",
+                settings.dup_ratio
+            );
         }
         Ok(settings)
     }
@@ -268,7 +281,8 @@ where
     T::Err: Display,
 {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
-    raw.parse::<T>().map_err(|e| anyhow::anyhow!("{name}={raw:?}: {e}"))
+    raw.parse::<T>()
+        .map_err(|e| anyhow::anyhow!("{name}={raw:?}: {e}"))
 }
 
 #[cfg(test)]
@@ -291,7 +305,14 @@ mod tests {
         let events: Vec<Event> = (0..300).map(|_| gen.next_event(Channel::Http)).collect();
         assert!(events.iter().all(|e| !e.duplicate));
         assert_eq!(gen.unique_identities(), 300);
-        assert_eq!(events.iter().map(|e| e.identity.clone()).collect::<HashSet<_>>().len(), 300);
+        assert_eq!(
+            events
+                .iter()
+                .map(|e| e.identity.clone())
+                .collect::<HashSet<_>>()
+                .len(),
+            300
+        );
         assert_eq!(gen.duplicates(), 0);
         assert_eq!(gen.generated(), 300);
     }
@@ -302,7 +323,11 @@ mod tests {
         let events: Vec<Event> = (0..300).map(|_| gen.next_event(Channel::Http)).collect();
         assert!(events.iter().all(|e| e.duplicate));
         assert_eq!(gen.duplicates(), 300);
-        assert_eq!(gen.unique_identities(), 3, "po jednym fingerprincie na schemat");
+        assert_eq!(
+            gen.unique_identities(),
+            3,
+            "po jednym fingerprincie na schemat"
+        );
         for e in &events {
             let expected = match e.schema {
                 Schema::Workflow => "workflow.v1|order-settlement",
@@ -343,7 +368,6 @@ mod tests {
             let e = gen.next_event(Channel::Kafka);
             assert_eq!(e.channel, Channel::Kafka);
             assert_eq!(e.schema, Schema::Trade);
-            // Surowy payload: bez koperty `format` / `schema`.
             assert!(e.body.get("format").is_none());
             assert!(e.body.get("schema").is_none());
             assert!(e.body.pointer("/payload/tradeId").is_some());
@@ -365,17 +389,18 @@ mod tests {
 
     #[test]
     fn unique_events_change_fingerprint_field_per_mapping() {
-        // Pola fingerprintu muszą zgadzać się z mappingami z config/.
         assert!(has_fingerprint_line(MAPPINGS[0], "$.workflowName"));
         assert!(has_fingerprint_line(MAPPINGS[1], "$.alertname"));
         assert!(has_fingerprint_line(MAPPINGS[2], "$.payload.tradeId"));
 
         let mut gen = Generator::new(0.0, 9, 5000);
-        // HTTP: pierwsze trzy zdarzenia to workflow, alertmanager, trade (kolejność rotacji).
         let wf = gen.next_event(Channel::Http);
         assert_eq!(wf.identity, "workflow.v1|order-settlement-5000");
         assert_eq!(wf.body["payload"]["workflowName"], "order-settlement-5000");
-        assert_eq!(wf.body["payload"]["type"], "WORKFLOW_FAILED", "reszta payloadu bez zmian");
+        assert_eq!(
+            wf.body["payload"]["type"], "WORKFLOW_FAILED",
+            "reszta payloadu bez zmian"
+        );
 
         let am = gen.next_event(Channel::Http);
         assert_eq!(am.identity, "alertmanager|HighErrorRate-5001");
@@ -384,9 +409,11 @@ mod tests {
         let tr = gen.next_event(Channel::Http);
         assert_eq!(tr.identity, "trade.rejected.v2|T-5002");
         assert_eq!(tr.body["payload"]["payload"]["tradeId"], "T-5002");
-        assert_eq!(tr.body["payload"]["payload"]["desk"], "rates", "reszta payloadu bez zmian");
+        assert_eq!(
+            tr.body["payload"]["payload"]["desk"], "rates",
+            "reszta payloadu bez zmian"
+        );
 
-        // Kafka: surowy payload, tradeId w tym samym miejscu co w kopercie.
         let k = gen.next_event(Channel::Kafka);
         assert_eq!(k.identity, "trade.rejected.v2|T-5003");
         assert_eq!(k.body["payload"]["tradeId"], "T-5003");
@@ -410,7 +437,14 @@ mod tests {
         let kinds: Vec<Channel> = (0..6).map(|s| channel_for(Mode::Both, s)).collect();
         assert_eq!(
             kinds,
-            vec![Channel::Http, Channel::Kafka, Channel::Http, Channel::Kafka, Channel::Http, Channel::Kafka]
+            vec![
+                Channel::Http,
+                Channel::Kafka,
+                Channel::Http,
+                Channel::Kafka,
+                Channel::Http,
+                Channel::Kafka
+            ]
         );
         assert!((0..10).all(|s| channel_for(Mode::Http, s) == Channel::Http));
         assert!((0..10).all(|s| channel_for(Mode::Kafka, s) == Channel::Kafka));
@@ -427,7 +461,14 @@ mod tests {
     /// Jeden test na całe env – zmienne procesu są globalne, więc nie mogą się ścigać.
     #[test]
     fn settings_from_env_defaults_and_parsing() {
-        const VARS: [&str; 6] = ["RATE", "DURATION_SECS", "DUP_RATIO", "MODE", "INGEST_URL", "SOURCE_TOPIC"];
+        const VARS: [&str; 6] = [
+            "RATE",
+            "DURATION_SECS",
+            "DUP_RATIO",
+            "MODE",
+            "INGEST_URL",
+            "SOURCE_TOPIC",
+        ];
         let clear = || VARS.iter().for_each(|v| std::env::remove_var(v));
         clear();
 

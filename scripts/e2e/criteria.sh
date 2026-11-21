@@ -18,8 +18,10 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 API_URL="${API_URL:-http://localhost:${API_PORT:-8080}}"
 INGEST_URL="${INGEST_URL:-http://localhost:8081}"
 MOCK_URL="${MOCK_URL:-http://localhost:8090}"
-TOKEN="${API_TOKEN:-dev-token}"
-PERSON="${PERSON_ID:-e2e}"
+PERSON="${PERSON_ID:-anna}"
+# Sesja operatora (POST /auth/login); API_TOKEN nadpisuje, gdy ustawiony.
+TOKEN="${API_TOKEN:-$(curl -sS -X POST "$API_URL/auth/login" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$PERSON\",\"password\":\"${PERSON_PASSWORD:-haslo}\"}" | jq -r '.session_token // empty')}"
 TIMEOUT="${TIMEOUT_SECS:-45}"
 LIMIT="${LIMIT_SECS:-60}"
 FIXTURE="$ROOT/crates/contracts/fixtures/events/workflow_failed.json"

@@ -80,10 +80,7 @@ impl RouterStore {
     }
 
     pub fn load_full(&self) -> Arc<RouterSnapshot> {
-        self.inner
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn store(&self, snap: Arc<RouterSnapshot>) {
@@ -165,8 +162,7 @@ pub async fn sync_people_yaml(pool: &PgPool, file_path: &Path) -> anyhow::Result
     }
     let content = std::fs::read_to_string(file_path)
         .with_context(|| format!("reading people file {}", file_path.display()))?;
-    let parsed: PeopleConfigFile =
-        serde_yaml::from_str(&content).context("parsing people.yaml")?;
+    let parsed: PeopleConfigFile = serde_yaml::from_str(&content).context("parsing people.yaml")?;
     sync_people_config(pool, &parsed).await
 }
 
@@ -261,8 +257,6 @@ pub async fn sync_people_config(pool: &PgPool, cfg: &PeopleConfigFile) -> anyhow
         }
     }
 
-    // Zawsze utrzymujemy spójność tabel pomocniczych team_members i preferences,
-    // gdy zaszła zmiana lub tabele są puste.
     let tm_count: i64 = common::db::sqlx::query("SELECT count(*) AS n FROM team_members")
         .fetch_one(&mut *tx)
         .await?
@@ -358,11 +352,9 @@ pub async fn load_snapshot(pool: &PgPool, store: &RouterStore) -> anyhow::Result
 }
 
 async fn load_rules_from_db(pool: &PgPool) -> anyhow::Result<Vec<CompiledRule>> {
-    let rows = common::db::sqlx::query(
-        "SELECT id, def, enabled, version FROM rules ORDER BY id",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = common::db::sqlx::query("SELECT id, def, enabled, version FROM rules ORDER BY id")
+        .fetch_all(pool)
+        .await?;
 
     let mut compiled_rules = Vec::with_capacity(rows.len());
     for row in rows {
@@ -426,15 +418,14 @@ async fn load_teams_from_db(pool: &PgPool) -> anyhow::Result<HashMap<String, Tea
 /// Bezpiecznie wczytuje runbooki MANUAL z tabeli `runbooks` (właściciel: P3, tylko do odczytu wg D3/D10).
 /// Jeśli tabela `runbooks` jeszcze nie istnieje (migracja P3 jeszcze nie dodana), zwraca pustą listę.
 async fn load_manual_runbooks_from_db(pool: &PgPool) -> Vec<CompiledManualRunbook> {
-    let exists: Option<String> = match common::db::sqlx::query_scalar(
-        "SELECT to_regclass('public.runbooks')::text",
-    )
-    .fetch_one(pool)
-    .await
-    {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
+    let exists: Option<String> =
+        match common::db::sqlx::query_scalar("SELECT to_regclass('public.runbooks')::text")
+            .fetch_one(pool)
+            .await
+        {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
 
     if exists.is_none() {
         return vec![];
@@ -477,8 +468,10 @@ async fn load_manual_runbooks_from_db(pool: &PgPool) -> Vec<CompiledManualRunboo
                 .or_else(|| row.try_get::<Vec<String>, _>("rule_ids").ok())
                 .unwrap_or_default();
             let body: Option<String> = row.try_get::<Option<String>, _>("body").ok().flatten();
-            let source_file: Option<String> =
-                row.try_get::<Option<String>, _>("source_file").ok().flatten();
+            let source_file: Option<String> = row
+                .try_get::<Option<String>, _>("source_file")
+                .ok()
+                .flatten();
             let version: i64 = row.try_get::<i64, _>("version").unwrap_or(1);
 
             match (id, title) {
@@ -501,7 +494,9 @@ async fn load_manual_runbooks_from_db(pool: &PgPool) -> Vec<CompiledManualRunboo
             if def.kind == RunbookKind::Manual {
                 match CompiledManualRunbook::compile(def) {
                     Ok(compiled) => out.push(compiled),
-                    Err(e) => tracing::warn!(error = %e, "manual runbook condition failed to compile"),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "manual runbook condition failed to compile")
+                    }
                 }
             }
         }
@@ -517,11 +512,9 @@ pub async fn scan_config_files(
     seen_rules: &mut HashMap<PathBuf, (SystemTime, String)>,
     seen_people: &mut Option<SystemTime>,
 ) {
-    // 1. Scan rules directory
     let current_files = yaml_files(rules_dir);
     let current_set: HashSet<PathBuf> = current_files.iter().cloned().collect();
 
-    // Handle deleted rule files
     let deleted_paths: Vec<PathBuf> = seen_rules
         .keys()
         .filter(|p| !current_set.contains(*p))
@@ -613,7 +606,6 @@ pub async fn scan_config_files(
         notify_config_changed(pool, "rules").await;
     }
 
-    // 2. Scan people.yaml
     if let Ok(mtime) = std::fs::metadata(people_file).and_then(|m| m.modified()) {
         if *seen_people != Some(mtime) {
             *seen_people = Some(mtime);

@@ -1,5 +1,3 @@
-// Model formularza akcji HTTP: konwersja ActionDef <-> stan pól oraz walidacja po stronie klienta.
-// Kontrakt: HttpActionSpec / ActionDef z contracts/openapi.yaml (backend i tak waliduje – tu tylko szybkie błędy przy polach).
 import type { Schemas } from "../../api/client";
 
 export type ActionDef = Schemas["ActionDef"];
@@ -56,7 +54,6 @@ export function fromAction(a: ActionDef): FormState {
   };
 }
 
-// Nagłówki, które nigdy nie niosą sekretu – nie ostrzegamy o ich wartościach.
 const PLAIN_HEADERS = /^(content-type|accept|accept-language|accept-encoding|user-agent|content-length|cache-control)$/i;
 const SECRET_NAME = /authorization|api[-_]?key|token|secret|password|passwd|cookie|signature/i;
 const TOKEN_LIKE = /^[A-Za-z0-9._~+/=-]{24,}$/;

@@ -31,7 +31,10 @@ pub fn router() -> Router<AppState> {
         .route("/rules", get(list_rules).post(create_rule))
         .route("/rules/draft", post(draft_rule))
         .route("/rules/test", post(test_rule))
-        .route("/rules/{rule_id}", get(get_rule).put(put_rule).delete(delete_rule))
+        .route(
+            "/rules/{rule_id}",
+            get(get_rule).put(put_rule).delete(delete_rule),
+        )
         .route("/fields", get(get_fields))
 }
 
@@ -132,7 +135,8 @@ fn contains_yaml_anchor_or_alias(text: &str) -> Option<usize> {
             } else if ch == '\'' {
                 in_single = true;
             } else if matches!(ch, '&' | '*')
-                && prev.is_none_or(|p| p.is_whitespace() || matches!(p, ':' | '-' | '[' | '{' | ','))
+                && prev
+                    .is_none_or(|p| p.is_whitespace() || matches!(p, ':' | '-' | '[' | '{' | ','))
                 && chars
                     .peek()
                     .is_some_and(|n| !n.is_whitespace() && !matches!(n, ',' | ']' | '}' | ':'))
@@ -249,8 +253,8 @@ fn rule_from_row(r: &sqlx::postgres::PgRow) -> ApiResult<RuleDef> {
 
 async fn upsert_rule_in_db(db: &PgPool, mut rule: RuleDef) -> ApiResult<RuleDef> {
     let mut tx = db.begin().await.map_err(db_err)?;
-    let initial_stored = serde_json::to_value(&rule)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid rule", e))?;
+    let initial_stored =
+        serde_json::to_value(&rule).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid rule", e))?;
     let version: i64 = sqlx::query(
         "INSERT INTO rules (id, name, team, def, enabled, version, updated_at) \
          VALUES ($1, $2, $3, $4, $5, 1, now()) \
@@ -274,8 +278,8 @@ async fn upsert_rule_in_db(db: &PgPool, mut rule: RuleDef) -> ApiResult<RuleDef>
     .get("version");
 
     rule.version = version;
-    let updated_stored = serde_json::to_value(&rule)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid rule", e))?;
+    let updated_stored =
+        serde_json::to_value(&rule).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid rule", e))?;
     sqlx::query("UPDATE rules SET def = $1 WHERE id = $2")
         .bind(SqlJson(updated_stored))
         .bind(&rule.id)
@@ -293,10 +297,11 @@ async fn upsert_rule_in_db(db: &PgPool, mut rule: RuleDef) -> ApiResult<RuleDef>
 
 async fn list_rules(State(st): State<AppState>) -> ApiResult<Json<Vec<RuleDef>>> {
     ensure_rules_seeded(&st.db, &st.config.config_dir).await;
-    let rows = sqlx::query("SELECT def, version::bigint AS version, enabled FROM rules ORDER BY id")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
+    let rows =
+        sqlx::query("SELECT def, version::bigint AS version, enabled FROM rules ORDER BY id")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
     rows.iter()
         .map(rule_from_row)
         .collect::<ApiResult<Vec<_>>>()
@@ -314,7 +319,10 @@ async fn create_rule(
     Ok((StatusCode::CREATED, Json(saved)))
 }
 
-async fn get_rule(State(st): State<AppState>, Path(rule_id): Path<String>) -> ApiResult<Json<RuleDef>> {
+async fn get_rule(
+    State(st): State<AppState>,
+    Path(rule_id): Path<String>,
+) -> ApiResult<Json<RuleDef>> {
     ensure_rules_seeded(&st.db, &st.config.config_dir).await;
     let r = sqlx::query("SELECT def, version::bigint AS version, enabled FROM rules WHERE id = $1")
         .bind(&rule_id)
@@ -363,8 +371,6 @@ async fn delete_rule(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ------------------------------------------------------------------ POST /rules/draft
-
 #[derive(Deserialize)]
 struct RuleDraftApiRequest {
     prompt: String,
@@ -381,8 +387,13 @@ async fn draft_rule(
             "Asystent AI jest wyłączony (ustaw LLM_PROVIDER=local)",
         ));
     }
-    let Json(req) =
-        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid draft request", e.body_text()))?;
+    let Json(req) = body.map_err(|e| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "invalid draft request",
+            e.body_text(),
+        )
+    })?;
     if req.prompt.trim().is_empty() {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -412,22 +423,28 @@ async fn draft_rule(
         .map(|r| (r.get::<String, _>("id"), r.get::<String, _>("name")))
         .collect();
 
-    let rule_rows = sqlx::query("SELECT def, version::bigint AS version, enabled FROM rules ORDER BY id")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
+    let rule_rows =
+        sqlx::query("SELECT def, version::bigint AS version, enabled FROM rules ORDER BY id")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
     let existing_rules: Vec<RuleDef> = rule_rows
         .iter()
         .filter_map(|r| rule_from_row(r).ok())
         .collect();
 
-    let action_rows: Vec<(Value, i64)> = sqlx::query_as("SELECT definition, version FROM actions ORDER BY name")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
+    let action_rows: Vec<(Value, i64)> =
+        sqlx::query_as("SELECT definition, version FROM actions ORDER BY name")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
     let mut available_actions: Vec<contracts::ActionDef> = action_rows
         .into_iter()
-        .filter_map(|(d, v)| serde_json::from_value::<contracts::ActionDef>(d).ok().map(|a| contracts::ActionDef { version: v, ..a }))
+        .filter_map(|(d, v)| {
+            serde_json::from_value::<contracts::ActionDef>(d)
+                .ok()
+                .map(|a| contracts::ActionDef { version: v, ..a })
+        })
         .collect();
     for b in runbooks::registry::Registry::builtins() {
         if !available_actions.iter().any(|a| a.name == b.name) {
@@ -473,26 +490,28 @@ async fn draft_rule(
         available_actions,
     };
 
-    let outcome = st.author.draft_rule(&draft_req).await.map_err(|e| match e {
-        runbooks::author::AuthorError::Disabled => {
-            err(StatusCode::NOT_IMPLEMENTED, "llm author disabled", e)
-        }
-        runbooks::author::AuthorError::InvalidInput(msg) => {
-            err(StatusCode::BAD_REQUEST, "invalid draft request", msg)
-        }
-        runbooks::author::AuthorError::Timeout(_) => {
-            err(StatusCode::GATEWAY_TIMEOUT, "llm timeout", e)
-        }
-        runbooks::author::AuthorError::Upstream(_)
-        | runbooks::author::AuthorError::InvalidResponse(_) => {
-            err(StatusCode::BAD_GATEWAY, "llm error", e)
-        }
-    })?;
+    let outcome = st
+        .author
+        .draft_rule(&draft_req)
+        .await
+        .map_err(|e| match e {
+            runbooks::author::AuthorError::Disabled => {
+                err(StatusCode::NOT_IMPLEMENTED, "llm author disabled", e)
+            }
+            runbooks::author::AuthorError::InvalidInput(msg) => {
+                err(StatusCode::BAD_REQUEST, "invalid draft request", msg)
+            }
+            runbooks::author::AuthorError::Timeout(_) => {
+                err(StatusCode::GATEWAY_TIMEOUT, "llm timeout", e)
+            }
+            runbooks::author::AuthorError::Upstream(_)
+            | runbooks::author::AuthorError::InvalidResponse(_) => {
+                err(StatusCode::BAD_GATEWAY, "llm error", e)
+            }
+        })?;
 
     Ok(Json(outcome))
 }
-
-// ------------------------------------------------------------------ POST /rules/test
 
 #[derive(Deserialize)]
 struct RuleTestRequest {
@@ -511,7 +530,11 @@ pub struct RuleTestResult {
 }
 
 fn parse_severity_fuzzy(val: Option<&Value>) -> Severity {
-    match val.and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref() {
+    match val
+        .and_then(Value::as_str)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("critical" | "crit" | "fatal") => Severity::Critical,
         Some("error" | "err") => Severity::Error,
         Some("warning" | "warn") => Severity::Warning,
@@ -703,13 +726,12 @@ async fn lookup_event_by_id(db: &PgPool, event_id: Uuid) -> ApiResult<CanonicalE
         return coerce_to_canonical_event(opt_json(&row, "last_event"));
     }
 
-    if let Some(row) = sqlx::query(
-        "SELECT schema, envelope FROM unmapped_events WHERE event_id = $1 LIMIT 1",
-    )
-    .bind(event_id)
-    .fetch_optional(db)
-    .await
-    .map_err(db_err)?
+    if let Some(row) =
+        sqlx::query("SELECT schema, envelope FROM unmapped_events WHERE event_id = $1 LIMIT 1")
+            .bind(event_id)
+            .fetch_optional(db)
+            .await
+            .map_err(db_err)?
     {
         let schema: String = row.get("schema");
         let env = opt_json(&row, "envelope");
@@ -732,8 +754,13 @@ async fn test_rule(
     State(st): State<AppState>,
     body: Result<Json<RuleTestRequest>, JsonRejection>,
 ) -> ApiResult<Json<RuleTestResult>> {
-    let Json(req) =
-        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid test request", e.body_text()))?;
+    let Json(req) = body.map_err(|e| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "invalid test request",
+            e.body_text(),
+        )
+    })?;
 
     let canonical_event = if let Some(ev_val) = req.event {
         coerce_to_canonical_event(ev_val)?
@@ -751,14 +778,17 @@ async fn test_rule(
     Ok(Json(res))
 }
 
-// ------------------------------------------------------------------ GET /fields?schema=...
-
 #[derive(Deserialize)]
 struct FieldsQuery {
     schema: String,
 }
 
-fn collect_leaf_paths(prefix: &str, val: &Value, out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+fn collect_leaf_paths(
+    prefix: &str,
+    val: &Value,
+    out: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+) {
     match val {
         Value::Object(map) => {
             for (k, v) in map {
@@ -845,7 +875,14 @@ pub fn suggest_fields_with_samples(
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
 
-    for c in ["schema", "severity", "source", "title", "fingerprint", "resolved"] {
+    for c in [
+        "schema",
+        "severity",
+        "source",
+        "title",
+        "fingerprint",
+        "resolved",
+    ] {
         if seen.insert(c.to_string()) {
             out.push(c.to_string());
         }
@@ -1012,7 +1049,6 @@ presentation:
         let rule_from_json = parse_rule_payload(&valid_json).expect("valid json rule");
         assert_eq!(rule_from_json.id, "rates-big-rejections");
 
-        // Invalid YAML syntax on a known line
         let bad_yaml = "id: bad-rule\nname: Bad\ncondition:\n  field: x\n  op: [unclosed\n";
         let (status, Json(err_val)) = parse_rule_payload(bad_yaml.as_bytes()).unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1125,7 +1161,6 @@ presentation:
         assert!(fields.contains(&"raw.payload.currency".to_string()));
         assert!(fields.contains(&"raw.payload.reason".to_string()));
 
-        // Also test dynamic extraction from CanonicalEvent and raw unmapped payload
         let custom_fields = suggest_fields_with_samples(
             "custom.schema.v1",
             &[],
@@ -1152,14 +1187,17 @@ presentation:
         assert!(entries.len() >= 4, "expected at least 4 seed rule files");
         for path in entries {
             let bytes = std::fs::read(&path).unwrap();
-            let rule = parse_rule_payload(&bytes).unwrap_or_else(|e| panic!("invalid {}: {:?}", path.display(), e));
-            validate_rule(&rule).unwrap_or_else(|e| panic!("invalid rule {}: {:?}", path.display(), e));
+            let rule = parse_rule_payload(&bytes)
+                .unwrap_or_else(|e| panic!("invalid {}: {:?}", path.display(), e));
+            validate_rule(&rule)
+                .unwrap_or_else(|e| panic!("invalid rule {}: {:?}", path.display(), e));
         }
 
-        let people_path = resolve_config_path("config", "people.yaml").expect("resolve config/people.yaml");
+        let people_path =
+            resolve_config_path("config", "people.yaml").expect("resolve config/people.yaml");
         let text = std::fs::read_to_string(&people_path).expect("read config/people.yaml");
         let parsed: PeopleConfigFile = serde_yaml::from_str(&text).expect("valid people.yaml");
-        assert_eq!(parsed.people.len(), 6);
+        assert_eq!(parsed.people.len(), 20);
         assert_eq!(parsed.teams.len(), 5);
     }
 
@@ -1167,8 +1205,22 @@ presentation:
     fn unit_schema_validation_and_path_traversal_rejected() {
         assert!(validate_schema_name("trade.rejected.v2").is_ok());
         assert!(validate_schema_name("workflow_v1-beta").is_ok());
-        for bad in ["", ".", "..", "../people", "a/b", "a\\b", "a..b", "foo\0bar", "foo bar", "foo$bar"] {
-            assert!(validate_schema_name(bad).is_err(), "should reject schema `{bad}`");
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../people",
+            "a/b",
+            "a\\b",
+            "a..b",
+            "foo\0bar",
+            "foo bar",
+            "foo$bar",
+        ] {
+            assert!(
+                validate_schema_name(bad).is_err(),
+                "should reject schema `{bad}`"
+            );
         }
         assert!(resolve_config_path("config", "../Cargo.toml").is_none());
         assert!(resolve_config_path("config", "/etc/passwd").is_none());

@@ -36,6 +36,7 @@
 # teams/rule_ids (otwarta kwestia D10), więc severity sprawdzamy na dostarczeniach (request.severity).
 #
 # Działa na niepustym systemie (unikalne identyfikatory per przebieg).
+# Uwaga: marek, magda, michal i monika (dodatkowi członkowie zespołów) mają własne preferencje i są pomijani w asercjach.
 # Użycie: API_URL=http://localhost:8088 scripts/e2e/appendix-a.sh
 #         SKIP_DEDUP=1 ...  # tylko D1;  DUPLICATES=500 (liczba duplikatów w D2)
 # Zmienne wspólne: scripts/e2e/lib.sh. Zależności: curl, jq, docker (odczyt request z Postgresa).
@@ -80,7 +81,7 @@ pg_deliveries() {
     local ep="${2:-}"
     pg_query "SELECT coalesce(json_agg(json_build_object('p',person_id,'c',channel,'episode',episode,
         'status',status,'sev',request->'severity','chain',request->'chain','rule',request->'origin'->>'rule_id')
-        ORDER BY person_id, channel), '[]') FROM deliveries WHERE alert_id = '$1'
+        ORDER BY person_id, channel), '[]') FROM deliveries WHERE alert_id = '$1' AND person_id NOT IN ('marek','magda','michal','monika')
         ${ep:+AND episode = $ep}"
 }
 
@@ -99,13 +100,13 @@ wait_delivered() {
 }
 delivered_match() {
     api GET "$API_URL/alerts/$DW_ID/deliveries" | jq -ce --argjson ep "$DW_EP" --argjson want "$DW_WANT" --arg anna "$ANNA_CH" "
-        [.[] | select(.episode == \$ep and .status == \"delivered\")] as \$d
+        [.[] | select(.person_id | IN(\"marek\", \"magda\", \"michal\", \"monika\") | not) | select(.episode == \$ep and .status == \"delivered\")] as \$d
         | if ([\$d[] | {p: .person_id, c: .channel}] | $NORM) == (\$want | $NORM) then \$d else empty end"
 }
 
 # outbox_for <alert_id>: posortowane [{p, c}] z GET /mock/outbox dla alertu.
 outbox_for() {
-    api GET "$API_URL/mock/outbox" | jq -c --arg a "$1" '[.[] | select(.alert_id == $a) | {p: .person_id, c: .channel}] | sort'
+    api GET "$API_URL/mock/outbox" | jq -c --arg a "$1" '[.[] | select(.alert_id == $a and (.person_id | IN("marek", "magda", "michal", "monika") | not)) | {p: .person_id, c: .channel}] | sort'
 }
 
 # check_flow <etykieta> <podciąg fingerprintu> <schema> <reguła> <expected-json>
@@ -215,7 +216,7 @@ DUP_WANT="[$(exp jan phone),$(exp jan sms),$(exp ola phone),$(exp ola sms)]"
 STAGE="dedup/deliveries"
 wait_delivered "$DUP_ALERT" 1 "$DUP_WANT" >/dev/null || exit 1
 sleep 2
-rows="$(api GET "$API_URL/alerts/$DUP_ALERT/deliveries" | jq -c '[.[] | {p: .person_id, c: .channel, episode}] | sort')"
+rows="$(api GET "$API_URL/alerts/$DUP_ALERT/deliveries" | jq -c '[.[] | select(.person_id | IN("marek", "magda", "michal", "monika") | not) | {p: .person_id, c: .channel, episode}] | sort')"
 [ "$(jq length <<<"$rows")" = "4" ] || fail "oczekiwano dokładnie 4 dostarczeń (jan|ola × sms|phone), jest $rows"
 DUP_SINCE="$(api GET "$API_URL/alerts/$DUP_ALERT/deliveries" | jq -r 'map(.received_at) | min')"
 if outbox_covers "$DUP_SINCE"; then

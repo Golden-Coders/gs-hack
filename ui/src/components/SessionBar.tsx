@@ -1,4 +1,3 @@
-// Stopka sesji w menu bocznym: pokazuje zalogowanego użytkownika oraz przycisk Wyloguj.
 import Button from "@atlaskit/button/new";
 import { Stack, Text } from "@atlaskit/primitives/compiled";
 import { logout, usePersonId, usePersonName } from "../api/session";

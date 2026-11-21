@@ -21,7 +21,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/actions", get(list_actions).post(create_action))
         .route("/actions/missing", get(missing_actions))
-        .route("/actions/{name}", get(get_action).put(put_action).delete(delete_action))
+        .route(
+            "/actions/{name}",
+            get(get_action).put(put_action).delete(delete_action),
+        )
 }
 
 const FORBIDDEN_ENV_EXACT: &[&str] = &[
@@ -73,14 +76,20 @@ fn validate_header_env_refs(header_name: &str, value: &str) -> Result<(), String
     while let Some(start) = rest.find("${") {
         let after = &rest[start + 2..];
         let Some(end) = after.find('}') else {
-            return Err(format!("nagłówek `{header_name}` zawiera niedomkniętą referencję `${{...`"));
+            return Err(format!(
+                "nagłówek `{header_name}` zawiera niedomkniętą referencję `${{...`"
+            ));
         };
         let var = &after[..end];
         if var.is_empty()
             || !var.as_bytes()[0].is_ascii_uppercase()
-            || !var.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            || !var
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
         {
-            return Err(format!("nagłówek `{header_name}` zawiera niepoprawną nazwę zmiennej `{var}`"));
+            return Err(format!(
+                "nagłówek `{header_name}` zawiera niepoprawną nazwę zmiennej `{var}`"
+            ));
         }
         let is_forbidden = FORBIDDEN_ENV_EXACT.contains(&var)
             || FORBIDDEN_ENV_PREFIXES.iter().any(|p| var.starts_with(p));
@@ -89,7 +98,9 @@ fn validate_header_env_refs(header_name: &str, value: &str) -> Result<(), String
             || var.ends_with("_SECRET")
             || var.ends_with("_KEY");
         if is_forbidden || !is_allowed_naming {
-            return Err(format!("niedozwolona referencja sekretu `${{{var}}}` w nagłówku `{header_name}`"));
+            return Err(format!(
+                "niedozwolona referencja sekretu `${{{var}}}` w nagłówku `{header_name}`"
+            ));
         }
         rest = &after[end + 1..];
     }
@@ -98,18 +109,33 @@ fn validate_header_env_refs(header_name: &str, value: &str) -> Result<(), String
 
 /// Same validation as `runbooks::registry::validate_action` (templates are validated by `condition`).
 fn validate_action(def: &ActionDef) -> Result<(), String> {
-    if def.name.is_empty() || !def.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        return Err(format!("niepoprawna nazwa akcji `{}` (dozwolone: litery, cyfry, _ i -)", def.name));
+    if def.name.is_empty()
+        || !def
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "niepoprawna nazwa akcji `{}` (dozwolone: litery, cyfry, _ i -)",
+            def.name
+        ));
     }
     if BUILTIN_ACTIONS.contains(&def.name.as_str()) {
-        return Err(format!("`{}` to akcja wbudowana; wybierz inną nazwę", def.name));
+        return Err(format!(
+            "`{}` to akcja wbudowana; wybierz inną nazwę",
+            def.name
+        ));
     }
     if def.kind != ActionKind::Http {
         return Err("można dodawać tylko akcje `kind: http`".into());
     }
     let http = def.http.as_ref().ok_or("brak sekcji `http`")?;
     if !METHODS.contains(&http.method.as_str()) {
-        return Err(format!("metoda `{}` niedozwolona (dozwolone: {})", http.method, METHODS.join(", ")));
+        return Err(format!(
+            "metoda `{}` niedozwolona (dozwolone: {})",
+            http.method,
+            METHODS.join(", ")
+        ));
     }
     if !(http.url.starts_with("http://") || http.url.starts_with("https://")) {
         return Err("url musi zaczynać się od http:// albo https://".into());
@@ -128,35 +154,58 @@ fn validate_action(def: &ActionDef) -> Result<(), String> {
 }
 
 fn action_from_row(definition: Value, version: i64) -> ApiResult<ActionDef> {
-    let def: ActionDef = serde_json::from_value(definition).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid stored action", e))?;
+    let def: ActionDef = serde_json::from_value(definition).map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid stored action",
+            e,
+        )
+    })?;
     Ok(ActionDef { version, ..def })
 }
 
 async fn list_actions(State(st): State<AppState>) -> ApiResult<Json<Vec<ActionDef>>> {
-    let rows: Vec<(Value, i64)> = sqlx::query_as("SELECT definition, version FROM actions ORDER BY name").fetch_all(&st.db).await.map_err(db_err)?;
-    Ok(Json(rows.into_iter().filter_map(|(d, v)| action_from_row(d, v).ok()).collect()))
+    let rows: Vec<(Value, i64)> =
+        sqlx::query_as("SELECT definition, version FROM actions ORDER BY name")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
+    Ok(Json(
+        rows.into_iter()
+            .filter_map(|(d, v)| action_from_row(d, v).ok())
+            .collect(),
+    ))
 }
 
-async fn get_action(State(st): State<AppState>, Path(name): Path<String>) -> ApiResult<Json<ActionDef>> {
-    let (definition, version): (Value, i64) = sqlx::query_as("SELECT definition, version FROM actions WHERE name = $1")
-        .bind(&name)
-        .fetch_optional(&st.db)
-        .await
-        .map_err(db_err)?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, "action not found", &name))?;
+async fn get_action(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<ActionDef>> {
+    let (definition, version): (Value, i64) =
+        sqlx::query_as("SELECT definition, version FROM actions WHERE name = $1")
+            .bind(&name)
+            .fetch_optional(&st.db)
+            .await
+            .map_err(db_err)?
+            .ok_or_else(|| err(StatusCode::NOT_FOUND, "action not found", &name))?;
     Ok(Json(action_from_row(definition, version)?))
 }
 
 fn parse_action_body(body: Result<Json<ActionDef>, JsonRejection>) -> ApiResult<ActionDef> {
-    let Json(mut def) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e.body_text()))?;
+    let Json(mut def) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e.body_text()))?;
     validate_action(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e))?;
     def.version = 0;
     Ok(def)
 }
 
-async fn create_action(State(st): State<AppState>, body: Result<Json<ActionDef>, JsonRejection>) -> ApiResult<(StatusCode, Json<ActionDef>)> {
+async fn create_action(
+    State(st): State<AppState>,
+    body: Result<Json<ActionDef>, JsonRejection>,
+) -> ApiResult<(StatusCode, Json<ActionDef>)> {
     let def = parse_action_body(body)?;
-    let stored = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e))?;
+    let stored = serde_json::to_value(&def)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e))?;
     let version: Option<i64> =
         sqlx::query_scalar("INSERT INTO actions (name, definition) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING RETURNING version")
             .bind(&def.name)
@@ -164,7 +213,8 @@ async fn create_action(State(st): State<AppState>, body: Result<Json<ActionDef>,
             .fetch_optional(&st.db)
             .await
             .map_err(db_err)?;
-    let version = version.ok_or_else(|| err(StatusCode::CONFLICT, "action already exists", &def.name))?;
+    let version =
+        version.ok_or_else(|| err(StatusCode::CONFLICT, "action already exists", &def.name))?;
     Ok((StatusCode::CREATED, Json(ActionDef { version, ..def })))
 }
 
@@ -175,9 +225,14 @@ async fn put_action(
 ) -> ApiResult<Json<ActionDef>> {
     let def = parse_action_body(body)?;
     if BUILTIN_ACTIONS.contains(&name.as_str()) {
-        return Err(err(StatusCode::CONFLICT, "builtin action", "nie można modyfikować akcji wbudowanej"));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "builtin action",
+            "nie można modyfikować akcji wbudowanej",
+        ));
     }
-    let stored = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e))?;
+    let stored = serde_json::to_value(&def)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e))?;
     let mut tx = st.db.begin().await.map_err(db_err)?;
 
     if def.name != name {
@@ -187,7 +242,11 @@ async fn put_action(
             .await
             .map_err(db_err)?;
         if conflict.is_some() {
-            return Err(err(StatusCode::CONFLICT, "action already exists", &def.name));
+            return Err(err(
+                StatusCode::CONFLICT,
+                "action already exists",
+                &def.name,
+            ));
         }
         sqlx::query("DELETE FROM actions WHERE name = $1")
             .bind(&name)
@@ -211,11 +270,22 @@ async fn put_action(
     Ok(Json(ActionDef { version, ..def }))
 }
 
-async fn delete_action(State(st): State<AppState>, Path(name): Path<String>) -> ApiResult<StatusCode> {
+async fn delete_action(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<StatusCode> {
     if BUILTIN_ACTIONS.contains(&name.as_str()) {
-        return Err(err(StatusCode::CONFLICT, "builtin action", "nie można usunąć akcji wbudowanej"));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "builtin action",
+            "nie można usunąć akcji wbudowanej",
+        ));
     }
-    sqlx::query("DELETE FROM actions WHERE name = $1").bind(&name).execute(&st.db).await.map_err(db_err)?;
+    sqlx::query("DELETE FROM actions WHERE name = $1")
+        .bind(&name)
+        .execute(&st.db)
+        .await
+        .map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -282,7 +352,14 @@ mod tests {
         .unwrap();
         assert!(validate_action(&bad_body).is_err());
 
-        for forbidden in ["DATABASE_URL", "API_TOKEN", "LLM_API_KEY", "POSTGRES_PASSWORD", "PATH", "AWS_SECRET_ACCESS_KEY"] {
+        for forbidden in [
+            "DATABASE_URL",
+            "API_TOKEN",
+            "LLM_API_KEY",
+            "POSTGRES_PASSWORD",
+            "PATH",
+            "AWS_SECRET_ACCESS_KEY",
+        ] {
             let def: ActionDef = serde_json::from_value(json!({
                 "name": "leak_secret", "kind": "http", "risk": "low",
                 "http": {
@@ -292,7 +369,10 @@ mod tests {
                 }
             }))
             .unwrap();
-            assert!(validate_action(&def).is_err(), "expected {forbidden} to be rejected");
+            assert!(
+                validate_action(&def).is_err(),
+                "expected {forbidden} to be rejected"
+            );
         }
     }
 }

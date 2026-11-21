@@ -1,5 +1,3 @@
-// Lista aktywnych alertów na żywo: pokazuje wyłącznie nierozwiązane alerty (state !== "resolved").
-// Gdy alert przechodzi w stan "resolved" (z przycisku lub ze strumienia SSE), natychmiast znika z panelu.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Schemas } from "./client";
 import { usePollWhenQuiet, useStream } from "./stream";

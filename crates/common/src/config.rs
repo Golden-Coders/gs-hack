@@ -27,7 +27,10 @@ fn env_or(name: &str, default: &str) -> String {
 impl Config {
     pub fn from_env() -> Self {
         Self {
-            database_url: env_or("DATABASE_URL", "postgres://alerting:alerting@localhost:5432/alerting"),
+            database_url: env_or(
+                "DATABASE_URL",
+                "postgres://alerting:alerting@localhost:5432/alerting",
+            ),
             kafka_brokers: env_or("KAFKA_BROKERS", "localhost:19092"),
             config_dir: env_or("CONFIG_DIR", "config"),
             public_ui_url: env_or("PUBLIC_UI_URL", "http://localhost:5173"),
@@ -44,6 +47,9 @@ impl Config {
 
     /// Port HTTP danej binarki: zmienna `<PREFIX>_PORT` albo wartość domyślna.
     pub fn port(prefix: &str, default: u16) -> u16 {
-        std::env::var(format!("{prefix}_PORT")).ok().and_then(|p| p.parse().ok()).unwrap_or(default)
+        std::env::var(format!("{prefix}_PORT"))
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default)
     }
 }

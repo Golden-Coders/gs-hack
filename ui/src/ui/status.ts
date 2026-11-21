@@ -1,6 +1,3 @@
-// Jedno źródło statusów (design.md D6): wartość domeny → etykieta PL + appearance Lozenge + ikona lucide.
-// Czerwień (`removed`) tylko dla: odrzucone / blokujące / porażka / przekroczony termin.
-// `Record` po wartościach enumów z kontraktu: nowa wartość w OpenAPI bez wpisu tutaj = błąd `tsc`.
 import type { ThemeAppearance } from "@atlaskit/lozenge";
 import {
   ArchiveX,
@@ -93,12 +90,10 @@ const risk: Table<Schemas["ActionDef"]["risk"]> = {
   low: s("ryzyko: niskie", "default", ShieldCheck),
 };
 
-// `none` nie jest renderowane (D6), więc nie ma wpisu.
 const approval: Table<Exclude<NonNullable<Schemas["StepDef"]["approval"]>, "none">> = {
   required: s("wymaga zatwierdzenia", "moved", ShieldQuestionMark),
 };
 
-// Zarezerwowane: kontrakt nie ma terminu zatwierdzenia (Q4 — UI go nie liczy).
 const approvalDeadline: Table<"overdue"> = {
   overdue: s("przekroczony termin", "removed", TimerOff, true),
 };

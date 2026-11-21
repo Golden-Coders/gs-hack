@@ -12,8 +12,21 @@ async fn main() -> anyhow::Result<()> {
     let (tx, rx) = tokio::sync::watch::channel(false);
 
     let mut tasks = tokio::task::JoinSet::new();
-    tasks.spawn(run_config(cfg.database_url.clone(), cfg.config_dir.clone(), pool.clone(), producer.clone(), store.clone(), rx.clone()));
-    tasks.spawn(run_normalizer(cfg.kafka_brokers.clone(), pool.clone(), producer.clone(), store, rx.clone()));
+    tasks.spawn(run_config(
+        cfg.database_url.clone(),
+        cfg.config_dir.clone(),
+        pool.clone(),
+        producer.clone(),
+        store.clone(),
+        rx.clone(),
+    ));
+    tasks.spawn(run_normalizer(
+        cfg.kafka_brokers.clone(),
+        pool.clone(),
+        producer.clone(),
+        store,
+        rx.clone(),
+    ));
     tasks.spawn(run_dedup(cfg.kafka_brokers.clone(), pool, producer, rx));
 
     tokio::select! {

@@ -1,4 +1,3 @@
-// Maksymalnie uproszczona lista aktywnych alertów: tylko nierozwiązane alerty, szybkie rozwiązanie jednym kliknięciem.
 import { Text } from "@atlaskit/primitives/compiled";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -53,7 +52,6 @@ export default function AlertFeed() {
     try {
       localStorage.setItem(FILTER_KEY, f);
     } catch {
-      // bez localStorage filtr żyje do przeładowania
     }
   };
 

@@ -17,7 +17,10 @@ use common::db::sqlx::{
     types::{chrono::DateTime, chrono::Utc, Uuid},
     Row,
 };
-use contracts::{topics, ActionDef, Actor, Condition, RunbookCommand, RunbookCommandKind, RunbookDef, RunbookKind, StepDef};
+use contracts::{
+    topics, ActionDef, Actor, Condition, RunbookCommand, RunbookCommandKind, RunbookDef,
+    RunbookKind, StepDef,
+};
 use runbooks::author::{AuthorError, AuthorStatus, DraftOutcome, DraftRequest};
 use runbooks::registry::Registry;
 use serde::Deserialize;
@@ -32,10 +35,16 @@ pub fn router() -> Router<AppState> {
         .route("/runbooks/author/status", get(author_status))
         .route("/runbooks/draft", post(draft_runbook))
         .route("/runbooks/errors", get(runbook_errors))
-        .route("/runbooks/{id}", axum::routing::put(put_runbook).delete(delete_runbook))
+        .route(
+            "/runbooks/{id}",
+            axum::routing::put(put_runbook).delete(delete_runbook),
+        )
         .route("/alerts/{alert_id}/runbooks", get(alert_runbooks))
         .route("/alerts/{alert_id}/audit", get(alert_audit))
-        .route("/runs/{run_id}/steps/{step_id}/{command}", post(step_command))
+        .route(
+            "/runs/{run_id}/steps/{step_id}/{command}",
+            post(step_command),
+        )
         .route("/approvals", get(approvals))
 }
 
@@ -57,20 +66,29 @@ async fn author_status(State(st): State<AppState>) -> Json<AuthorStatus> {
 fn map_author_error(e: AuthorError) -> (StatusCode, Json<Value>) {
     match e {
         AuthorError::Disabled => err(StatusCode::NOT_IMPLEMENTED, "llm author disabled", e),
-        AuthorError::InvalidInput(msg) => err(StatusCode::BAD_REQUEST, "invalid draft request", msg),
+        AuthorError::InvalidInput(msg) => {
+            err(StatusCode::BAD_REQUEST, "invalid draft request", msg)
+        }
         AuthorError::Timeout(_) => err(StatusCode::GATEWAY_TIMEOUT, "llm timeout", e),
-        AuthorError::Upstream(_) | AuthorError::InvalidResponse(_) => err(StatusCode::BAD_GATEWAY, "llm error", e),
+        AuthorError::Upstream(_) | AuthorError::InvalidResponse(_) => {
+            err(StatusCode::BAD_GATEWAY, "llm error", e)
+        }
     }
 }
 
 async fn load_actions(st: &AppState) -> ApiResult<Vec<ActionDef>> {
-    let rows: Vec<(Value, i64)> = sqlx::query_as("SELECT definition, version FROM actions ORDER BY name")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
+    let rows: Vec<(Value, i64)> =
+        sqlx::query_as("SELECT definition, version FROM actions ORDER BY name")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
     Ok(rows
         .into_iter()
-        .filter_map(|(d, v)| serde_json::from_value::<ActionDef>(d).ok().map(|a| ActionDef { version: v, ..a }))
+        .filter_map(|(d, v)| {
+            serde_json::from_value::<ActionDef>(d)
+                .ok()
+                .map(|a| ActionDef { version: v, ..a })
+        })
         .collect())
 }
 
@@ -81,7 +99,13 @@ async fn draft_runbook(
     if !st.author.is_enabled() {
         return Err(map_author_error(AuthorError::Disabled));
     }
-    let Json(req) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid draft request", e.body_text()))?;
+    let Json(req) = body.map_err(|e| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "invalid draft request",
+            e.body_text(),
+        )
+    })?;
 
     let mut id = req.id.filter(|s| !s.trim().is_empty());
     let mut title = req.title.filter(|s| !s.trim().is_empty());
@@ -89,12 +113,26 @@ async fn draft_runbook(
     let mut matches = req.matches;
     let mut rule_ids = req.rule_ids;
 
-    if let Some(rb_id) = req.runbook_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(rb_id) = req
+        .runbook_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let row: Option<(Value,)> =
-            sqlx::query_as("SELECT COALESCE(resolved, definition) FROM runbooks WHERE id = $1").bind(rb_id).fetch_optional(&st.db).await.map_err(db_err)?;
+            sqlx::query_as("SELECT COALESCE(resolved, definition) FROM runbooks WHERE id = $1")
+                .bind(rb_id)
+                .fetch_optional(&st.db)
+                .await
+                .map_err(db_err)?;
         let (raw,) = row.ok_or_else(|| err(StatusCode::NOT_FOUND, "runbook not found", rb_id))?;
-        let rb: RunbookDef =
-            serde_json::from_value(raw).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid stored runbook", e))?;
+        let rb: RunbookDef = serde_json::from_value(raw).map_err(|e| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid stored runbook",
+                e,
+            )
+        })?;
         if text.is_none() {
             text = rb.body.filter(|b| !b.trim().is_empty());
         }
@@ -112,16 +150,40 @@ async fn draft_runbook(
         }
     }
 
-    let text = text.ok_or_else(|| err(StatusCode::BAD_REQUEST, "invalid draft request", "podaj niepusty `text` lub `runbook_id` z treścią"))?;
+    let text = text.ok_or_else(|| {
+        err(
+            StatusCode::BAD_REQUEST,
+            "invalid draft request",
+            "podaj niepusty `text` lub `runbook_id` z treścią",
+        )
+    })?;
     let actions = load_actions(&st).await?;
-    let draft_req = DraftRequest { id, title, text, matches, rule_ids };
-    let outcome = st.author.draft(&draft_req, &actions).await.map_err(map_author_error)?;
+    let draft_req = DraftRequest {
+        id,
+        title,
+        text,
+        matches,
+        rule_ids,
+    };
+    let outcome = st
+        .author
+        .draft(&draft_req, &actions)
+        .await
+        .map_err(map_author_error)?;
     Ok(Json(outcome))
 }
 
 fn validate_runbook_def(def: &RunbookDef) -> Result<(), String> {
-    if def.id.is_empty() || !def.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        return Err(format!("niepoprawne id runbooka `{}` (dozwolone: litery, cyfry, _ i -)", def.id));
+    if def.id.is_empty()
+        || !def
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "niepoprawne id runbooka `{}` (dozwolone: litery, cyfry, _ i -)",
+            def.id
+        ));
     }
     if def.title.trim().is_empty() {
         return Err("tytuł runbooka nie może być pusty".into());
@@ -150,16 +212,22 @@ async fn create_runbook(
     State(st): State<AppState>,
     body: Result<Json<RunbookDef>, JsonRejection>,
 ) -> ApiResult<(StatusCode, Json<RunbookDef>)> {
-    let Json(mut def) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e.body_text()))?;
+    let Json(mut def) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e.body_text()))?;
     validate_runbook_def(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
     def.source_file = None;
     def.version = 0;
 
     let actions = load_actions(&st).await?;
-    let custom_actions: Vec<ActionDef> = actions.into_iter().filter(|a| a.kind != contracts::ActionKind::Builtin).collect();
+    let custom_actions: Vec<ActionDef> = actions
+        .into_iter()
+        .filter(|a| a.kind != contracts::ActionKind::Builtin)
+        .collect();
     let resolved = Registry::new(custom_actions).classify(&def);
-    let def_val = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
-    let res_val = serde_json::to_value(&resolved).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid runbook", e))?;
+    let def_val = serde_json::to_value(&def)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
+    let res_val = serde_json::to_value(&resolved)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid runbook", e))?;
 
     let version: i64 = sqlx::query_scalar(
         "INSERT INTO runbooks (id, definition, resolved, source_file) VALUES ($1, $2, $3, NULL)
@@ -172,7 +240,13 @@ async fn create_runbook(
     .fetch_one(&st.db)
     .await
     .map_err(db_err)?;
-    Ok((StatusCode::CREATED, Json(RunbookDef { version, ..resolved })))
+    Ok((
+        StatusCode::CREATED,
+        Json(RunbookDef {
+            version,
+            ..resolved
+        }),
+    ))
 }
 
 async fn put_runbook(
@@ -180,15 +254,21 @@ async fn put_runbook(
     Path(old_id): Path<String>,
     body: Result<Json<RunbookDef>, JsonRejection>,
 ) -> ApiResult<Json<RunbookDef>> {
-    let Json(mut def) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e.body_text()))?;
+    let Json(mut def) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e.body_text()))?;
     validate_runbook_def(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
     def.source_file = None;
 
     let actions = load_actions(&st).await?;
-    let custom_actions: Vec<ActionDef> = actions.into_iter().filter(|a| a.kind != contracts::ActionKind::Builtin).collect();
+    let custom_actions: Vec<ActionDef> = actions
+        .into_iter()
+        .filter(|a| a.kind != contracts::ActionKind::Builtin)
+        .collect();
     let resolved = Registry::new(custom_actions).classify(&def);
-    let def_val = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
-    let res_val = serde_json::to_value(&resolved).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid runbook", e))?;
+    let def_val = serde_json::to_value(&def)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
+    let res_val = serde_json::to_value(&resolved)
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid runbook", e))?;
 
     let mut tx = st.db.begin().await.map_err(db_err)?;
     if def.id != old_id {
@@ -210,7 +290,10 @@ async fn put_runbook(
     .await
     .map_err(db_err)?;
     tx.commit().await.map_err(db_err)?;
-    Ok(Json(RunbookDef { version, ..resolved }))
+    Ok(Json(RunbookDef {
+        version,
+        ..resolved
+    }))
 }
 
 async fn delete_runbook(
@@ -226,13 +309,18 @@ async fn delete_runbook(
 }
 
 async fn list_runbooks(State(st): State<AppState>) -> ApiResult<Json<Vec<RunbookDef>>> {
-    let rows: Vec<(Value, i64)> = sqlx::query_as("SELECT COALESCE(resolved, definition), version FROM runbooks ORDER BY id")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
+    let rows: Vec<(Value, i64)> =
+        sqlx::query_as("SELECT COALESCE(resolved, definition), version FROM runbooks ORDER BY id")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
     let runbooks = rows
         .into_iter()
-        .filter_map(|(def, version)| serde_json::from_value::<RunbookDef>(def).ok().map(|d| RunbookDef { version, ..d }))
+        .filter_map(|(def, version)| {
+            serde_json::from_value::<RunbookDef>(def)
+                .ok()
+                .map(|d| RunbookDef { version, ..d })
+        })
         .collect();
     Ok(Json(runbooks))
 }
@@ -240,18 +328,30 @@ async fn list_runbooks(State(st): State<AppState>) -> ApiResult<Json<Vec<Runbook
 /// Extracts line number from serde_yaml errors: `"... at line 3 column 1 ..."` -> `Some(3)`.
 fn error_line(error: &str) -> Option<i64> {
     let rest = &error[error.find("line ")? + 5..];
-    rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+    rest.split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
 }
 
 async fn runbook_errors(State(st): State<AppState>) -> ApiResult<Json<Value>> {
     let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT source_file, error FROM runbook_load_errors ORDER BY source_file").fetch_all(&st.db).await.map_err(db_err)?;
-    let out: Vec<Value> = rows.into_iter().map(|(file, error)| json!({ "file": file, "line": error_line(&error), "error": error })).collect();
+        sqlx::query_as("SELECT source_file, error FROM runbook_load_errors ORDER BY source_file")
+            .fetch_all(&st.db)
+            .await
+            .map_err(db_err)?;
+    let out: Vec<Value> = rows
+        .into_iter()
+        .map(|(file, error)| json!({ "file": file, "line": error_line(&error), "error": error }))
+        .collect();
     Ok(Json(json!(out)))
 }
 
 /// Runbooks for the alert's current episode, ordered by specificity, with step states.
-async fn alert_runbooks(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn alert_runbooks(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
     let alert_id = parse_uuid(&id, "alert_id")?;
     let episode: Option<i32> = sqlx::query_scalar(
         "SELECT COALESCE((SELECT episode::int FROM alerts WHERE id = $1), (SELECT max(episode) FROM runbook_runs WHERE alert_id = $1))",
@@ -260,7 +360,9 @@ async fn alert_runbooks(State(st): State<AppState>, Path(id): Path<String>) -> A
     .fetch_one(&st.db)
     .await
     .map_err(db_err)?;
-    let Some(episode) = episode else { return Ok(Json(json!([]))) };
+    let Some(episode) = episode else {
+        return Ok(Json(json!([])));
+    };
 
     let runs = sqlx::query(
         "SELECT run_id, runbook_id, title, kind, body, steps, created_at FROM runbook_runs
@@ -290,7 +392,10 @@ async fn alert_runbooks(State(st): State<AppState>, Path(id): Path<String>) -> A
             let steps: Vec<Value> = steps
                 .iter()
                 .map(|step| {
-                    let state = states.iter().find(|s| s.get::<Uuid, _>("run_id") == run_id && s.get::<String, _>("step_id") == step.id);
+                    let state = states.iter().find(|s| {
+                        s.get::<Uuid, _>("run_id") == run_id
+                            && s.get::<String, _>("step_id") == step.id
+                    });
                     let mut v = step_json(step);
                     v["status"] = json!(state.map_or("pending".to_string(), |s| s.get("status")));
                     v["attempt"] = json!(state.map_or(0, |s| s.get::<i32, _>("attempt")));
@@ -357,8 +462,13 @@ fn command_allowed(kind: &RunbookCommandKind, status: &str) -> bool {
         RunbookCommandKind::Approve | RunbookCommandKind::Reject => status == "waiting_approval",
         RunbookCommandKind::Done { .. } => matches!(status, "waiting_manual" | "failed"),
         RunbookCommandKind::Retry => status == "failed",
-        RunbookCommandKind::Skip => matches!(status, "failed" | "waiting_manual" | "waiting_approval"),
-        RunbookCommandKind::ManualMode => matches!(status, "pending" | "failed" | "waiting_manual" | "waiting_approval"),
+        RunbookCommandKind::Skip => {
+            matches!(status, "failed" | "waiting_manual" | "waiting_approval")
+        }
+        RunbookCommandKind::ManualMode => matches!(
+            status,
+            "pending" | "failed" | "waiting_manual" | "waiting_approval"
+        ),
     }
 }
 
@@ -374,7 +484,8 @@ async fn step_command(
     let note = if body.is_empty() {
         None
     } else {
-        let v: Value = serde_json::from_slice(&body).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid body", e))?;
+        let v: Value = serde_json::from_slice(&body)
+            .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid body", e))?;
         v.get("note").and_then(Value::as_str).map(str::to_string)
     };
     let kind = match command.as_str() {
@@ -396,16 +507,33 @@ async fn step_command(
     .fetch_optional(&st.db)
     .await
     .map_err(db_err)?;
-    let (alert_id, status) = row.ok_or_else(|| err(StatusCode::NOT_FOUND, "run not found", run_id))?;
+    let (alert_id, status) =
+        row.ok_or_else(|| err(StatusCode::NOT_FOUND, "run not found", run_id))?;
     let status = status.ok_or_else(|| err(StatusCode::NOT_FOUND, "step not found", &step_id))?;
     if !command_allowed(&kind, &status) {
-        return Err(err(StatusCode::CONFLICT, "step state does not allow this command", format!("krok {step_id} ma status {status}")));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "step state does not allow this command",
+            format!("krok {step_id} ma status {status}"),
+        ));
     }
 
-    let cmd = RunbookCommand { alert_id, run_id, step_id, kind, actor: Actor::User { person_id }, at: Utc::now() };
-    common::kafka::publish(&st.kafka, topics::RUNBOOKS_COMMANDS, &alert_id.to_string(), &cmd)
-        .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "kafka unavailable", e))?;
+    let cmd = RunbookCommand {
+        alert_id,
+        run_id,
+        step_id,
+        kind,
+        actor: Actor::User { person_id },
+        at: Utc::now(),
+    };
+    common::kafka::publish(
+        &st.kafka,
+        topics::RUNBOOKS_COMMANDS,
+        &alert_id.to_string(),
+        &cmd,
+    )
+    .await
+    .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, "kafka unavailable", e))?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -449,16 +577,28 @@ mod tests {
 
     #[test]
     fn yaml_error_line_extracted() {
-        assert_eq!(error_line("x.yaml: did not find expected ',' at line 3 column 1, while parsing"), Some(3));
+        assert_eq!(
+            error_line("x.yaml: did not find expected ',' at line 3 column 1, while parsing"),
+            Some(3)
+        );
         assert_eq!(error_line("x.yaml: brak listy `steps`"), None);
     }
 
     #[test]
     fn commands_only_from_matching_states() {
-        assert!(command_allowed(&RunbookCommandKind::Approve, "waiting_approval"));
+        assert!(command_allowed(
+            &RunbookCommandKind::Approve,
+            "waiting_approval"
+        ));
         assert!(!command_allowed(&RunbookCommandKind::Approve, "succeeded"));
-        assert!(command_allowed(&RunbookCommandKind::Done { note: None }, "waiting_manual"));
-        assert!(!command_allowed(&RunbookCommandKind::Retry, "waiting_manual"));
+        assert!(command_allowed(
+            &RunbookCommandKind::Done { note: None },
+            "waiting_manual"
+        ));
+        assert!(!command_allowed(
+            &RunbookCommandKind::Retry,
+            "waiting_manual"
+        ));
     }
 
     #[test]
@@ -495,9 +635,21 @@ mod tests {
 
     #[test]
     fn maps_author_errors_to_expected_http_statuses() {
-        assert_eq!(map_author_error(AuthorError::Disabled).0, StatusCode::NOT_IMPLEMENTED);
-        assert_eq!(map_author_error(AuthorError::InvalidInput("x".into())).0, StatusCode::BAD_REQUEST);
-        assert_eq!(map_author_error(AuthorError::Timeout(5000)).0, StatusCode::GATEWAY_TIMEOUT);
-        assert_eq!(map_author_error(AuthorError::Upstream("x".into())).0, StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            map_author_error(AuthorError::Disabled).0,
+            StatusCode::NOT_IMPLEMENTED
+        );
+        assert_eq!(
+            map_author_error(AuthorError::InvalidInput("x".into())).0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            map_author_error(AuthorError::Timeout(5000)).0,
+            StatusCode::GATEWAY_TIMEOUT
+        );
+        assert_eq!(
+            map_author_error(AuthorError::Upstream("x".into())).0,
+            StatusCode::BAD_GATEWAY
+        );
     }
 }

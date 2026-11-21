@@ -14,7 +14,7 @@ Wymagania: infrastruktura i binarki z `docker compose` (np. `docker compose up -
 Lokalnie (binarki z hosta, domyślne adresy `localhost`):
 
 ```bash
-export CARGO_TARGET_DIR=/Users/kwojt/Documents/Programowanie/gs-hack/target   # opcjonalnie
+# opcjonalnie: export CARGO_TARGET_DIR=./target
 RATE=500 DURATION_SECS=60 DUP_RATIO=0.5 MODE=both cargo run --release -p loadgen
 ```
 

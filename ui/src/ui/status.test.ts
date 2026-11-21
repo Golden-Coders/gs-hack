@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STATUS, statusOf, type StatusDomain } from "./status";
 
-// Wartości domen wg kontraktu / design.md D6 (jawna lista: wpis usunięty z status.ts zawiedzie test).
 const VALUES: Record<StatusDomain, string[]> = {
   alertState: ["open", "reopened", "acked", "resolved"],
   severity: ["critical", "error", "warning", "info"],
@@ -21,7 +20,6 @@ const VALUES: Record<StatusDomain, string[]> = {
   action: ["missing"],
 };
 
-// Jedyne wartości z czerwienią (R w design.md D6): odrzucone / blokujące / porażka / przekroczony termin.
 const RED = [
   "severity.critical",
   "delivery.failed",

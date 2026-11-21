@@ -18,13 +18,15 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use common::db::sqlx::{PgPool, Row};
 use common::kafka::rdkafka::config::ClientConfig;
-use common::kafka::rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer};
+use common::kafka::rdkafka::consumer::{
+    BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer,
+};
 use common::kafka::rdkafka::message::{BorrowedMessage, Message};
 use common::kafka::rdkafka::producer::FutureProducer;
 use common::kafka::rdkafka::ClientContext;
 use contracts::{
-    topics, Actor, AlertChanged, AlertCommand, AlertCommandKind, AlertState, CanonicalEvent, Severity, Timestamp,
-    Transition, UiEvent, UiEventKind,
+    topics, Actor, AlertChanged, AlertCommand, AlertCommandKind, AlertState, CanonicalEvent,
+    Severity, Timestamp, Transition, UiEvent, UiEventKind,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -100,7 +102,8 @@ fn enum_str<T: Serialize>(v: &T) -> String {
 }
 
 fn enum_parse<T: DeserializeOwned>(s: &str) -> Result<T> {
-    serde_json::from_value(Value::String(s.to_string())).with_context(|| format!("unknown enum value `{s}`"))
+    serde_json::from_value(Value::String(s.to_string()))
+        .with_context(|| format!("unknown enum value `{s}`"))
 }
 
 struct Dedup {
@@ -160,18 +163,24 @@ impl Dedup {
 
     /// Zapisuje nagromadzone inkrementy jednego alertu i wysyła `AlertCount` na `ui.events`.
     async fn flush_one(&mut self, fingerprint: &str) -> Result<()> {
-        let Some(e) = self.cache.get(fingerprint) else { return Ok(()) };
+        let Some(e) = self.cache.get(fingerprint) else {
+            return Ok(());
+        };
         if !e.dirty {
             return Ok(());
         }
-        let (alert_id, episode, pending_delta, last_seen) = (e.alert_id, e.episode, e.pending_delta, e.last_seen);
-        let mut last_event_json = e.last_event.as_ref().map(serde_json::to_value).transpose()?;
+        let (alert_id, episode, pending_delta, last_seen) =
+            (e.alert_id, e.episode, e.pending_delta, e.last_seen);
+        let mut last_event_json = e
+            .last_event
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
         if let Some(ref mut v) = last_event_json {
             crate::mapping::strip_nuls_value(v);
         }
 
         let mut tx = self.pool.begin().await?;
-        // Delta zamiast nadpisania – dwie instancje po rebalansie nie zepsują sobie licznika.
         let row = common::db::sqlx::query(
             "UPDATE alerts SET count = count + $1, last_seen = GREATEST(last_seen, $2), last_event = COALESCE($3, last_event),
                     updated_at = now()
@@ -186,12 +195,14 @@ impl Dedup {
         .await?;
         let new_count: Option<i64> = if let Some(row) = &row {
             let count: i64 = row.get("count");
-            common::db::sqlx::query("UPDATE alert_episodes SET count = count + $1 WHERE alert_id = $2 AND episode = $3")
-                .bind(pending_delta)
-                .bind(alert_id)
-                .bind(episode)
-                .execute(&mut *tx)
-                .await?;
+            common::db::sqlx::query(
+                "UPDATE alert_episodes SET count = count + $1 WHERE alert_id = $2 AND episode = $3",
+            )
+            .bind(pending_delta)
+            .bind(alert_id)
+            .bind(episode)
+            .execute(&mut *tx)
+            .await?;
             Some(count)
         } else {
             None
@@ -212,14 +223,21 @@ impl Dedup {
             at: chrono::Utc::now(),
         };
         let key = e.alert_id.to_string();
-        if let Err(err) = common::kafka::publish(&self.producer, &self.topics.ui_events, &key, &ui).await {
+        if let Err(err) =
+            common::kafka::publish(&self.producer, &self.topics.ui_events, &key, &ui).await
+        {
             tracing::warn!(error = %err, "dedup: ui count publish failed");
         }
         Ok(())
     }
 
     async fn flush_all(&mut self) {
-        let dirty: Vec<String> = self.cache.iter().filter(|(_, e)| e.dirty).map(|(k, _)| k.clone()).collect();
+        let dirty: Vec<String> = self
+            .cache
+            .iter()
+            .filter(|(_, e)| e.dirty)
+            .map(|(k, _)| k.clone())
+            .collect();
         for fp in dirty {
             if let Err(e) = self.flush_one(&fp).await {
                 let permanent = crate::is_permanent_pg_error(&e);
@@ -239,7 +257,13 @@ impl Dedup {
         }
     }
 
-    fn changed(&self, fp: &str, transition: Transition, actor: Option<Actor>, event: CanonicalEvent) -> AlertChanged {
+    fn changed(
+        &self,
+        fp: &str,
+        transition: Transition,
+        actor: Option<Actor>,
+        event: CanonicalEvent,
+    ) -> AlertChanged {
         let e = &self.cache[fp];
         AlertChanged {
             alert_id: e.alert_id,
@@ -256,7 +280,8 @@ impl Dedup {
     }
 
     async fn emit(&self, ch: &AlertChanged) {
-        self.publish(&self.topics.alerts_changed, &ch.alert_id.to_string(), ch).await;
+        self.publish(&self.topics.alerts_changed, &ch.alert_id.to_string(), ch)
+            .await;
     }
 
     async fn handle_event(&mut self, mut ev: CanonicalEvent) -> Result<()> {
@@ -272,8 +297,6 @@ impl Dedup {
             let e = &self.cache[&fp];
             (e.state, e.last_event.as_ref().map(|l| l.event_id), e.count)
         };
-        // Powtórne dostarczenie zdarzenia, które już zapisało stan: nie liczymy go drugi raz,
-        // ale ponawiamy publikację przejścia (mogła zginąć przy awarii przed commitem).
         if last_id == Some(ev.event_id) {
             let transition = match state {
                 AlertState::Open if count == 1 => Some(Transition::Opened),
@@ -290,7 +313,14 @@ impl Dedup {
         }
         match state {
             AlertState::Open | AlertState::Acked | AlertState::Reopened if ev.resolved => {
-                self.transition(&fp, Transition::Resolved, AlertState::Resolved, Actor::Source, Some(ev)).await
+                self.transition(
+                    &fp,
+                    Transition::Resolved,
+                    AlertState::Resolved,
+                    Actor::Source,
+                    Some(ev),
+                )
+                .await
             }
             AlertState::Open | AlertState::Acked | AlertState::Reopened => {
                 let e = self.cache.get_mut(&fp).expect("loaded");
@@ -324,7 +354,6 @@ impl Dedup {
         .await?
         .rows_affected();
         if inserted == 0 {
-            // Wyścig z inną instancją: alert już jest – przetwarzamy zdarzenie jako duplikat.
             tx.rollback().await?;
             return Box::pin(self.handle_event(ev)).await;
         }
@@ -402,8 +431,14 @@ impl Dedup {
     }
 
     /// Ack / Resolve: zapis do bazy, aktualizacja cache, publikacja `AlertChanged`.
-    async fn transition(&mut self, fp: &str, t: Transition, new: AlertState, actor: Actor, ev: Option<CanonicalEvent>) -> Result<()> {
-        // Najpierw zflushuj inkrementy, żeby licznik w `AlertChanged` i w bazie był aktualny.
+    async fn transition(
+        &mut self,
+        fp: &str,
+        t: Transition,
+        new: AlertState,
+        actor: Actor,
+        ev: Option<CanonicalEvent>,
+    ) -> Result<()> {
         self.flush_one(fp).await?;
         let (id, ep, old_state) = {
             let e = &self.cache[fp];
@@ -441,7 +476,12 @@ impl Dedup {
             self.cache.remove(fp);
             return Err(anyhow!("alert {id} changed concurrently, reloading"));
         }
-        common::db::sqlx::query(ep_sql).bind(&actor_json).bind(id).bind(ep).execute(&mut *tx).await?;
+        common::db::sqlx::query(ep_sql)
+            .bind(&actor_json)
+            .bind(id)
+            .bind(ep)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
 
         let e = self.cache.get_mut(fp).expect("loaded");
@@ -449,27 +489,34 @@ impl Dedup {
         if let Some(ev) = ev {
             e.last_event = Some(ev);
         }
-        let Some(event) = e.last_event.clone() else { return Ok(()) };
+        let Some(event) = e.last_event.clone() else {
+            return Ok(());
+        };
         let ch = self.changed(fp, t, Some(actor), event);
         self.emit(&ch).await;
         Ok(())
     }
 
     async fn handle_command(&mut self, cmd: AlertCommand) -> Result<()> {
-        if !self.load(&cmd.fingerprint).await? || self.cache[&cmd.fingerprint].alert_id != cmd.alert_id {
+        if !self.load(&cmd.fingerprint).await?
+            || self.cache[&cmd.fingerprint].alert_id != cmd.alert_id
+        {
             tracing::warn!(alert_id = %cmd.alert_id, "dedup: command for unknown alert, ignored");
             return Ok(());
         }
         let state = self.cache[&cmd.fingerprint].state;
-        // Inne przypadki ignorujemy – to też daje idempotencję przy powtórzeniu komendy.
         let (t, new) = match (cmd.kind, state) {
-            (AlertCommandKind::Ack, AlertState::Open | AlertState::Reopened) => (Transition::Acked, AlertState::Acked),
-            (AlertCommandKind::Resolve, AlertState::Open | AlertState::Acked | AlertState::Reopened) => {
-                (Transition::Resolved, AlertState::Resolved)
+            (AlertCommandKind::Ack, AlertState::Open | AlertState::Reopened) => {
+                (Transition::Acked, AlertState::Acked)
             }
+            (
+                AlertCommandKind::Resolve,
+                AlertState::Open | AlertState::Acked | AlertState::Reopened,
+            ) => (Transition::Resolved, AlertState::Resolved),
             _ => return Ok(()),
         };
-        self.transition(&cmd.fingerprint, t, new, cmd.actor, None).await
+        self.transition(&cmd.fingerprint, t, new, cmd.actor, None)
+            .await
     }
 
     async fn handle(&mut self, msg: &BorrowedMessage<'_>) -> Result<()> {
@@ -501,8 +548,21 @@ impl Dedup {
 }
 
 /// Konsument `events.normalized` + `alerts.commands` w grupie `lifecycle-dedup`; działa do sygnału zatrzymania.
-pub async fn run_dedup(brokers: String, pool: PgPool, producer: FutureProducer, shutdown: Shutdown) -> Result<()> {
-    run_dedup_with(topics::groups::LIFECYCLE_DEDUP, Topics::default(), brokers, pool, producer, shutdown).await
+pub async fn run_dedup(
+    brokers: String,
+    pool: PgPool,
+    producer: FutureProducer,
+    shutdown: Shutdown,
+) -> Result<()> {
+    run_dedup_with(
+        topics::groups::LIFECYCLE_DEDUP,
+        Topics::default(),
+        brokers,
+        pool,
+        producer,
+        shutdown,
+    )
+    .await
 }
 
 /// Jak `run_dedup`, ale z podaną grupą i topikami (testy używają własnych, izolowanych).
@@ -521,11 +581,21 @@ pub async fn run_dedup_with(
         .set("enable.auto.commit", "false")
         .set("auto.offset.reset", "earliest")
         .set("session.timeout.ms", "10000")
-        .create_with_context(RebalanceContext { rebalanced: rebalanced.clone() })
+        .create_with_context(RebalanceContext {
+            rebalanced: rebalanced.clone(),
+        })
         .context("creating dedup consumer")?;
-    consumer.subscribe(&[topics.events_normalized.as_str(), topics.alerts_commands.as_str()])?;
+    consumer.subscribe(&[
+        topics.events_normalized.as_str(),
+        topics.alerts_commands.as_str(),
+    ])?;
 
-    let mut d = Dedup { pool, producer, topics, cache: HashMap::new() };
+    let mut d = Dedup {
+        pool,
+        producer,
+        topics,
+        cache: HashMap::new(),
+    };
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         if rebalanced.swap(false, Ordering::SeqCst) {
@@ -538,7 +608,6 @@ pub async fn run_dedup_with(
             }
             _ = tick.tick() => {
                 d.flush_all().await;
-                // shortcut: prosty limit pamięci (usuwamy wpisy bez zaległych inkrementów), LRU gdyby to było za mało.
                 if d.cache.len() > 50_000 {
                     d.cache.retain(|_, e| e.dirty);
                 }
@@ -558,12 +627,9 @@ pub async fn run_dedup_with(
                         continue;
                     }
                 };
-                // Rebalans mógł zajść w trakcie `recv` – stan musi być świeży przed obsługą wiadomości.
                 if rebalanced.swap(false, Ordering::SeqCst) {
                     d.on_rebalance().await;
                 }
-                // At-least-once: ponawiamy do skutku (z limitem dla trwałych błędów danych/indeksu Postgresa),
-                // commit dopiero po zapisie skutków.
                 let mut permanent_failures = 0u32;
                 while let Err(e) = d.handle(&msg).await {
                     if crate::is_permanent_pg_error(&e) {
@@ -612,17 +678,14 @@ mod tests {
     #[test]
     fn dirty_flag_cleared_after_permanent_flush_failure_threshold() {
         let mut entry = sample_entry();
-        // Transient errors never clear dirty.
         for _ in 0..10 {
             assert!(!entry.record_flush_failure(false));
             assert!(entry.dirty);
         }
-        // Up to 5 permanent failures keep dirty=true.
         for _ in 0..MAX_PERMANENT_FLUSH_FAILURES {
             assert!(!entry.record_flush_failure(true));
             assert!(entry.dirty);
         }
-        // 6th permanent failure (> 5) clears dirty and pending_delta so cache eviction can reclaim it.
         assert!(entry.record_flush_failure(true));
         assert!(!entry.dirty);
         assert_eq!(entry.pending_delta, 0);

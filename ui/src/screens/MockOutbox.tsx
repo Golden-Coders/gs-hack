@@ -1,7 +1,3 @@
-// Konfiguracja kanałów powiadomień wg typu (poziomu) alertu:
-// - Krytyczne (critical): domyślnie SMS + Telefon
-// - Średnie (medium / warning): domyślnie E-mail
-// - Pozostałe (info / niskie): domyślnie Na stronę (UI)
 import { Checkbox } from "@atlaskit/checkbox";
 import { Text } from "@atlaskit/primitives/compiled";
 import { useState } from "react";
@@ -88,7 +84,6 @@ export default function MockOutbox() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       } catch {
-        // brak localStorage
       }
       if (channel !== "ui") {
         const anyEnabled = TIERS.some((t) => next[t.id][channel]);

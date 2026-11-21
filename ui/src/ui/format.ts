@@ -1,4 +1,3 @@
-// Formatowanie wartości w UI (czasy, autorzy działań).
 import type { Schemas } from "../api/client";
 
 export function formatTime(iso: string | null | undefined): string {

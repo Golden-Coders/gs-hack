@@ -1,4 +1,3 @@
-// Dostarczenia alertu: wszystkie i nieudane (błąd techniczny kanału / DLQ) z „wyślij ponownie”.
 import { Text } from "@atlaskit/primitives/compiled";
 import { useState } from "react";
 import { api, asPerson, type Schemas } from "../../api/client";
@@ -14,8 +13,6 @@ import { formatTime } from "../../ui/format";
 const CHANNEL: Record<Schemas["Channel"], string> = { ui: "UI", email: "e-mail", sms: "SMS", phone: "telefon" };
 const isFailed = (d: Schemas["Delivery"]) => d.status === "failed" || d.status === "dlq";
 
-// Kontrakt nie ma pola „łańcuch”: łańcuch fallbacku odtwarzamy z dostarczeń tej samej osoby i epizodu
-// (każdy kanał to osobny wiersz, uporządkowany po czasie zlecenia).
 function chainOf(all: Schemas["Delivery"][], d: Schemas["Delivery"]) {
   return all
     .filter((x) => x.person_id === d.person_id && x.episode === d.episode)

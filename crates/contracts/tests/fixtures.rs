@@ -9,16 +9,22 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
 fn fixture(rel: &str) -> Value {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures").join(rel);
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(rel);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 fn roundtrip<T: Serialize + DeserializeOwned + PartialEq + Debug>(rel: &str) -> T {
     let original = fixture(rel);
-    let typed: T = serde_json::from_value(original.clone()).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    let typed: T =
+        serde_json::from_value(original.clone()).unwrap_or_else(|e| panic!("{rel}: {e}"));
     let reserialized = serde_json::to_value(&typed).unwrap();
-    assert_eq!(reserialized, original, "{rel}: re-serialized JSON differs from fixture");
+    assert_eq!(
+        reserialized, original,
+        "{rel}: re-serialized JSON differs from fixture"
+    );
     let again: T = serde_json::from_value(reserialized).unwrap();
     assert_eq!(again, typed, "{rel}: round-trip changed the value");
     typed
@@ -26,7 +32,11 @@ fn roundtrip<T: Serialize + DeserializeOwned + PartialEq + Debug>(rel: &str) -> 
 
 #[test]
 fn appendix_a_events() {
-    for f in ["workflow_failed", "alertmanager_high_error_rate", "trade_rejected"] {
+    for f in [
+        "workflow_failed",
+        "alertmanager_high_error_rate",
+        "trade_rejected",
+    ] {
         let env: IncomingEnvelope = roundtrip(&format!("events/{f}.json"));
         assert_eq!(env.format, formats::JSON);
     }
@@ -35,7 +45,8 @@ fn appendix_a_events() {
 #[test]
 fn every_topic_has_a_fixture() {
     for topic in topics::ALL {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/topics/{topic}.json"));
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("fixtures/topics/{topic}.json"));
         assert!(path.exists(), "missing fixture for topic {topic}");
     }
 }
@@ -82,7 +93,6 @@ fn config_definitions() {
 
 #[test]
 fn types_without_fixtures_roundtrip() {
-    // Typy używane w API/UI, które nie mają własnego topiku.
     let explanation = Explanation {
         result: false,
         node: "all".into(),
@@ -95,7 +105,10 @@ fn types_without_fixtures_roundtrip() {
         }],
     };
     let v = serde_json::to_value(&explanation).unwrap();
-    assert_eq!(serde_json::from_value::<Explanation>(v).unwrap(), explanation);
+    assert_eq!(
+        serde_json::from_value::<Explanation>(v).unwrap(),
+        explanation
+    );
 
     for s in [StepStatus::WaitingApproval, StepStatus::Rejected] {
         let v = serde_json::to_value(s).unwrap();
@@ -105,6 +118,9 @@ fn types_without_fixtures_roundtrip() {
         let v = serde_json::to_value(s).unwrap();
         assert_eq!(serde_json::from_value::<DeliveryStatus>(v).unwrap(), s);
     }
-    assert_eq!(serde_json::to_value(AlertState::Reopened).unwrap(), "reopened");
+    assert_eq!(
+        serde_json::to_value(AlertState::Reopened).unwrap(),
+        "reopened"
+    );
     assert!(Severity::Critical > Severity::Warning);
 }

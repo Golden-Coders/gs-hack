@@ -32,7 +32,12 @@ pub(crate) fn resolve_config_path(config_dir: &str, rel: &str) -> Option<PathBuf
         return None;
     }
     let rel_path = FsPath::new(rel);
-    if rel_path.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
+    if rel_path.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return None;
     }
 
@@ -80,17 +85,31 @@ pub(crate) mod test_util {
     }
 
     pub async fn server() -> Server {
-        let st = AppState::connect(common::Config::from_env()).await.expect("connect");
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let st = AppState::connect(common::Config::from_env())
+            .await
+            .expect("connect");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
         let addr = listener.local_addr().unwrap();
         let app = crate::router(st.clone());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Server { addr, st, alerts: Default::default() }
+        Server {
+            addr,
+            st,
+            alerts: Default::default(),
+        }
     }
 
     impl Server {
         /// Sends an HTTP request with `Authorization: Bearer <api_token>`.
-        pub async fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<&str>) -> (u16, Value) {
+        pub async fn http(
+            &self,
+            method: &str,
+            path: &str,
+            headers: &[(&str, &str)],
+            body: Option<&str>,
+        ) -> (u16, Value) {
             let auth = format!("Bearer {}", self.st.config.api_token);
             let mut all = vec![("Authorization", auth.as_str())];
             all.extend_from_slice(headers);
@@ -99,13 +118,23 @@ pub(crate) mod test_util {
         }
 
         /// Sends a raw HTTP/1.1 request without adding default headers; returns status, lowercased headers, and JSON body.
-        pub async fn http_raw(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<&str>) -> (u16, String, Value) {
-            let mut req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
+        pub async fn http_raw(
+            &self,
+            method: &str,
+            path: &str,
+            headers: &[(&str, &str)],
+            body: Option<&str>,
+        ) -> (u16, String, Value) {
+            let mut req =
+                format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
             for (k, v) in headers {
                 req.push_str(&format!("{k}: {v}\r\n"));
             }
             if let Some(b) = body {
-                req.push_str(&format!("Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{b}", b.len()));
+                req.push_str(&format!(
+                    "Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{b}",
+                    b.len()
+                ));
             } else {
                 req.push_str("\r\n");
             }
@@ -128,19 +157,33 @@ pub(crate) mod test_util {
             let mut buf = Vec::new();
             let mut chunk = [0u8; 1024];
             while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                let n = tokio::time::timeout(Duration::from_secs(5), s.read(&mut chunk)).await.expect("timeout").unwrap();
+                let n = tokio::time::timeout(Duration::from_secs(5), s.read(&mut chunk))
+                    .await
+                    .expect("timeout")
+                    .unwrap();
                 assert!(n > 0, "połączenie zamknięte przed końcem nagłówków");
                 buf.extend_from_slice(&chunk[..n]);
             }
             let head = String::from_utf8_lossy(&buf).to_lowercase();
-            (head.split_whitespace().nth(1).unwrap().parse().unwrap(), head)
+            (
+                head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+                head,
+            )
         }
 
         /// Deletes alerts inserted via `insert_alert`.
         pub async fn cleanup(&self) {
             let ids = self.alerts.lock().unwrap().clone();
-            sqlx::query("DELETE FROM alert_episodes WHERE alert_id = ANY($1)").bind(&ids).execute(&self.st.db).await.unwrap();
-            sqlx::query("DELETE FROM alerts WHERE id = ANY($1)").bind(&ids).execute(&self.st.db).await.unwrap();
+            sqlx::query("DELETE FROM alert_episodes WHERE alert_id = ANY($1)")
+                .bind(&ids)
+                .execute(&self.st.db)
+                .await
+                .unwrap();
+            sqlx::query("DELETE FROM alerts WHERE id = ANY($1)")
+                .bind(&ids)
+                .execute(&self.st.db)
+                .await
+                .unwrap();
         }
 
         pub async fn insert_alert(&self, fp: &str, state: &str, age_days: i32) -> Uuid {

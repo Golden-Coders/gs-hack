@@ -1,5 +1,3 @@
-// „Testuj na zdarzeniu” (tasks.md 15.1): wklejone zdarzenie albo ostatnie po event_id -> POST /rules/test.
-// Pokazuje wynik każdego warunku z osobna (który liść pasował) i wyrenderowaną prezentację.
 import { useState } from "react";
 import Button from "@atlaskit/button/new";
 import { Check, X } from "lucide-react";

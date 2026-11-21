@@ -30,10 +30,12 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn ingest_errors(State(st): State<AppState>) -> ApiResult<Json<Value>> {
-    let rows = sqlx::query("SELECT source, error, sample, at FROM ingest_errors ORDER BY at DESC LIMIT 100")
-        .fetch_all(&st.db)
-        .await
-        .map_err(db_err)?;
+    let rows = sqlx::query(
+        "SELECT source, error, sample, at FROM ingest_errors ORDER BY at DESC LIMIT 100",
+    )
+    .fetch_all(&st.db)
+    .await
+    .map_err(db_err)?;
     let out: Vec<Value> = rows
         .iter()
         .map(|r| {
@@ -51,7 +53,10 @@ async fn ingest_errors(State(st): State<AppState>) -> ApiResult<Json<Value>> {
 const ALERT_COLS: &str = "id, fingerprint, state, severity, title, schema, count::bigint AS count, episode::int AS episode, first_seen, last_seen, \
                           last_event, acked_by, resolved_by";
 
-fn summary(r: &sqlx::postgres::PgRow, rules: &[CompiledRule]) -> (serde_json::Map<String, Value>, AlertEnrichment) {
+fn summary(
+    r: &sqlx::postgres::PgRow,
+    rules: &[CompiledRule],
+) -> (serde_json::Map<String, Value>, AlertEnrichment) {
     let base_sev = r.get::<String, _>("severity");
     let base_title = r.get::<String, _>("title");
     let last_event = opt_json(r, "last_event");
@@ -85,7 +90,10 @@ struct AlertsQuery {
     team: Option<String>,
 }
 
-async fn list_alerts(State(st): State<AppState>, Query(q): Query<AlertsQuery>) -> ApiResult<Json<Value>> {
+async fn list_alerts(
+    State(st): State<AppState>,
+    Query(q): Query<AlertsQuery>,
+) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let team_filter = q.team.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let rules = load_enabled_rules(&st.db).await;
@@ -232,16 +240,28 @@ mod tests {
         let a = s.insert_alert(&uniq("fp"), "acked", 0).await;
         let b = s.insert_alert(&uniq("fp"), "open", 0).await;
         let old = s.insert_alert(&uniq("fp"), "acked", 3).await;
-        let ids = |v: &Value| -> Vec<String> { v.as_array().unwrap().iter().map(|x| x["id"].as_str().unwrap().to_string()).collect() };
+        let ids = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x["id"].as_str().unwrap().to_string())
+                .collect()
+        };
 
         let (st, all) = s.http("GET", "/alerts?limit=1000", &[], None).await;
         assert_eq!(st, 200);
         assert!(ids(&all).contains(&a.to_string()));
 
-        let (_, acked) = s.http("GET", "/alerts?state=acked&limit=1000", &[], None).await;
+        let (_, acked) = s
+            .http("GET", "/alerts?state=acked&limit=1000", &[], None)
+            .await;
         assert!(ids(&acked).contains(&a.to_string()));
         assert!(!ids(&acked).contains(&b.to_string()));
-        assert!(acked.as_array().unwrap().iter().all(|x| x["state"] == "acked"));
+        assert!(acked
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|x| x["state"] == "acked"));
 
         let since: String = sqlx::query_scalar(
             "SELECT to_char((now() - interval '1 day') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
@@ -249,7 +269,14 @@ mod tests {
         .fetch_one(&s.st.db)
         .await
         .unwrap();
-        let (_, recent) = s.http("GET", &format!("/alerts?since={since}&limit=1000"), &[], None).await;
+        let (_, recent) = s
+            .http(
+                "GET",
+                &format!("/alerts?since={since}&limit=1000"),
+                &[],
+                None,
+            )
+            .await;
         assert!(ids(&recent).contains(&a.to_string()));
         assert!(!ids(&recent).contains(&old.to_string()));
 
@@ -270,7 +297,9 @@ mod tests {
         assert_eq!(v["episode"], 2);
         assert_eq!(v["count"], 5);
 
-        let (st, _) = s.http("GET", &format!("/alerts/{}", Uuid::new_v4()), &[], None).await;
+        let (st, _) = s
+            .http("GET", &format!("/alerts/{}", Uuid::new_v4()), &[], None)
+            .await;
         assert_eq!(st, 404);
         let (st, _) = s.http("GET", "/alerts/nie-uuid", &[], None).await;
         assert_eq!(st, 400);
@@ -290,9 +319,16 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let (st, v) = s.http("GET", &format!("/alerts/{id}/episodes"), &[], None).await;
+        let (st, v) = s
+            .http("GET", &format!("/alerts/{id}/episodes"), &[], None)
+            .await;
         assert_eq!(st, 200);
-        let eps: Vec<i64> = v.as_array().unwrap().iter().map(|e| e["episode"].as_i64().unwrap()).collect();
+        let eps: Vec<i64> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["episode"].as_i64().unwrap())
+            .collect();
         assert_eq!(eps, vec![2, 1]);
         assert_eq!(v[0]["count"], 20);
         s.cleanup().await;
@@ -300,7 +336,12 @@ mod tests {
 
     async fn find_command(alert_id: Uuid) -> AlertCommand {
         let cfg = common::Config::from_env();
-        let consumer = common::kafka::consumer(&cfg.kafka_brokers, &uniq("alerts-test"), &[topics::ALERTS_COMMANDS]).unwrap();
+        let consumer = common::kafka::consumer(
+            &cfg.kafka_brokers,
+            &uniq("alerts-test"),
+            &[topics::ALERTS_COMMANDS],
+        )
+        .unwrap();
         let fut = async {
             loop {
                 let m = consumer.recv().await.unwrap();
@@ -313,7 +354,9 @@ mod tests {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(15), fut).await.expect("brak komendy na alerts.commands")
+        tokio::time::timeout(Duration::from_secs(15), fut)
+            .await
+            .expect("brak komendy na alerts.commands")
     }
 
     #[tokio::test]
@@ -321,38 +364,62 @@ mod tests {
         let s = server().await;
         let fp = uniq("fp");
         let id = s.insert_alert(&fp, "open", 0).await;
-        sqlx::query("INSERT INTO people (id, name, contacts, working_hours) VALUES ('ala', 'Ala', '{}'::jsonb, '{}'::jsonb) ON CONFLICT (id) DO NOTHING")
+        sqlx::query("INSERT INTO people (id, name, contacts, def) VALUES ('ala', 'Ala', '{}'::jsonb, '{}'::jsonb) ON CONFLICT (id) DO NOTHING")
             .execute(&s.st.db)
             .await
             .unwrap();
 
-        // Unverified X-Person-Id with shared API_TOKEN is rejected (403).
-        let (st, _) = s.http("POST", &format!("/alerts/{id}/ack"), &[("X-Person-Id", "ala")], None).await;
+        let (st, _) = s
+            .http(
+                "POST",
+                &format!("/alerts/{id}/ack"),
+                &[("X-Person-Id", "ala")],
+                None,
+            )
+            .await;
         assert_eq!(st, 403);
 
-        // Authenticate via server-side session bound to 'ala'.
         let sess = s.st.auth.create_session("ala".into());
         let auth_hdr = format!("Bearer {sess}");
 
-        // Spoofed X-Person-Id mismatching authenticated session is rejected (403).
         let (st, _, _) = s
-            .http_raw("POST", &format!("/alerts/{id}/ack"), &[("Authorization", &auth_hdr), ("X-Person-Id", "bob")], None)
+            .http_raw(
+                "POST",
+                &format!("/alerts/{id}/ack"),
+                &[("Authorization", &auth_hdr), ("X-Person-Id", "bob")],
+                None,
+            )
             .await;
         assert_eq!(st, 403);
 
         let (st, _, _) = s
-            .http_raw("POST", &format!("/alerts/{}/ack", Uuid::new_v4()), &[("Authorization", &auth_hdr)], None)
+            .http_raw(
+                "POST",
+                &format!("/alerts/{}/ack", Uuid::new_v4()),
+                &[("Authorization", &auth_hdr)],
+                None,
+            )
             .await;
         assert_eq!(st, 404);
 
         let (st, _, _) = s
-            .http_raw("POST", &format!("/alerts/{id}/ack"), &[("Authorization", &auth_hdr)], None)
+            .http_raw(
+                "POST",
+                &format!("/alerts/{id}/ack"),
+                &[("Authorization", &auth_hdr)],
+                None,
+            )
             .await;
         assert_eq!(st, 202);
         let cmd = find_command(id).await;
         assert_eq!(cmd.fingerprint, fp);
         assert!(matches!(cmd.kind, AlertCommandKind::Ack));
-        assert_eq!(cmd.actor, Actor::User { person_id: "ala".into() });
+        assert_eq!(
+            cmd.actor,
+            Actor::User {
+                person_id: "ala".into()
+            }
+        );
         s.cleanup().await;
     }
 
@@ -360,17 +427,24 @@ mod tests {
     async fn resolve_accepted() {
         let s = server().await;
         let id = s.insert_alert(&uniq("fp"), "open", 0).await;
-        sqlx::query("INSERT INTO people (id, name, contacts, working_hours) VALUES ('bob', 'Bob', '{}'::jsonb, '{}'::jsonb) ON CONFLICT (id) DO NOTHING")
+        sqlx::query("INSERT INTO people (id, name, contacts, def) VALUES ('bob', 'Bob', '{}'::jsonb, '{}'::jsonb) ON CONFLICT (id) DO NOTHING")
             .execute(&s.st.db)
             .await
             .unwrap();
         let sess = s.st.auth.create_session("bob".into());
         let auth_hdr = format!("Bearer {sess}");
         let (st, _, _) = s
-            .http_raw("POST", &format!("/alerts/{id}/resolve"), &[("Authorization", &auth_hdr)], None)
+            .http_raw(
+                "POST",
+                &format!("/alerts/{id}/resolve"),
+                &[("Authorization", &auth_hdr)],
+                None,
+            )
             .await;
         assert_eq!(st, 202);
-        let (st, _) = s.http("POST", &format!("/alerts/{id}/resolve"), &[], None).await;
+        let (st, _) = s
+            .http("POST", &format!("/alerts/{id}/resolve"), &[], None)
+            .await;
         assert_eq!(st, 403);
         s.cleanup().await;
     }
@@ -379,17 +453,28 @@ mod tests {
     async fn ingest_errors_listed() {
         let s = server().await;
         let src = uniq("src");
-        sqlx::query("INSERT INTO ingest_errors (source, error, sample) VALUES ($1, 'zly json', '{')")
+        sqlx::query(
+            "INSERT INTO ingest_errors (source, error, sample) VALUES ($1, 'zly json', '{')",
+        )
+        .bind(&src)
+        .execute(&s.st.db)
+        .await
+        .unwrap();
+        let (st, v) = s.http("GET", "/ingest/errors", &[], None).await;
+        assert_eq!(st, 200);
+        let e = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["source"] == src.as_str())
+            .expect("brak błędu");
+        assert_eq!(e["error"], "zly json");
+        assert_eq!(e["sample"], "{");
+        sqlx::query("DELETE FROM ingest_errors WHERE source = $1")
             .bind(&src)
             .execute(&s.st.db)
             .await
             .unwrap();
-        let (st, v) = s.http("GET", "/ingest/errors", &[], None).await;
-        assert_eq!(st, 200);
-        let e = v.as_array().unwrap().iter().find(|e| e["source"] == src.as_str()).expect("brak błędu");
-        assert_eq!(e["error"], "zly json");
-        assert_eq!(e["sample"], "{");
-        sqlx::query("DELETE FROM ingest_errors WHERE source = $1").bind(&src).execute(&s.st.db).await.unwrap();
     }
 
     #[tokio::test]
@@ -401,12 +486,23 @@ mod tests {
 
         let (st, _, v) = s.http_raw("GET", "/alerts", &[], None).await;
         assert_eq!((st, &v), (401, &json!({"error": "unauthorized"})));
-        let (st, _, _) = s.http_raw("GET", "/alerts", &[("Authorization", "Bearer zly")], None).await;
+        let (st, _, _) = s
+            .http_raw("GET", "/alerts", &[("Authorization", "Bearer zly")], None)
+            .await;
         assert_eq!(st, 401);
-        let (st, _, _) = s.http_raw("GET", "/alerts?limit=1", &[("Authorization", &format!("Bearer {tok}"))], None).await;
+        let (st, _, _) = s
+            .http_raw(
+                "GET",
+                "/alerts?limit=1",
+                &[("Authorization", &format!("Bearer {tok}"))],
+                None,
+            )
+            .await;
         assert_eq!(st, 200);
 
-        let (st, _, _) = s.http_raw("GET", &format!("/alerts?limit=1&token={tok}"), &[], None).await;
+        let (st, _, _) = s
+            .http_raw("GET", &format!("/alerts?limit=1&token={tok}"), &[], None)
+            .await;
         assert_eq!(st, 401);
         let (st, _, _) = s.http_raw("GET", "/alerts?token=zly", &[], None).await;
         assert_eq!(st, 401);
@@ -418,7 +514,15 @@ mod tests {
         assert!(head.contains("content-type: text/event-stream"), "{head}");
 
         let (st, head, _) = s
-            .http_raw("OPTIONS", "/alerts", &[("Origin", "http://localhost:5173"), ("Access-Control-Request-Method", "GET")], None)
+            .http_raw(
+                "OPTIONS",
+                "/alerts",
+                &[
+                    ("Origin", "http://localhost:5173"),
+                    ("Access-Control-Request-Method", "GET"),
+                ],
+                None,
+            )
             .await;
         assert_ne!(st, 401);
         assert!(head.contains("access-control-allow-origin"), "{head}");
@@ -432,8 +536,10 @@ mod tests {
         let fp_match = uniq("d10-fp-match");
         let fp_other = uniq("d10-fp-other");
 
-        let mut alert_changed: contracts::AlertChanged =
-            serde_json::from_str(include_str!("../../../contracts/fixtures/topics/alerts.changed.json")).unwrap();
+        let mut alert_changed: contracts::AlertChanged = serde_json::from_str(include_str!(
+            "../../../contracts/fixtures/topics/alerts.changed.json"
+        ))
+        .unwrap();
         alert_changed.event.fingerprint = fp_match.clone();
         let ev_match = serde_json::to_value(&alert_changed.event).unwrap();
 
@@ -479,7 +585,9 @@ mod tests {
         s.alerts.lock().unwrap().push(id_match);
         let id_other = s.insert_alert(&fp_other, "open", 0).await;
 
-        let (st, list) = s.http("GET", &format!("/alerts?team={team_id}"), &[], None).await;
+        let (st, list) = s
+            .http("GET", &format!("/alerts?team={team_id}"), &[], None)
+            .await;
         assert_eq!(st, 200);
         let arr = list.as_array().unwrap();
         assert_eq!(arr.len(), 1);
@@ -491,13 +599,19 @@ mod tests {
         assert_eq!(arr[0]["teams"], json!([team_id]));
         assert_ne!(arr[0]["id"], id_other.to_string());
 
-        let (st, detail) = s.http("GET", &format!("/alerts/{id_match}"), &[], None).await;
+        let (st, detail) = s
+            .http("GET", &format!("/alerts/{id_match}"), &[], None)
+            .await;
         assert_eq!(st, 200);
         assert_eq!(detail["body"], "Step validate-counterparty");
         assert_eq!(detail["fields"][0]["path"], "raw.step");
         assert_eq!(detail["fields"][0]["highlight"], "red");
 
-        sqlx::query("DELETE FROM rules WHERE id = $1").bind(&rule.id).execute(&s.st.db).await.unwrap();
+        sqlx::query("DELETE FROM rules WHERE id = $1")
+            .bind(&rule.id)
+            .execute(&s.st.db)
+            .await
+            .unwrap();
         s.cleanup().await;
     }
 }

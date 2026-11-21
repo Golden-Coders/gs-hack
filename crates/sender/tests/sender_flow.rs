@@ -7,8 +7,9 @@ use contracts::{Channel, DeliveryRequest, DeliveryStatus, Rendered, UiEventKind}
 use sender::adapters::{BoxedAsyncRead, BoxedAsyncWrite, SmtpConnector};
 use sender::store::BoxFuture;
 use sender::{
-    format_email_body, format_phone_body, format_sms_body, ChannelAdapter, EmailAdapter, InMemoryBackend,
-    PhoneMockAdapter, ProcessOutcome, SendError, SenderConfig, SenderEngine, SmsMockAdapter, UiAdapter,
+    format_email_body, format_phone_body, format_sms_body, ChannelAdapter, EmailAdapter,
+    InMemoryBackend, PhoneMockAdapter, ProcessOutcome, SendError, SenderConfig, SenderEngine,
+    SmsMockAdapter, UiAdapter,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
@@ -48,7 +49,10 @@ impl SmtpConnector for DuplexSmtpServer {
                 if in_data {
                     if line == "." {
                         in_data = false;
-                        captured_conn.lock().unwrap().push(std::mem::take(&mut data_buf));
+                        captured_conn
+                            .lock()
+                            .unwrap()
+                            .push(std::mem::take(&mut data_buf));
                         let _ = writer.write_all(b"250 2.0.0 Ok: queued\r\n").await;
                     } else {
                         let clean = line.strip_prefix('.').unwrap_or(&line);
@@ -60,12 +64,19 @@ impl SmtpConnector for DuplexSmtpServer {
 
                 let upper = line.to_ascii_uppercase();
                 if upper.starts_with("EHLO") || upper.starts_with("HELO") {
-                    let _ = writer.write_all(b"250-mock.smtp.local\r\n250 SIZE 10485760\r\n").await;
-                } else if upper.starts_with("MAIL FROM:") || upper.starts_with("RCPT TO:") || upper.starts_with("RSET") {
+                    let _ = writer
+                        .write_all(b"250-mock.smtp.local\r\n250 SIZE 10485760\r\n")
+                        .await;
+                } else if upper.starts_with("MAIL FROM:")
+                    || upper.starts_with("RCPT TO:")
+                    || upper.starts_with("RSET")
+                {
                     let _ = writer.write_all(b"250 2.1.0 Ok\r\n").await;
                 } else if upper == "DATA" {
                     in_data = true;
-                    let _ = writer.write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n").await;
+                    let _ = writer
+                        .write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n")
+                        .await;
                 } else if upper.starts_with("QUIT") {
                     let _ = writer.write_all(b"221 2.0.0 Bye\r\n").await;
                     break;
@@ -76,7 +87,12 @@ impl SmtpConnector for DuplexSmtpServer {
         });
 
         let (r, w) = tokio::io::split(client_stream);
-        Box::pin(async move { Ok((Box::pin(r) as BoxedAsyncRead, Box::pin(w) as BoxedAsyncWrite)) })
+        Box::pin(async move {
+            Ok((
+                Box::pin(r) as BoxedAsyncRead,
+                Box::pin(w) as BoxedAsyncWrite,
+            ))
+        })
     }
 }
 
@@ -92,7 +108,10 @@ fn build_test_engine(
         Arc::new(EmailAdapter::with_connector(backend.clone(), smtp)),
     );
     adapters.insert(Channel::Sms, Arc::new(SmsMockAdapter::new(backend.clone())));
-    adapters.insert(Channel::Phone, Arc::new(PhoneMockAdapter::new(backend.clone())));
+    adapters.insert(
+        Channel::Phone,
+        Arc::new(PhoneMockAdapter::new(backend.clone())),
+    );
     SenderEngine::with_adapters(backend, adapters, config)
 }
 
@@ -160,7 +179,8 @@ async fn phone_mock_adapter_stores_call_in_mock_outbox() {
 
     let mut req = fixture_delivery_request();
     req.chain = vec![Channel::Phone, Channel::Ui];
-    req.contacts.insert(Channel::Phone, "+48500100200".to_string());
+    req.contacts
+        .insert(Channel::Phone, "+48500100200".to_string());
     let rendered = Rendered {
         title: "WORKFLOW_FAILED order-settlement".to_string(),
         body: String::new(),
@@ -200,8 +220,14 @@ async fn email_adapter_sends_email_over_smtp() {
     let emails = captured_emails.lock().unwrap();
     assert_eq!(emails.len(), 1);
     let raw_mail = &emails[0];
-    assert!(raw_mail.contains("Subject: WORKFLOW_FAILED order-settlement"), "raw mail: {raw_mail}");
-    assert!(raw_mail.contains("To: <jan@example.com>"), "raw mail: {raw_mail}");
+    assert!(
+        raw_mail.contains("Subject: WORKFLOW_FAILED order-settlement"),
+        "raw mail: {raw_mail}"
+    );
+    assert!(
+        raw_mail.contains("To: <jan@example.com>"),
+        "raw mail: {raw_mail}"
+    );
     assert!(
         raw_mail.contains("Counterparty service did not respond in 5000 ms"),
         "raw mail: {raw_mail}"
@@ -219,17 +245,14 @@ async fn idempotency_prevents_duplicate_delivery_for_same_episode_and_channel() 
     assert!(matches!(first, ProcessOutcome::Delivered(_)));
     assert_eq!(backend.mock_outbox().len(), 1);
 
-    // Ponowne przetworzenie tego samego zlecenia (np. po restarcie konsumenta przed commitem offsetu)
     let mut duplicate_req = req.clone();
     duplicate_req.delivery_id = Uuid::new_v4();
     let second = engine.process_request(duplicate_req).await.unwrap();
     assert!(matches!(second, ProcessOutcome::AlreadyDelivered(_)));
 
-    // Nadal dokładnie 1 wysłany SMS i 1 wiersz w bazie deliveries!
     assert_eq!(backend.mock_outbox().len(), 1);
     assert_eq!(backend.deliveries().len(), 1);
 
-    // Nowy epizod tego samego alertu (episode = 2) -> wysyłany normalnie!
     let mut next_episode_req = req;
     next_episode_req.delivery_id = Uuid::new_v4();
     next_episode_req.episode = 2;
@@ -243,7 +266,6 @@ async fn idempotency_prevents_duplicate_delivery_for_same_episode_and_channel() 
 async fn disabled_sms_retries_with_backoff_then_falls_back_to_email() {
     let (smtp, captured_emails) = DuplexSmtpServer::new();
     let backend = Arc::new(InMemoryBackend::new());
-    // Wyłączamy kanał SMS (symulacja awarii bramki SMS)
     backend.set_channel_available(Channel::Sms, false);
 
     let cfg = SenderConfig {
@@ -254,14 +276,16 @@ async fn disabled_sms_retries_with_backoff_then_falls_back_to_email() {
 
     let req = fixture_delivery_request();
 
-    // Próba 1 na SMS -> status = retrying, attempt = 1
     let step1 = engine.process_request(req.clone()).await.unwrap();
     let retry1 = match step1 {
         ProcessOutcome::Retrying { record, request } => {
             assert_eq!(record.channel, Channel::Sms);
             assert_eq!(record.status, DeliveryStatus::Retrying);
             assert_eq!(record.attempts, 1);
-            assert_eq!(record.last_error.as_deref(), Some("sms gateway unavailable"));
+            assert_eq!(
+                record.last_error.as_deref(),
+                Some("sms gateway unavailable")
+            );
             assert_eq!(request.attempt, 1);
             assert!(request.not_before.is_some());
             request
@@ -269,7 +293,6 @@ async fn disabled_sms_retries_with_backoff_then_falls_back_to_email() {
         other => panic!("expected Retrying after attempt 1, got {other:?}"),
     };
 
-    // Próba 2 na SMS -> status = retrying, attempt = 2 (z większym backoffem)
     let _ = backend.take_retry_queue();
     let step2 = engine.process_request(retry1.clone()).await.unwrap();
     let retry2 = match step2 {
@@ -278,14 +301,12 @@ async fn disabled_sms_retries_with_backoff_then_falls_back_to_email() {
             assert_eq!(record.status, DeliveryStatus::Retrying);
             assert_eq!(record.attempts, 2);
             assert_eq!(request.attempt, 2);
-            // Backoff dla próby 2 (5 s) jest późniejszy niż dla próby 1 (1 s)
             assert!(request.not_before.unwrap() > retry1.not_before.unwrap());
             request
         }
         other => panic!("expected Retrying after attempt 2, got {other:?}"),
     };
 
-    // Próba 3 na SMS -> wyczerpanie prób na SMS -> status SMS = fallback (attempts = 3) -> przejście na Email -> Delivered!
     let _ = backend.take_retry_queue();
     let step3 = engine.process_request(retry2).await.unwrap();
     match step3 {
@@ -298,22 +319,21 @@ async fn disabled_sms_retries_with_backoff_then_falls_back_to_email() {
         other => panic!("expected Delivered on fallback Email channel, got {other:?}"),
     }
 
-    // Weryfikacja wierszy w deliveries:
-    // 1. wiersz: sms (status = fallback, attempts = 3, last_error = "sms gateway unavailable")
-    // 2. wiersz: email (status = delivered, attempts = 1, last_error = None)
     let deliveries = backend.deliveries();
     assert_eq!(deliveries.len(), 2);
     assert_eq!(deliveries[0].channel, Channel::Sms);
     assert_eq!(deliveries[0].status, DeliveryStatus::Fallback);
     assert_eq!(deliveries[0].attempts, 3);
-    assert_eq!(deliveries[0].last_error.as_deref(), Some("sms gateway unavailable"));
+    assert_eq!(
+        deliveries[0].last_error.as_deref(),
+        Some("sms gateway unavailable")
+    );
 
     assert_eq!(deliveries[1].channel, Channel::Email);
     assert_eq!(deliveries[1].status, DeliveryStatus::Delivered);
     assert_eq!(deliveries[1].attempts, 1);
     assert_eq!(deliveries[1].last_error, None);
 
-    // Email faktycznie dotarł do serwera SMTP
     assert_eq!(captured_emails.lock().unwrap().len(), 1);
     assert!(backend.dlq_queue().is_empty());
 }
@@ -322,7 +342,6 @@ async fn disabled_sms_retries_with_backoff_then_falls_back_to_email() {
 async fn all_channels_disabled_exhausts_chain_and_sends_to_dlq_then_resend_succeeds() {
     let backend = Arc::new(InMemoryBackend::new());
     let (smtp, _) = DuplexSmtpServer::new();
-    // Wyłączamy wszystkie kanały w łańcuchu [sms, email, ui]
     backend.set_channel_available(Channel::Sms, false);
     backend.set_channel_available(Channel::Email, false);
     backend.set_channel_available(Channel::Ui, false);
@@ -337,29 +356,33 @@ async fn all_channels_disabled_exhausts_chain_and_sends_to_dlq_then_resend_succe
     engine.process_request(req.clone()).await.unwrap();
     drain_retries(&engine, &backend).await;
 
-    // Wszystkie 3 kanały wyczerpane:
-    // sms -> fallback (3 próby)
-    // email -> fallback (3 próby)
-    // ui -> dlq (3 próby)
     let deliveries = backend.deliveries();
     assert_eq!(deliveries.len(), 3);
 
     assert_eq!(deliveries[0].channel, Channel::Sms);
     assert_eq!(deliveries[0].status, DeliveryStatus::Fallback);
     assert_eq!(deliveries[0].attempts, 3);
-    assert_eq!(deliveries[0].last_error.as_deref(), Some("sms gateway unavailable"));
+    assert_eq!(
+        deliveries[0].last_error.as_deref(),
+        Some("sms gateway unavailable")
+    );
 
     assert_eq!(deliveries[1].channel, Channel::Email);
     assert_eq!(deliveries[1].status, DeliveryStatus::Fallback);
     assert_eq!(deliveries[1].attempts, 3);
-    assert_eq!(deliveries[1].last_error.as_deref(), Some("email channel unavailable"));
+    assert_eq!(
+        deliveries[1].last_error.as_deref(),
+        Some("email channel unavailable")
+    );
 
     assert_eq!(deliveries[2].channel, Channel::Ui);
     assert_eq!(deliveries[2].status, DeliveryStatus::Dlq);
     assert_eq!(deliveries[2].attempts, 3);
-    assert_eq!(deliveries[2].last_error.as_deref(), Some("ui channel unavailable"));
+    assert_eq!(
+        deliveries[2].last_error.as_deref(),
+        Some("ui channel unavailable")
+    );
 
-    // Wiadomość trafiła na topik deliveries.dlq
     let dlq = backend.dlq_queue();
     assert_eq!(dlq.len(), 1);
     assert_eq!(dlq[0].alert_id, req.alert_id);
@@ -367,7 +390,6 @@ async fn all_channels_disabled_exhausts_chain_and_sends_to_dlq_then_resend_succe
     assert_eq!(dlq[0].attempt, 3);
     assert_eq!(dlq[0].last_error.as_deref(), Some("ui channel unavailable"));
 
-    // Teraz przywracamy działanie kanału UI i wywołujemy resend dla nieudanego dostarczenia (POST /deliveries/{id}/resend)
     let dlq_delivery_id = deliveries[2].id;
     backend.set_channel_available(Channel::Ui, true);
 
@@ -400,14 +422,13 @@ async fn permanent_error_immediately_falls_back_without_retries() {
     let engine = build_test_engine(backend.clone(), smtp, SenderConfig::default());
 
     let mut req = fixture_delivery_request();
-    // Usuwamy numer telefonu dla SMS i podajemy niepoprawny adres email -> oba dają błąd Permanent
     req.contacts.remove(&Channel::Sms);
-    req.contacts.insert(Channel::Email, "not-an-email-address".to_string());
+    req.contacts
+        .insert(Channel::Email, "not-an-email-address".to_string());
 
     let outcome = engine.process_request(req).await.unwrap();
     match outcome {
         ProcessOutcome::Delivered(rec) => {
-            // Natychmiastowy fallback: SMS (1 próba) -> Email (1 próba) -> UI (dostarczone!)
             assert_eq!(rec.channel, Channel::Ui);
             assert_eq!(rec.status, DeliveryStatus::Delivered);
             assert_eq!(rec.attempts, 1);
@@ -415,7 +436,6 @@ async fn permanent_error_immediately_falls_back_without_retries() {
         other => panic!("expected immediate fallback to UI, got {other:?}"),
     }
 
-    // Kolejka retry musi być pusta (błędy Permanent nie są ponawiane na tym samym kanale)
     assert!(backend.retry_queue().is_empty());
 
     let deliveries = backend.deliveries();
@@ -452,7 +472,10 @@ async fn custom_channel_adapter_can_replace_sms_mock_without_touching_engine() {
         ) -> sender::store::BoxFuture<'a, Result<String, SendError>> {
             let recipient = to.unwrap_or_default().to_string();
             let text = format_sms_body(rendered);
-            self.sent_to.lock().unwrap().push(format!("{recipient}:{text}"));
+            self.sent_to
+                .lock()
+                .unwrap()
+                .push(format!("{recipient}:{text}"));
             Box::pin(async move { Ok("twilio:SM12345".to_string()) })
         }
     }
@@ -475,7 +498,8 @@ async fn custom_channel_adapter_can_replace_sms_mock_without_touching_engine() {
     assert!(matches!(outcome, ProcessOutcome::Delivered(_)));
     let captured = sent_to.lock().unwrap();
     assert_eq!(captured.len(), 1);
-    assert!(captured[0].starts_with("+48500100200:validate-counterparty: TIMEOUT http://localhost:5173/alerts/"));
+    assert!(captured[0]
+        .starts_with("+48500100200:validate-counterparty: TIMEOUT http://localhost:5173/alerts/"));
 }
 
 #[test]
@@ -485,8 +509,14 @@ fn formatting_helpers_handle_links_and_empty_bodies() {
         body: "5xx > 10%".to_string(),
         link: Some("http://localhost:5173/alerts/123".to_string()),
     };
-    assert_eq!(format_sms_body(&r), "5xx > 10% http://localhost:5173/alerts/123");
-    assert_eq!(format_email_body(&r), "5xx > 10%\n\nhttp://localhost:5173/alerts/123");
+    assert_eq!(
+        format_sms_body(&r),
+        "5xx > 10% http://localhost:5173/alerts/123"
+    );
+    assert_eq!(
+        format_email_body(&r),
+        "5xx > 10%\n\nhttp://localhost:5173/alerts/123"
+    );
     assert_eq!(format_phone_body(&r), "5xx > 10%");
 
     let empty_body = Rendered {
@@ -494,7 +524,10 @@ fn formatting_helpers_handle_links_and_empty_bodies() {
         body: String::new(),
         link: None,
     };
-    assert_eq!(format_phone_body(&empty_body), "Call: WORKFLOW_FAILED order-settlement");
+    assert_eq!(
+        format_phone_body(&empty_body),
+        "Call: WORKFLOW_FAILED order-settlement"
+    );
 }
 
 #[tokio::test]
@@ -528,7 +561,12 @@ async fn concurrent_sender_and_retry_on_same_key_sends_only_once() {
     let backend = Arc::new(InMemoryBackend::new());
     let calls = Arc::new(AtomicUsize::new(0));
     let mut adapters: BTreeMap<Channel, Arc<dyn ChannelAdapter>> = BTreeMap::new();
-    adapters.insert(Channel::Sms, Arc::new(SlowCountingSms { calls: calls.clone() }));
+    adapters.insert(
+        Channel::Sms,
+        Arc::new(SlowCountingSms {
+            calls: calls.clone(),
+        }),
+    );
     adapters.insert(Channel::Ui, Arc::new(UiAdapter::new(backend.clone())));
 
     let engine = SenderEngine::with_adapters(backend.clone(), adapters, SenderConfig::default());
@@ -540,12 +578,19 @@ async fn concurrent_sender_and_retry_on_same_key_sends_only_once() {
     let o1 = r1.unwrap();
     let o2 = r2.unwrap();
 
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "równoległe przetwarzanie nie może wysłać dwukrotnie");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "równoległe przetwarzanie nie może wysłać dwukrotnie"
+    );
     let outcomes = [o1, o2];
-    assert!(outcomes.iter().any(|o| matches!(o, ProcessOutcome::Delivered(_))));
     assert!(outcomes
         .iter()
-        .any(|o| matches!(o, ProcessOutcome::InProgress(_) | ProcessOutcome::AlreadyDelivered(_))));
+        .any(|o| matches!(o, ProcessOutcome::Delivered(_))));
+    assert!(outcomes.iter().any(|o| matches!(
+        o,
+        ProcessOutcome::InProgress(_) | ProcessOutcome::AlreadyDelivered(_)
+    )));
 }
 
 #[tokio::test]
@@ -563,7 +608,10 @@ async fn ui_as_primary_channel_delivers_and_emits_ui_event() {
     assert_eq!(rec.channel, Channel::Ui);
     assert_eq!(rec.status, DeliveryStatus::Delivered);
     assert!(rec.delivered_at.is_some());
-    assert!(backend.mock_outbox().is_empty(), "kanał UI nie zapisuje do mock_outbox");
+    assert!(
+        backend.mock_outbox().is_empty(),
+        "kanał UI nie zapisuje do mock_outbox"
+    );
     assert!(backend
         .ui_events()
         .iter()
@@ -604,7 +652,11 @@ async fn smtp_pool_reuses_connections_across_emails() {
         assert!(matches!(out, ProcessOutcome::Delivered(_)));
     }
 
-    assert_eq!(captured.lock().unwrap().len(), 5, "wszystkie 5 emaili dostarczone");
+    assert_eq!(
+        captured.lock().unwrap().len(),
+        5,
+        "wszystkie 5 emaili dostarczone"
+    );
     assert_eq!(
         connects.load(Ordering::SeqCst),
         1,
@@ -620,13 +672,9 @@ fn offset_tracker_commits_strictly_in_order_per_partition() {
     tracker.track(0, 102);
     tracker.track(1, 50);
 
-    // Offset 102 kończy się pierwszy: nie wolno commitować, bo 100 i 101 nadal w locie.
     assert_eq!(tracker.mark_done(0, 102), None);
-    // Partycja 1 jest niezależna.
     assert_eq!(tracker.mark_done(1, 50), Some(50));
-    // Offset 100 kończy się: można commitować 100 (101 nadal w locie).
     assert_eq!(tracker.mark_done(0, 100), Some(100));
-    // Offset 101 kończy się: okno przeskakuje od razu do 102.
     assert_eq!(tracker.mark_done(0, 101), Some(102));
     assert_eq!(tracker.in_flight(), 0);
 }

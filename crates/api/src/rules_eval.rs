@@ -24,7 +24,11 @@ impl CompiledRule {
                 }
             }
         }
-        Some(Self { def, condition, teams })
+        Some(Self {
+            def,
+            condition,
+            teams,
+        })
     }
 }
 
@@ -101,7 +105,12 @@ pub struct AlertEnrichment {
 
 /// Computes `rule_ids`, `teams`, overridden `severity`, and presentation (`title`, `body`, `fields`, `color`)
 /// from enabled rules.
-pub fn enrich_alert(base_severity: &str, base_title: &str, last_event: &Value, rules: &[CompiledRule]) -> AlertEnrichment {
+pub fn enrich_alert(
+    base_severity: &str,
+    base_title: &str,
+    last_event: &Value,
+    rules: &[CompiledRule],
+) -> AlertEnrichment {
     let mut out = AlertEnrichment {
         rule_ids: Vec::new(),
         teams: Vec::new(),
@@ -137,7 +146,13 @@ pub fn enrich_alert(base_severity: &str, base_title: &str, last_event: &Value, r
             });
         }
         if !title_set {
-            if let Some(tpl) = rule.def.presentation.title.as_deref().filter(|s| !s.trim().is_empty()) {
+            if let Some(tpl) = rule
+                .def
+                .presentation
+                .title
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+            {
                 if let Ok(rendered) = condition::render_template(tpl, &ctx) {
                     if !rendered.trim().is_empty() {
                         out.title = rendered;
@@ -147,12 +162,24 @@ pub fn enrich_alert(base_severity: &str, base_title: &str, last_event: &Value, r
             }
         }
         if out.color.is_none() {
-            if let Some(c) = rule.def.presentation.color.as_deref().filter(|s| !s.trim().is_empty()) {
+            if let Some(c) = rule
+                .def
+                .presentation
+                .color
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+            {
                 out.color = Some(c.to_string());
             }
         }
         if !body_set {
-            if let Some(tpl) = rule.def.presentation.body.as_deref().filter(|s| !s.trim().is_empty()) {
+            if let Some(tpl) = rule
+                .def
+                .presentation
+                .body
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+            {
                 if let Ok(rendered) = condition::render_template(tpl, &ctx) {
                     out.body = rendered;
                     body_set = true;
@@ -188,10 +215,15 @@ mod tests {
 
     #[test]
     fn unit_enrich_alert_settlements_presentation_and_override() {
-        let rule: RuleDef = serde_json::from_str(include_str!("../../contracts/fixtures/config/rule.settlements.json")).unwrap();
+        let rule: RuleDef = serde_json::from_str(include_str!(
+            "../../contracts/fixtures/config/rule.settlements.json"
+        ))
+        .unwrap();
         let compiled = CompiledRule::from_def(rule).unwrap();
-        let alert: contracts::AlertChanged =
-            serde_json::from_str(include_str!("../../contracts/fixtures/topics/alerts.changed.json")).unwrap();
+        let alert: contracts::AlertChanged = serde_json::from_str(include_str!(
+            "../../contracts/fixtures/topics/alerts.changed.json"
+        ))
+        .unwrap();
         let last_event = serde_json::to_value(&alert.event).unwrap();
 
         let e = enrich_alert("error", &alert.event.title, &last_event, &[compiled]);
@@ -200,7 +232,10 @@ mod tests {
         assert_eq!(e.severity, "critical");
         assert_eq!(e.title, "WORKFLOW_FAILED order-settlement");
         assert_eq!(e.color.as_deref(), Some("red"));
-        assert_eq!(e.body, "Step validate-counterparty failed: Counterparty service did not respond in 5000 ms");
+        assert_eq!(
+            e.body,
+            "Step validate-counterparty failed: Counterparty service did not respond in 5000 ms"
+        );
         assert_eq!(e.fields.len(), 3);
         assert_eq!(e.fields[0]["path"], "raw.workflowId");
         assert_eq!(e.fields[0]["label"], "workflowId");
@@ -214,20 +249,29 @@ mod tests {
 
     #[test]
     fn unit_enrich_alert_unmatched_and_non_canonical_fallback() {
-        let rule: RuleDef = serde_json::from_str(include_str!("../../contracts/fixtures/config/rule.rates.json")).unwrap();
+        let rule: RuleDef = serde_json::from_str(include_str!(
+            "../../contracts/fixtures/config/rule.rates.json"
+        ))
+        .unwrap();
         let compiled = CompiledRule::from_def(rule).unwrap();
-        let alert: contracts::AlertChanged =
-            serde_json::from_str(include_str!("../../contracts/fixtures/topics/alerts.changed.json")).unwrap();
+        let alert: contracts::AlertChanged = serde_json::from_str(include_str!(
+            "../../contracts/fixtures/topics/alerts.changed.json"
+        ))
+        .unwrap();
         let last_event = serde_json::to_value(&alert.event).unwrap();
 
-        let e = enrich_alert("error", "base-title", &last_event, std::slice::from_ref(&compiled));
+        let e = enrich_alert(
+            "error",
+            "base-title",
+            &last_event,
+            std::slice::from_ref(&compiled),
+        );
         assert!(e.rule_ids.is_empty());
         assert!(e.teams.is_empty());
         assert_eq!(e.severity, "error");
         assert_eq!(e.title, "base-title");
         assert!(e.color.is_none());
 
-        // Niepełny JSON (jak w starszych wierszach testowych) nie psuje odpowiedzi.
         let e2 = enrich_alert("warning", "tytul", &json!({"title": "tytul"}), &[compiled]);
         assert!(e2.rule_ids.is_empty());
         assert_eq!(e2.severity, "warning");

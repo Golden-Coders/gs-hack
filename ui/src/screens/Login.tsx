@@ -1,4 +1,3 @@
-// Ekran logowania do systemu AlertHub (weryfikacja z zahashowanymi poświadczeniami w bazie Postgres).
 import { useState, type FormEvent } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";

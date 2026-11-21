@@ -28,10 +28,18 @@ pub fn producer(brokers: &str) -> anyhow::Result<FutureProducer> {
 }
 
 /// Wysyła wiadomość jako JSON i czeka na potwierdzenie brokera.
-pub async fn publish<T: Serialize>(producer: &FutureProducer, topic: &str, key: &str, message: &T) -> anyhow::Result<()> {
+pub async fn publish<T: Serialize>(
+    producer: &FutureProducer,
+    topic: &str,
+    key: &str,
+    message: &T,
+) -> anyhow::Result<()> {
     let payload = serde_json::to_vec(message).context("serializing kafka message")?;
     producer
-        .send(FutureRecord::to(topic).key(key).payload(&payload), Duration::from_secs(10))
+        .send(
+            FutureRecord::to(topic).key(key).payload(&payload),
+            Duration::from_secs(10),
+        )
         .await
         .map_err(|(e, _)| anyhow::anyhow!("publishing to {topic}: {e}"))?;
     Ok(())
@@ -54,10 +62,13 @@ pub fn consumer(brokers: &str, group: &str, topics: &[&str]) -> anyhow::Result<S
 /// Dekoduje payload wiadomości z JSON.
 pub fn decode<T: DeserializeOwned>(message: &BorrowedMessage<'_>) -> anyhow::Result<T> {
     let payload = message.payload().context("empty kafka message")?;
-    serde_json::from_slice(payload).with_context(|| format!("decoding message from {}", message.topic()))
+    serde_json::from_slice(payload)
+        .with_context(|| format!("decoding message from {}", message.topic()))
 }
 
 /// Zatwierdza offset przetworzonej wiadomości.
 pub fn commit(consumer: &StreamConsumer, message: &BorrowedMessage<'_>) -> anyhow::Result<()> {
-    consumer.commit_message(message, CommitMode::Async).context("committing offset")
+    consumer
+        .commit_message(message, CommitMode::Async)
+        .context("committing offset")
 }

@@ -1,6 +1,3 @@
-// Maksymalnie prosty, przyjazny ekran Mappingów:
-// - Lewa kolumna: Nowe nieobsłużone zdarzenia (UNMAPPED) + lista istniejących mappingów
-// - Prawa kolumna: Prosty, czysty formularz bez żargonu (JSONPath "$." dodawany automatycznie pod spodem)
 import { useCallback, useEffect, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
@@ -70,7 +67,6 @@ export default function Mappings() {
   });
   usePollWhenQuiet(refresh);
 
-  // Domyślnie wybierz pierwszy istniejący mapping (lub pierwszy UNMAPPED)
   useEffect(() => {
     if (selectedSchema !== null || isCreatingNew) return;
     if (mappings.length > 0) {

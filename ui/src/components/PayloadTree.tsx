@@ -1,5 +1,3 @@
-// Drzewo przykładowego payloadu z wyborem pól kliknięciem. Wielokrotnego użytku (edytor mappingów, edytor reguł).
-// Klik w liść woła `onSelect(ścieżka, wartość)`; `marks` pozwala oznaczyć pola już użyte (klucz = pathKey).
 import { useState } from "react";
 import Button from "@atlaskit/button/new";
 import { Pressable, Text } from "@atlaskit/primitives/compiled";

@@ -50,7 +50,12 @@ pub trait ChannelAdapter: Send + Sync {
 
 /// Formatuje treść SMS z dołączonym linkiem do alertu w UI (zgodnie z `openapi.yaml` i specyfikacją).
 pub fn format_sms_body(rendered: &Rendered) -> String {
-    match rendered.link.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+    match rendered
+        .link
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
         Some(link) => {
             if rendered.body.trim().is_empty() {
                 format!("{} {link}", rendered.title)
@@ -81,7 +86,12 @@ pub fn format_phone_body(rendered: &Rendered) -> String {
 
 /// Formatuje treść wiadomości e-mail (dołączając link na końcu, jeśli nie występuje w treści).
 pub fn format_email_body(rendered: &Rendered) -> String {
-    match rendered.link.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+    match rendered
+        .link
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
         Some(link) if !rendered.body.contains(link) => {
             if rendered.body.trim().is_empty() {
                 link.to_string()
@@ -92,10 +102,6 @@ pub fn format_email_body(rendered: &Rendered) -> String {
         _ => rendered.body.clone(),
     }
 }
-
-// ============================================================================
-// UiAdapter (Channel::Ui)
-// ============================================================================
 
 pub struct UiAdapter {
     backend: Arc<dyn DeliveryBackend>,
@@ -134,10 +140,6 @@ impl ChannelAdapter for UiAdapter {
         })
     }
 }
-
-// ============================================================================
-// SmsMockAdapter (Channel::Sms) & PhoneMockAdapter (Channel::Phone)
-// ============================================================================
 
 pub struct SmsMockAdapter {
     backend: Arc<dyn DeliveryBackend>,
@@ -242,7 +244,9 @@ impl ChannelAdapter for PhoneMockAdapter {
                     SendError::Transient("phone channel availability check failed".to_string())
                 })?;
             if !available {
-                return Err(SendError::Transient("phone gateway unavailable".to_string()));
+                return Err(SendError::Transient(
+                    "phone gateway unavailable".to_string(),
+                ));
             }
 
             let recipient = to
@@ -283,10 +287,6 @@ impl ChannelAdapter for PhoneMockAdapter {
     }
 }
 
-// ============================================================================
-// EmailAdapter (Channel::Email) -> SMTP (Mailpit)
-// ============================================================================
-
 pub type BoxedAsyncRead = Pin<Box<dyn AsyncRead + Send>>;
 pub type BoxedAsyncWrite = Pin<Box<dyn AsyncWrite + Send>>;
 
@@ -315,7 +315,10 @@ impl SmtpConnector for TcpSmtpConnector {
                     SendError::Transient("smtp connect failed".to_string())
                 })?;
             let (r, w) = stream.into_split();
-            Ok((Box::pin(r) as BoxedAsyncRead, Box::pin(w) as BoxedAsyncWrite))
+            Ok((
+                Box::pin(r) as BoxedAsyncRead,
+                Box::pin(w) as BoxedAsyncWrite,
+            ))
         })
     }
 }
@@ -338,23 +341,36 @@ impl PooledSmtpSession {
         let (code, greeting) = read_smtp_response(&mut reader).await?;
         if code != 220 {
             tracing::warn!(code, response = %greeting, "unexpected smtp greeting");
-            return Err(SendError::Transient(format!("unexpected smtp greeting (code {code})")));
+            return Err(SendError::Transient(format!(
+                "unexpected smtp greeting (code {code})"
+            )));
         }
 
-        writer.write_all(b"EHLO alerting.local\r\n").await.map_err(|e| {
-            tracing::warn!(error = %e, "smtp write EHLO failed");
-            SendError::Transient("smtp write EHLO failed".to_string())
-        })?;
+        writer
+            .write_all(b"EHLO alerting.local\r\n")
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "smtp write EHLO failed");
+                SendError::Transient("smtp write EHLO failed".to_string())
+            })?;
         let (code, resp) = read_smtp_response(&mut reader).await?;
         if code != 250 {
             tracing::warn!(code, response = %resp, "smtp EHLO rejected");
-            return Err(SendError::Transient(format!("smtp EHLO rejected (code {code})")));
+            return Err(SendError::Transient(format!(
+                "smtp EHLO rejected (code {code})"
+            )));
         }
 
         Ok(Self { reader, writer })
     }
 
-    async fn send_message(&mut self, from: &str, to: &str, subject: &str, body: &str) -> Result<String, SendError> {
+    async fn send_message(
+        &mut self,
+        from: &str,
+        to: &str,
+        subject: &str,
+        body: &str,
+    ) -> Result<String, SendError> {
         self.writer
             .write_all(format!("MAIL FROM:<{from}>\r\n").as_bytes())
             .await
@@ -365,7 +381,9 @@ impl PooledSmtpSession {
         let (code, resp) = read_smtp_response(&mut self.reader).await?;
         if code != 250 {
             tracing::warn!(code, response = %resp, "smtp MAIL FROM rejected");
-            return Err(SendError::Transient(format!("smtp MAIL FROM rejected (code {code})")));
+            return Err(SendError::Transient(format!(
+                "smtp MAIL FROM rejected (code {code})"
+            )));
         }
 
         self.writer
@@ -378,11 +396,15 @@ impl PooledSmtpSession {
         let (code, resp) = read_smtp_response(&mut self.reader).await?;
         if (500..600).contains(&code) {
             tracing::warn!(code, response = %resp, "smtp recipient rejected");
-            return Err(SendError::Permanent(format!("smtp recipient rejected (code {code})")));
+            return Err(SendError::Permanent(format!(
+                "smtp recipient rejected (code {code})"
+            )));
         }
         if code != 250 && code != 251 {
             tracing::warn!(code, response = %resp, "smtp RCPT TO failed");
-            return Err(SendError::Transient(format!("smtp RCPT TO failed (code {code})")));
+            return Err(SendError::Transient(format!(
+                "smtp RCPT TO failed (code {code})"
+            )));
         }
 
         self.writer.write_all(b"DATA\r\n").await.map_err(|e| {
@@ -392,7 +414,9 @@ impl PooledSmtpSession {
         let (code, resp) = read_smtp_response(&mut self.reader).await?;
         if code != 354 {
             tracing::warn!(code, response = %resp, "smtp DATA rejected");
-            return Err(SendError::Transient(format!("smtp DATA rejected (code {code})")));
+            return Err(SendError::Transient(format!(
+                "smtp DATA rejected (code {code})"
+            )));
         }
 
         let clean_subject = subject.replace(['\r', '\n'], " ");
@@ -409,14 +433,19 @@ impl PooledSmtpSession {
         }
         payload.push_str(".\r\n");
 
-        self.writer.write_all(payload.as_bytes()).await.map_err(|e| {
-            tracing::warn!(error = %e, "smtp write body failed");
-            SendError::Transient("smtp write body failed".to_string())
-        })?;
+        self.writer
+            .write_all(payload.as_bytes())
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "smtp write body failed");
+                SendError::Transient("smtp write body failed".to_string())
+            })?;
         let (code, resp) = read_smtp_response(&mut self.reader).await?;
         if code != 250 {
             tracing::warn!(code, response = %resp, "smtp message rejected");
-            return Err(SendError::Transient(format!("smtp message rejected (code {code})")));
+            return Err(SendError::Transient(format!(
+                "smtp message rejected (code {code})"
+            )));
         }
 
         Ok("smtp:250".to_string())
@@ -436,7 +465,11 @@ pub struct EmailAdapter {
 }
 
 impl EmailAdapter {
-    pub fn new(backend: Arc<dyn DeliveryBackend>, smtp_host: impl Into<String>, smtp_port: u16) -> Self {
+    pub fn new(
+        backend: Arc<dyn DeliveryBackend>,
+        smtp_host: impl Into<String>,
+        smtp_port: u16,
+    ) -> Self {
         Self {
             backend,
             connector: Arc::new(TcpSmtpConnector {
@@ -449,7 +482,10 @@ impl EmailAdapter {
         }
     }
 
-    pub fn with_connector(backend: Arc<dyn DeliveryBackend>, connector: Arc<dyn SmtpConnector>) -> Self {
+    pub fn with_connector(
+        backend: Arc<dyn DeliveryBackend>,
+        connector: Arc<dyn SmtpConnector>,
+    ) -> Self {
         Self {
             backend,
             connector,
@@ -459,8 +495,12 @@ impl EmailAdapter {
         }
     }
 
-    async fn send_pooled(&self, recipient: &str, subject: &str, body: &str) -> Result<String, SendError> {
-        // Najpierw próbujemy reużyć bezczynną sesję z puli (bez narzutu TCP + EHLO).
+    async fn send_pooled(
+        &self,
+        recipient: &str,
+        subject: &str,
+        body: &str,
+    ) -> Result<String, SendError> {
         let pooled = { self.pool.lock().await.pop() };
         if let Some(mut session) = pooled {
             match tokio::time::timeout(
@@ -474,20 +514,21 @@ impl EmailAdapter {
                     return Ok(res);
                 }
                 Ok(Err(err @ SendError::Permanent(_))) => {
-                    // Błąd trwały (np. odrzucony adres) nie oznacza martwego połączenia — zamykamy czysto.
                     session.quit().await;
                     return Err(err);
                 }
                 Ok(Err(SendError::Transient(_))) | Err(_) => {
-                    // Sesja z puli mogła wygasnąć (np. restart Mailpit lub idle timeout) — ponawiamy raz na nowym połączeniu.
                     drop(session);
                 }
             }
         }
 
-        let mut session = tokio::time::timeout(Duration::from_secs(10), PooledSmtpSession::open(self.connector.as_ref()))
-            .await
-            .map_err(|_| SendError::Transient("smtp connect/ehlo timed out".to_string()))??;
+        let mut session = tokio::time::timeout(
+            Duration::from_secs(10),
+            PooledSmtpSession::open(self.connector.as_ref()),
+        )
+        .await
+        .map_err(|_| SendError::Transient("smtp connect/ehlo timed out".to_string()))??;
 
         let res = tokio::time::timeout(
             Duration::from_secs(10),
@@ -546,7 +587,9 @@ async fn read_bounded_smtp_line<R: AsyncRead + Unpin>(
     }
     if buf.len() > max_bytes {
         tracing::warn!(max_bytes, "smtp response line exceeded max bytes");
-        return Err(SendError::Transient("smtp response line too long".to_string()));
+        return Err(SendError::Transient(
+            "smtp response line too long".to_string(),
+        ));
     }
     if buf.ends_with(b"\n") {
         buf.pop();
@@ -561,7 +604,9 @@ async fn read_bounded_smtp_line<R: AsyncRead + Unpin>(
     Ok(Some(line))
 }
 
-async fn read_smtp_response<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> Result<(u16, String), SendError> {
+async fn read_smtp_response<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+) -> Result<(u16, String), SendError> {
     let mut full = String::new();
     let mut line_count: usize = 0;
 
@@ -572,12 +617,16 @@ async fn read_smtp_response<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> 
                 max_lines = MAX_SMTP_CONTINUATION_LINES,
                 "smtp response exceeded max continuation lines"
             );
-            return Err(SendError::Transient("smtp response too many lines".to_string()));
+            return Err(SendError::Transient(
+                "smtp response too many lines".to_string(),
+            ));
         }
 
         let line = read_bounded_smtp_line(reader, MAX_SMTP_LINE_BYTES)
             .await?
-            .ok_or_else(|| SendError::Transient("smtp connection closed unexpectedly".to_string()))?;
+            .ok_or_else(|| {
+                SendError::Transient("smtp connection closed unexpectedly".to_string())
+            })?;
 
         let added_bytes = line.len() + usize::from(!full.is_empty());
         if full.len() + added_bytes > MAX_SMTP_RESPONSE_BYTES {
@@ -629,7 +678,9 @@ impl ChannelAdapter for EmailAdapter {
                     SendError::Transient("email channel availability check failed".to_string())
                 })?;
             if !available {
-                return Err(SendError::Transient("email channel unavailable".to_string()));
+                return Err(SendError::Transient(
+                    "email channel unavailable".to_string(),
+                ));
             }
 
             let raw_to = to
@@ -652,7 +703,10 @@ mod tests {
 
     #[test]
     fn validate_email_address_rejects_forbidden_chars_and_accepts_valid() {
-        assert_eq!(validate_email_address("alice@example.com").unwrap(), "alice@example.com");
+        assert_eq!(
+            validate_email_address("alice@example.com").unwrap(),
+            "alice@example.com"
+        );
         assert_eq!(
             validate_email_address("  bob+alerts@sub.example.org  ").unwrap(),
             "bob+alerts@sub.example.org"
@@ -679,8 +733,12 @@ mod tests {
         ];
 
         for addr in invalid_cases {
-            let err = validate_email_address(addr).expect_err(&format!("expected '{addr}' to be rejected"));
-            assert_eq!(err, SendError::Permanent("invalid email address".to_string()));
+            let err = validate_email_address(addr)
+                .expect_err(&format!("expected '{addr}' to be rejected"));
+            assert_eq!(
+                err,
+                SendError::Permanent("invalid email address".to_string())
+            );
         }
     }
 
@@ -694,7 +752,6 @@ mod tests {
             let mut reader = BufReader::new(server_r);
             let mut line = String::new();
 
-            // Read MAIL FROM, RCPT TO, DATA
             for expected_reply in [
                 b"250 Ok\r\n".as_slice(),
                 b"250 Ok\r\n".as_slice(),
@@ -705,7 +762,6 @@ mod tests {
                 server_w.write_all(expected_reply).await.unwrap();
             }
 
-            // Capture raw wire bytes until the real terminator `\r\n.\r\n`
             let mut raw_data = Vec::new();
             let mut chunk = [0u8; 512];
             loop {
@@ -727,7 +783,12 @@ mod tests {
 
         let malicious_body = "hello\r.\rMAIL FROM:<attacker@evil.com>\r\n.leading-dot\n..two-dots";
         let res = session
-            .send_message("alerts@alerting.local", "jan@example.com", "Test", malicious_body)
+            .send_message(
+                "alerts@alerting.local",
+                "jan@example.com",
+                "Test",
+                malicious_body,
+            )
             .await
             .unwrap();
         assert_eq!(res, "smtp:250");
@@ -735,7 +796,6 @@ mod tests {
         let raw_wire = server_task.await.unwrap();
         let wire_str = String::from_utf8(raw_wire).expect("valid utf-8 wire payload");
 
-        // Every '\r' on the wire MUST be immediately followed by '\n' (no bare CR).
         for (idx, b) in wire_str.as_bytes().iter().enumerate() {
             if *b == b'\r' {
                 assert_eq!(
@@ -746,7 +806,6 @@ mod tests {
             }
         }
 
-        // The bare-CR injected `.` line and `.leading-dot` line must both be dot-stuffed.
         assert!(wire_str.contains("\r\nhello\r\n..\r\nMAIL FROM:<attacker@evil.com>\r\n..leading-dot\r\n...two-dots\r\n.\r\n"));
     }
 
@@ -755,7 +814,10 @@ mod tests {
         let oversized = format!("250 {}\r\n", "A".repeat(MAX_SMTP_LINE_BYTES + 10));
         let mut reader = BufReader::new(oversized.as_bytes());
         let err = read_smtp_response(&mut reader).await.unwrap_err();
-        assert_eq!(err, SendError::Transient("smtp response line too long".to_string()));
+        assert_eq!(
+            err,
+            SendError::Transient("smtp response line too long".to_string())
+        );
     }
 
     #[tokio::test]
@@ -768,13 +830,14 @@ mod tests {
 
         let mut reader = BufReader::new(payload.as_bytes());
         let err = read_smtp_response(&mut reader).await.unwrap_err();
-        assert_eq!(err, SendError::Transient("smtp response too many lines".to_string()));
+        assert_eq!(
+            err,
+            SendError::Transient("smtp response too many lines".to_string())
+        );
     }
 
     #[tokio::test]
     async fn read_smtp_response_rejects_oversized_total_response() {
-        // Each line is 2000 bytes (under MAX_SMTP_LINE_BYTES=4096), 20 lines = ~40KB (> 32768)
-        // while staying under MAX_SMTP_CONTINUATION_LINES=64.
         let mut payload = String::new();
         for _ in 0..19 {
             payload.push_str(&format!("250-{}\r\n", "B".repeat(2_000)));
@@ -783,7 +846,10 @@ mod tests {
 
         let mut reader = BufReader::new(payload.as_bytes());
         let err = read_smtp_response(&mut reader).await.unwrap_err();
-        assert_eq!(err, SendError::Transient("smtp response too large".to_string()));
+        assert_eq!(
+            err,
+            SendError::Transient("smtp response too large".to_string())
+        );
     }
 
     #[tokio::test]

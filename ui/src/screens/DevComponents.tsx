@@ -1,5 +1,3 @@
-// Przegląd wspólnych komponentów (tasks.md 13.3) na danych z API – na mocku to przykłady z fixtures OpenAPI.
-// Dostępne pod /dev/components, poza menu.
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
 import { useEffect, useState } from "react";
@@ -17,7 +15,6 @@ const STEPS: Schemas["StepStatus"][] = [
   "pending", "running", "succeeded", "failed", "waiting_approval", "waiting_manual", "skipped", "rejected",
 ];
 
-// Markdown z konfiguracji jest niezaufany: HTML i linki javascript: nie mogą się wykonać.
 const UNSAFE_MD = "**HTML i skrypty są wyłączone:** <img src=x onerror=alert(1)> [link](javascript:alert(1))";
 
 export default function DevComponents() {

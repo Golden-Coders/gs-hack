@@ -9,7 +9,9 @@ use chrono::Utc;
 use contracts::{Channel, DeliveryRequest, DeliveryStatus, Rendered, UiEvent, UiEventKind};
 use uuid::Uuid;
 
-use crate::adapters::{ChannelAdapter, EmailAdapter, PhoneMockAdapter, SendError, SmsMockAdapter, UiAdapter};
+use crate::adapters::{
+    ChannelAdapter, EmailAdapter, PhoneMockAdapter, SendError, SmsMockAdapter, UiAdapter,
+};
 use crate::store::{ClaimOutcome, DeliveryBackend, DeliveryRecord, UpsertDelivery};
 
 /// Domyślne odstępy backoffu między próbami (1 s, 5 s, 30 s) zgodnie z design D8.
@@ -55,7 +57,10 @@ impl SenderConfig {
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| DEFAULT_BACKOFF_MS.to_vec());
 
-        Self { max_attempts, backoff_ms }
+        Self {
+            max_attempts,
+            backoff_ms,
+        }
     }
 
     /// Zwraca opóźnienie przed kolejną próbą po nieudanej próbie numer `attempts_done` (1-based).
@@ -114,7 +119,10 @@ impl SenderEngine {
             Arc::new(EmailAdapter::new(backend.clone(), smtp_host, smtp_port)),
         );
         adapters.insert(Channel::Sms, Arc::new(SmsMockAdapter::new(backend.clone())));
-        adapters.insert(Channel::Phone, Arc::new(PhoneMockAdapter::new(backend.clone())));
+        adapters.insert(
+            Channel::Phone,
+            Arc::new(PhoneMockAdapter::new(backend.clone())),
+        );
 
         Self {
             backend,
@@ -166,7 +174,10 @@ impl SenderEngine {
     /// - Przy wyczerpaniu prób lub błędzie `Permanent`: jeśli w `chain` jest kolejny kanał,
     ///   ustawia `status = fallback` na bieżącym kanale i od razu przechodzi do kolejnego kanału;
     ///   gdy zawiodą wszystkie kanały w łańcuchu, ustawia `status = dlq` i publikuje na `deliveries.dlq`.
-    pub async fn process_request(&self, mut req: DeliveryRequest) -> anyhow::Result<ProcessOutcome> {
+    pub async fn process_request(
+        &self,
+        mut req: DeliveryRequest,
+    ) -> anyhow::Result<ProcessOutcome> {
         if req.chain.is_empty() || req.chain_index >= req.chain.len() {
             return Ok(ProcessOutcome::EmptyChain);
         }
@@ -176,13 +187,11 @@ impl SenderEngine {
                 return Ok(ProcessOutcome::EmptyChain);
             };
 
-            let idem_key = contracts::keys::delivery(req.alert_id, req.episode, &req.person_id, channel);
+            let idem_key =
+                contracts::keys::delivery(req.alert_id, req.episode, &req.person_id, channel);
 
             let attempt_num = req.attempt + 1;
 
-            // 1. Atomowe sprawdzenie idempotencji i przejęcie klucza (design D9 + hardening 6.2):
-            // Zapobiega wyścigowi między `sender` i `sender-retry` (lub dwiema instancjami)
-            // próbującymi równocześnie wysłać ten sam `(alert_id, episode, person_id, channel)`.
             let pending_record = match self
                 .backend
                 .claim_delivery(UpsertDelivery {
@@ -234,10 +243,11 @@ impl SenderEngine {
                 });
             let to = req.contacts.get(&channel).map(String::as_str);
 
-            // 3. Wywołanie adaptera kanału.
             let send_result = match self.adapters.get(&channel) {
                 Some(adapter) => adapter.send(&req, &rendered, to).await,
-                None => Err(SendError::Permanent(format!("no adapter for channel {channel:?}"))),
+                None => Err(SendError::Permanent(format!(
+                    "no adapter for channel {channel:?}"
+                ))),
             };
 
             match send_result {
@@ -265,8 +275,8 @@ impl SenderEngine {
 
                 Err(SendError::Transient(err_msg)) if attempt_num < self.config.max_attempts => {
                     let delay = self.config.backoff_for_attempt(attempt_num);
-                    let chrono_delay =
-                        chrono::Duration::from_std(delay).unwrap_or_else(|_| chrono::Duration::seconds(1));
+                    let chrono_delay = chrono::Duration::from_std(delay)
+                        .unwrap_or_else(|_| chrono::Duration::seconds(1));
                     let not_before = Utc::now() + chrono_delay;
 
                     req.attempt = attempt_num;
@@ -301,8 +311,8 @@ impl SenderEngine {
                     req.not_before = None;
                     req.last_error = Some(err_msg.clone());
 
-                    if let Some(next_idx) = next_distinct_channel_index(&req.chain, req.chain_index) {
-                        // Przejście do kolejnego kanału w łańcuchu fallbacku.
+                    if let Some(next_idx) = next_distinct_channel_index(&req.chain, req.chain_index)
+                    {
                         let fallback_record = self
                             .backend
                             .upsert_delivery(UpsertDelivery {
@@ -325,7 +335,6 @@ impl SenderEngine {
                         req.last_error = None;
                         continue;
                     } else {
-                        // Wszystkie kanały z łańcucha (łącznie z ostatnim) zawiodły -> DLQ.
                         let dlq_record = self
                             .backend
                             .upsert_delivery(UpsertDelivery {
@@ -355,8 +364,12 @@ impl SenderEngine {
     /// Przygotowuje i zleca ponowne wysłanie nieudanego dostarczenia (`POST /deliveries/{id}/resend`).
     ///
     /// Zwraca `Ok(None)`, jeśli dostarczenie o podanym `delivery_id` nie istnieje.
-    pub async fn resend_delivery(&self, delivery_id: Uuid) -> anyhow::Result<Option<DeliveryRequest>> {
-        let Some((record, mut req)) = self.backend.get_delivery_with_request(delivery_id).await? else {
+    pub async fn resend_delivery(
+        &self,
+        delivery_id: Uuid,
+    ) -> anyhow::Result<Option<DeliveryRequest>> {
+        let Some((record, mut req)) = self.backend.get_delivery_with_request(delivery_id).await?
+        else {
             return Ok(None);
         };
 
@@ -368,7 +381,12 @@ impl SenderEngine {
         req.not_before = None;
         req.last_error = None;
 
-        let idem_key = contracts::keys::delivery(record.alert_id, record.episode, &record.person_id, record.channel);
+        let idem_key = contracts::keys::delivery(
+            record.alert_id,
+            record.episode,
+            &record.person_id,
+            record.channel,
+        );
         let updated = self
             .backend
             .upsert_delivery(UpsertDelivery {

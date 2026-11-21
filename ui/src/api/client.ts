@@ -1,5 +1,3 @@
-// Klient API generowany z contracts/openapi.yaml (typy: `npm run gen:api`).
-// Adres zależy od wybranego backendu (mock Prism :4010 albo gateway api :8080) – patrz session.ts.
 import createClient from "openapi-fetch";
 import type { paths, components } from "./schema";
 import { API_URL, getPersonId, getSessionToken } from "./session";
@@ -13,7 +11,6 @@ export const api = createClient<paths>({
   credentials: "include",
 });
 
-// Używaj serwerowego tokenu sesyjnego operatora (gdy zalogowany) zamiast gołego tokenu współdzielonego.
 api.use({
   onRequest({ request }) {
     const sess = getSessionToken();

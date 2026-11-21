@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use contracts::{
-    ActionDef, Approval, Automation, Condition, Op, Presentation, Recipient, RuleDef, RunbookDef, RunbookKind,
-    Severity, StepDef, StepType,
+    ActionDef, Approval, Automation, Condition, Op, Presentation, Recipient, RuleDef, RunbookDef,
+    RunbookKind, Severity, StepDef, StepType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -126,9 +126,16 @@ pub trait RunbookAuthor: Send + Sync {
         }
     }
 
-    fn draft<'a>(&'a self, req: &'a DraftRequest, actions: &'a [ActionDef]) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>>;
+    fn draft<'a>(
+        &'a self,
+        req: &'a DraftRequest,
+        actions: &'a [ActionDef],
+    ) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>>;
 
-    fn draft_rule<'a>(&'a self, _req: &'a RuleDraftRequest) -> BoxFuture<'a, Result<RuleDraftOutcome, AuthorError>> {
+    fn draft_rule<'a>(
+        &'a self,
+        _req: &'a RuleDraftRequest,
+    ) -> BoxFuture<'a, Result<RuleDraftOutcome, AuthorError>> {
         Box::pin(async { Err(AuthorError::Disabled) })
     }
 }
@@ -141,7 +148,11 @@ impl RunbookAuthor for NoAuthor {
         "none"
     }
 
-    fn draft<'a>(&'a self, _req: &'a DraftRequest, _actions: &'a [ActionDef]) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>> {
+    fn draft<'a>(
+        &'a self,
+        _req: &'a DraftRequest,
+        _actions: &'a [ActionDef],
+    ) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>> {
         Box::pin(async { Err(AuthorError::Disabled) })
     }
 }
@@ -157,8 +168,16 @@ pub struct OpenAiCompatAuthor {
 }
 
 impl OpenAiCompatAuthor {
-    pub fn new(provider: &'static str, base_url: String, model: String, api_key: Option<String>, timeout_ms: u64) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder().timeout(Duration::from_millis(timeout_ms)).build()?;
+    pub fn new(
+        provider: &'static str,
+        base_url: String,
+        model: String,
+        api_key: Option<String>,
+        timeout_ms: u64,
+    ) -> anyhow::Result<Self> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(timeout_ms))
+            .build()?;
         Ok(Self {
             provider,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -203,7 +222,12 @@ impl OpenAiCompatAuthor {
         Ok((status, body))
     }
 
-    async fn call_chat_completions(&self, system_prompt: &str, user_prompt: &str, response_format: Value) -> Result<(u16, String), AuthorError> {
+    async fn call_chat_completions(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        response_format: Value,
+    ) -> Result<(u16, String), AuthorError> {
         let payload = json!({
             "model": self.model,
             "temperature": 0.0,
@@ -216,9 +240,15 @@ impl OpenAiCompatAuthor {
         self.call_chat_payload(&payload).await
     }
 
-    async fn draft_inner(&self, req: &DraftRequest, actions: &[ActionDef]) -> Result<DraftOutcome, AuthorError> {
+    async fn draft_inner(
+        &self,
+        req: &DraftRequest,
+        actions: &[ActionDef],
+    ) -> Result<DraftOutcome, AuthorError> {
         if req.text.trim().is_empty() {
-            return Err(AuthorError::InvalidInput("treść runbooka nie może być pusta".into()));
+            return Err(AuthorError::InvalidInput(
+                "treść runbooka nie może być pusta".into(),
+            ));
         }
 
         let redacted = redact::redact(&req.text);
@@ -255,7 +285,6 @@ impl OpenAiCompatAuthor {
             )
             .await?;
 
-        // Fallback dla serwerów OpenAI-compatible (np. Ollama) bez obsługi `json_schema` lub gdy zwróciły niepełny JSON.
         let mut parsed_opt: Option<LlmDraftPayload> = if (200..300).contains(&status) {
             extract_message_content(&body)
                 .ok()
@@ -267,26 +296,35 @@ impl OpenAiCompatAuthor {
 
         if parsed_opt.is_none() {
             let (s2, b2) = self
-                .call_chat_completions(&system_prompt, &user_prompt, json!({ "type": "json_object" }))
+                .call_chat_completions(
+                    &system_prompt,
+                    &user_prompt,
+                    json!({ "type": "json_object" }),
+                )
                 .await?;
             status = s2;
             body = b2;
             if (200..300).contains(&status) {
                 let content = extract_message_content(&body)?;
                 let cleaned = strip_code_fences(&content);
-                parsed_opt = Some(
-                    serde_json::from_str(cleaned)
-                        .map_err(|e| AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu: {e}")))?,
-                );
+                parsed_opt = Some(serde_json::from_str(cleaned).map_err(|e| {
+                    AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu: {e}"))
+                })?);
             }
         }
 
         if !(200..300).contains(&status) {
-            tracing::warn!(status, provider = self.provider, "LLM upstream returned non-2xx status");
+            tracing::warn!(
+                status,
+                provider = self.provider,
+                "LLM upstream returned non-2xx status"
+            );
             return Err(AuthorError::Upstream(format!("HTTP {status}")));
         }
 
-        let parsed = parsed_opt.ok_or_else(|| AuthorError::InvalidResponse("model nie zwrócił poprawnego szkicu".into()))?;
+        let parsed = parsed_opt.ok_or_else(|| {
+            AuthorError::InvalidResponse("model nie zwrócił poprawnego szkicu".into())
+        })?;
 
         let (draft, warnings) = build_and_classify_draft(req, parsed, &registry)?;
         let yaml = render_runbook_yaml(&draft);
@@ -300,9 +338,14 @@ impl OpenAiCompatAuthor {
         })
     }
 
-    async fn draft_rule_inner(&self, req: &RuleDraftRequest) -> Result<RuleDraftOutcome, AuthorError> {
+    async fn draft_rule_inner(
+        &self,
+        req: &RuleDraftRequest,
+    ) -> Result<RuleDraftOutcome, AuthorError> {
         if req.prompt.trim().is_empty() {
-            return Err(AuthorError::InvalidInput("opis reguły nie może być pusty".into()));
+            return Err(AuthorError::InvalidInput(
+                "opis reguły nie może być pusty".into(),
+            ));
         }
 
         let teams_list = req
@@ -320,13 +363,25 @@ impl OpenAiCompatAuthor {
         let rules_list = req
             .existing_rules
             .iter()
-            .map(|r| format!("- id=\"{}\" (nazwa: \"{}\", priorytet: {:?})", r.id, r.name, r.severity_override))
+            .map(|r| {
+                format!(
+                    "- id=\"{}\" (nazwa: \"{}\", priorytet: {:?})",
+                    r.id, r.name, r.severity_override
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let actions_list = req
             .available_actions
             .iter()
-            .map(|a| format!("- `{}` ({:?}): {}", a.name, a.risk, a.description.as_deref().unwrap_or("")))
+            .map(|a| {
+                format!(
+                    "- `{}` ({:?}): {}",
+                    a.name,
+                    a.risk,
+                    a.description.as_deref().unwrap_or("")
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let fields_list = req.available_fields.join(", ");
@@ -373,7 +428,6 @@ impl OpenAiCompatAuthor {
         ];
         let mut executed_tools: Vec<String> = Vec::new();
 
-        // Pętla obsługi tool-calli (maksymalnie 3 tury: np. pobranie kontekstu -> finalny tool call).
         for _turn in 0..3 {
             let payload = json!({
                 "model": self.model,
@@ -388,13 +442,18 @@ impl OpenAiCompatAuthor {
                 break;
             }
 
-            let v: Value = serde_json::from_str(&body)
-                .map_err(|e| AuthorError::InvalidResponse(format!("odpowiedź HTTP nie jest JSON-em: {e}")))?;
+            let v: Value = serde_json::from_str(&body).map_err(|e| {
+                AuthorError::InvalidResponse(format!("odpowiedź HTTP nie jest JSON-em: {e}"))
+            })?;
             let Some(msg) = v.pointer("/choices/0/message") else {
                 break;
             };
 
-            if let Some(tool_calls) = msg.get("tool_calls").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+            if let Some(tool_calls) = msg
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .filter(|a| !a.is_empty())
+            {
                 messages.push(msg.clone());
 
                 for tc in tool_calls {
@@ -404,7 +463,10 @@ impl OpenAiCompatAuthor {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .trim();
-                    let raw_args = tc.pointer("/function/arguments").cloned().unwrap_or(Value::Null);
+                    let raw_args = tc
+                        .pointer("/function/arguments")
+                        .cloned()
+                        .unwrap_or(Value::Null);
                     let args_val: Value = match &raw_args {
                         Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
                         other => other.clone(),
@@ -416,11 +478,15 @@ impl OpenAiCompatAuthor {
 
                     match fn_name {
                         "create_or_update_rule" => {
-                            let parsed: LlmRuleDraftPayload = serde_json::from_value(args_val.clone()).unwrap_or_default();
+                            let parsed: LlmRuleDraftPayload =
+                                serde_json::from_value(args_val.clone()).unwrap_or_default();
                             let draft = sanitize_rule_draft(req, parsed);
                             return Ok(RuleDraftOutcome {
                                 tool_call: "create_or_update_rule".into(),
-                                message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+                                message: Some(format!(
+                                    "Wywołano tool: create_or_update_rule ({})",
+                                    draft.name
+                                )),
                                 draft: Some(draft),
                                 target_rule_id: None,
                                 executed_tools,
@@ -441,9 +507,9 @@ impl OpenAiCompatAuthor {
                         }
                         "select_rule" => {
                             let rule_id = resolve_target_rule_id(req, &args_val);
-                            let found = rule_id
-                                .as_deref()
-                                .and_then(|id| req.existing_rules.iter().find(|r| r.id == id).cloned());
+                            let found = rule_id.as_deref().and_then(|id| {
+                                req.existing_rules.iter().find(|r| r.id == id).cloned()
+                            });
                             return Ok(RuleDraftOutcome {
                                 tool_call: "select_rule".into(),
                                 message: Some(format!(
@@ -509,9 +575,9 @@ impl OpenAiCompatAuthor {
                             }));
                         }
                         other_action => {
-                            // Jeśli model wywołał bezpośrednio akcję z rejestru (np. escalate, notify, restart_service),
-                            // budujemy regułę odpowiadającą temu wywołaniu lub zwracamy informację o tool-callu.
-                            let mut payload = serde_json::from_value::<LlmRuleDraftPayload>(args_val.clone()).unwrap_or_default();
+                            let mut payload =
+                                serde_json::from_value::<LlmRuleDraftPayload>(args_val.clone())
+                                    .unwrap_or_default();
                             if payload.name.trim().is_empty() {
                                 payload.name = format!("Reguła: {other_action}");
                             }
@@ -539,7 +605,9 @@ impl OpenAiCompatAuthor {
                             let draft = sanitize_rule_draft(req, payload);
                             return Ok(RuleDraftOutcome {
                                 tool_call: other_action.to_string(),
-                                message: Some(format!("Wywołano tool z rejestru akcji: {other_action}")),
+                                message: Some(format!(
+                                    "Wywołano tool z rejestru akcji: {other_action}"
+                                )),
                                 draft: Some(draft),
                                 target_rule_id: None,
                                 executed_tools,
@@ -550,20 +618,26 @@ impl OpenAiCompatAuthor {
                 continue;
             }
 
-            // Jeśli model odpowiedział JSON-em w treści wiadomości zamiast natywnego pola `tool_calls`:
             if let Some(content) = msg.get("content").and_then(Value::as_str) {
                 let cleaned = strip_code_fences(content);
                 if let Ok(parsed_tc) = serde_json::from_str::<Value>(cleaned) {
-                    if let Some(outcome) = try_parse_inline_tool_call(req, &parsed_tc, &mut executed_tools) {
+                    if let Some(outcome) =
+                        try_parse_inline_tool_call(req, &parsed_tc, &mut executed_tools)
+                    {
                         return Ok(outcome);
                     }
-                    if let Ok(parsed_rule) = serde_json::from_value::<LlmRuleDraftPayload>(parsed_tc) {
+                    if let Ok(parsed_rule) =
+                        serde_json::from_value::<LlmRuleDraftPayload>(parsed_tc)
+                    {
                         if !parsed_rule.name.is_empty() || !parsed_rule.conditions.is_empty() {
                             executed_tools.push("create_or_update_rule".into());
                             let draft = sanitize_rule_draft(req, parsed_rule);
                             return Ok(RuleDraftOutcome {
                                 tool_call: "create_or_update_rule".into(),
-                                message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+                                message: Some(format!(
+                                    "Wywołano tool: create_or_update_rule ({})",
+                                    draft.name
+                                )),
                                 draft: Some(draft),
                                 target_rule_id: None,
                                 executed_tools,
@@ -575,14 +649,21 @@ impl OpenAiCompatAuthor {
             break;
         }
 
-        // Fallback: wymuszenie odpowiedzi JSON `create_or_update_rule`
         let user_prompt = format!("Opis reguły od użytkownika:\n{}", req.prompt.trim());
         let (status, body) = self
-            .call_chat_completions(&system_prompt, &user_prompt, json!({ "type": "json_object" }))
+            .call_chat_completions(
+                &system_prompt,
+                &user_prompt,
+                json!({ "type": "json_object" }),
+            )
             .await?;
 
         if !(200..300).contains(&status) {
-            tracing::warn!(status, provider = self.provider, "LLM upstream returned non-2xx status on draft_rule");
+            tracing::warn!(
+                status,
+                provider = self.provider,
+                "LLM upstream returned non-2xx status on draft_rule"
+            );
             return Err(AuthorError::Upstream(format!("HTTP {status}")));
         }
 
@@ -593,14 +674,18 @@ impl OpenAiCompatAuthor {
                 return Ok(outcome);
             }
         }
-        let parsed: LlmRuleDraftPayload = serde_json::from_str(cleaned)
-            .map_err(|e| AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu reguły: {e}")))?;
+        let parsed: LlmRuleDraftPayload = serde_json::from_str(cleaned).map_err(|e| {
+            AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu reguły: {e}"))
+        })?;
 
         executed_tools.push("create_or_update_rule".into());
         let draft = sanitize_rule_draft(req, parsed);
         Ok(RuleDraftOutcome {
             tool_call: "create_or_update_rule".into(),
-            message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+            message: Some(format!(
+                "Wywołano tool: create_or_update_rule ({})",
+                draft.name
+            )),
             draft: Some(draft),
             target_rule_id: None,
             executed_tools,
@@ -617,11 +702,18 @@ impl RunbookAuthor for OpenAiCompatAuthor {
         Some(&self.model)
     }
 
-    fn draft<'a>(&'a self, req: &'a DraftRequest, actions: &'a [ActionDef]) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>> {
+    fn draft<'a>(
+        &'a self,
+        req: &'a DraftRequest,
+        actions: &'a [ActionDef],
+    ) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>> {
         Box::pin(self.draft_inner(req, actions))
     }
 
-    fn draft_rule<'a>(&'a self, req: &'a RuleDraftRequest) -> BoxFuture<'a, Result<RuleDraftOutcome, AuthorError>> {
+    fn draft_rule<'a>(
+        &'a self,
+        req: &'a RuleDraftRequest,
+    ) -> BoxFuture<'a, Result<RuleDraftOutcome, AuthorError>> {
         Box::pin(self.draft_rule_inner(req))
     }
 }
@@ -640,33 +732,55 @@ pub fn from_env() -> anyhow::Result<Arc<dyn RunbookAuthor>> {
     match provider.trim() {
         "" | "none" => Ok(Arc::new(NoAuthor)),
         "local" => {
-            let base_url = env_non_empty("LLM_BASE_URL").unwrap_or_else(|| DEFAULT_LOCAL_URL.to_string());
-            let model = env_non_empty("LLM_MODEL").unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string());
+            let base_url =
+                env_non_empty("LLM_BASE_URL").unwrap_or_else(|| DEFAULT_LOCAL_URL.to_string());
+            let model =
+                env_non_empty("LLM_MODEL").unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string());
             let api_key = env_non_empty("LLM_API_KEY");
-            Ok(Arc::new(OpenAiCompatAuthor::new("local", base_url, model, api_key, timeout_ms)?))
+            Ok(Arc::new(OpenAiCompatAuthor::new(
+                "local", base_url, model, api_key, timeout_ms,
+            )?))
         }
         "api" => {
-            let base_url = env_non_empty("LLM_BASE_URL").unwrap_or_else(|| DEFAULT_API_URL.to_string());
+            let base_url =
+                env_non_empty("LLM_BASE_URL").unwrap_or_else(|| DEFAULT_API_URL.to_string());
             let model = env_non_empty("LLM_MODEL").unwrap_or_else(|| DEFAULT_API_MODEL.to_string());
-            let api_key = env_non_empty("LLM_API_KEY")
-                .ok_or_else(|| anyhow::anyhow!("LLM_PROVIDER=api wymaga ustawienia zmiennej LLM_API_KEY"))?;
-            Ok(Arc::new(OpenAiCompatAuthor::new("api", base_url, model, Some(api_key), timeout_ms)?))
+            let api_key = env_non_empty("LLM_API_KEY").ok_or_else(|| {
+                anyhow::anyhow!("LLM_PROVIDER=api wymaga ustawienia zmiennej LLM_API_KEY")
+            })?;
+            Ok(Arc::new(OpenAiCompatAuthor::new(
+                "api",
+                base_url,
+                model,
+                Some(api_key),
+                timeout_ms,
+            )?))
         }
         other => anyhow::bail!("nieobsługiwany LLM_PROVIDER={other} (dozwolone: none, local, api)"),
     }
 }
 
 fn env_non_empty(name: &str) -> Option<String> {
-    std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn build_system_prompt(actions: &[&ActionDef]) -> String {
     let mut catalog = String::new();
     for a in actions {
         let desc = redact::redact(a.description.as_deref().unwrap_or("brak opisu")).text;
-        let schema_raw = a.params_schema.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "{}".into());
+        let schema_raw = a
+            .params_schema
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".into());
         let schema = redact::redact(&schema_raw).text;
-        catalog.push_str(&format!("- `{}` (risk: {:?}): {} | params_schema: {}\n", a.name, a.risk, desc, schema));
+        catalog.push_str(&format!(
+            "- `{}` (risk: {:?}): {} | params_schema: {}\n",
+            a.name, a.risk, desc, schema
+        ));
     }
     format!(
         "Jesteś asystentem tworzącym runbook (procedurę naprawczą) w formacie JSON na podstawie opisu od użytkownika.\n\
@@ -696,7 +810,10 @@ fn build_system_prompt(actions: &[&ActionDef]) -> String {
 }
 
 fn build_response_schema(action_names: &[String]) -> Value {
-    let mut action_enum: Vec<Value> = action_names.iter().map(|n| Value::String(n.clone())).collect();
+    let mut action_enum: Vec<Value> = action_names
+        .iter()
+        .map(|n| Value::String(n.clone()))
+        .collect();
     action_enum.push(Value::Null);
 
     json!({
@@ -738,8 +855,9 @@ fn build_response_schema(action_names: &[String]) -> Value {
 }
 
 fn extract_message_content(body: &str) -> Result<String, AuthorError> {
-    let v: Value = serde_json::from_str(body)
-        .map_err(|e| AuthorError::InvalidResponse(format!("odpowiedź HTTP nie jest JSON-em: {e}")))?;
+    let v: Value = serde_json::from_str(body).map_err(|e| {
+        AuthorError::InvalidResponse(format!("odpowiedź HTTP nie jest JSON-em: {e}"))
+    })?;
     v.pointer("/choices/0/message/content")
         .and_then(Value::as_str)
         .map(str::to_string)
@@ -748,8 +866,13 @@ fn extract_message_content(body: &str) -> Result<String, AuthorError> {
 
 fn strip_code_fences(raw: &str) -> &str {
     let trimmed = raw.trim();
-    let Some(rest) = trimmed.strip_prefix("```") else { return trimmed };
-    let rest = rest.strip_prefix("json").or_else(|| rest.strip_prefix("JSON")).unwrap_or(rest);
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed;
+    };
+    let rest = rest
+        .strip_prefix("json")
+        .or_else(|| rest.strip_prefix("JSON"))
+        .unwrap_or(rest);
     let rest = rest.trim_start_matches(['\r', '\n']);
     rest.strip_suffix("```").unwrap_or(rest).trim()
 }
@@ -820,7 +943,9 @@ fn build_and_classify_draft(
     registry: &Registry,
 ) -> Result<(RunbookDef, Vec<String>), AuthorError> {
     if payload.steps.is_empty() {
-        return Err(AuthorError::InvalidResponse("model nie wyodrębnił żadnych kroków".into()));
+        return Err(AuthorError::InvalidResponse(
+            "model nie wyodrębnił żadnych kroków".into(),
+        ));
     }
 
     let title = req
@@ -858,10 +983,18 @@ fn build_and_classify_draft(
                 n += 1;
             }
         }
-        let action = step.action.map(|a| a.trim().to_string()).filter(|a| !a.is_empty());
-        let condition = step.condition.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+        let action = step
+            .action
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty());
+        let condition = step
+            .condition
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty());
         let text = if step.text.trim().is_empty() {
-            action.clone().unwrap_or_else(|| format!("Krok {}", idx + 1))
+            action
+                .clone()
+                .unwrap_or_else(|| format!("Krok {}", idx + 1))
         } else {
             step.text.trim().to_string()
         };
@@ -926,7 +1059,12 @@ fn build_and_classify_draft(
                     set.extend(props.keys().cloned());
                 }
                 if let Some(req_keys) = schema.get("required").and_then(Value::as_array) {
-                    set.extend(req_keys.iter().filter_map(Value::as_str).map(str::to_string));
+                    set.extend(
+                        req_keys
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string),
+                    );
                 }
                 (!set.is_empty()).then_some(set)
             });
@@ -947,11 +1085,18 @@ fn build_and_classify_draft(
     Ok((resolved, warnings))
 }
 
-fn validate_param_templates(step_id: &str, key: &str, val: &Value, warnings: &mut Vec<String>) -> Result<(), AuthorError> {
+fn validate_param_templates(
+    step_id: &str,
+    key: &str,
+    val: &Value,
+    warnings: &mut Vec<String>,
+) -> Result<(), AuthorError> {
     match val {
         Value::String(s) => {
             condition::validate_template(s).map_err(|e| {
-                AuthorError::InvalidResponse(format!("krok {step_id}: niepoprawny szablon w parametrze `{key}`: {e}"))
+                AuthorError::InvalidResponse(format!(
+                    "krok {step_id}: niepoprawny szablon w parametrze `{key}`: {e}"
+                ))
             })?;
             if s.contains("[REDACTED_") {
                 warnings.push(format!(
@@ -983,7 +1128,11 @@ fn slugify(input: &str) -> String {
         }
     }
     let out = out.trim_matches('-').to_string();
-    if out.is_empty() { "extracted-runbook".into() } else { out }
+    if out.is_empty() {
+        "extracted-runbook".into()
+    } else {
+        out
+    }
 }
 
 fn build_rule_tools(actions: &[ActionDef]) -> Value {
@@ -1101,7 +1250,10 @@ fn build_rule_tools(actions: &[ActionDef]) -> Value {
     ];
 
     for a in actions {
-        let params = a.params_schema.clone().unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+        let params = a
+            .params_schema
+            .clone()
+            .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
         tools.push(json!({
             "type": "function",
             "function": {
@@ -1153,11 +1305,15 @@ fn try_parse_inline_tool_call(
     match tool_name {
         "create_or_update_rule" => {
             executed_tools.push("create_or_update_rule".into());
-            let parsed: LlmRuleDraftPayload = serde_json::from_value(args.clone()).unwrap_or_default();
+            let parsed: LlmRuleDraftPayload =
+                serde_json::from_value(args.clone()).unwrap_or_default();
             let draft = sanitize_rule_draft(req, parsed);
             Some(RuleDraftOutcome {
                 tool_call: "create_or_update_rule".into(),
-                message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+                message: Some(format!(
+                    "Wywołano tool: create_or_update_rule ({})",
+                    draft.name
+                )),
                 draft: Some(draft),
                 target_rule_id: None,
                 executed_tools: executed_tools.clone(),
@@ -1234,7 +1390,9 @@ fn parse_llm_severity(raw: Option<&str>) -> Option<Severity> {
     match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
         Some("critical" | "crit" | "krytyczny" | "krytyczne") => Some(Severity::Critical),
         Some("error" | "err" | "błąd" | "blad" | "wysoki") => Some(Severity::Error),
-        Some("warning" | "warn" | "ostrzeżenie" | "ostrzezenie" | "średni" | "sredni") => Some(Severity::Warning),
+        Some("warning" | "warn" | "ostrzeżenie" | "ostrzezenie" | "średni" | "sredni") => {
+            Some(Severity::Warning)
+        }
         Some("info" | "informacyjny" | "niski") => Some(Severity::Info),
         _ => None,
     }
@@ -1268,7 +1426,11 @@ fn sanitize_rule_draft(req: &RuleDraftRequest, payload: LlmRuleDraftPayload) -> 
     };
     let id = {
         let s = slugify(&name);
-        if s == "extracted-runbook" { "nowa-regula-ai".to_string() } else { s }
+        if s == "extracted-runbook" {
+            "nowa-regula-ai".to_string()
+        } else {
+            s
+        }
     };
     let severity_override = parse_llm_severity(payload.severity_override.as_deref());
 
@@ -1295,7 +1457,9 @@ fn sanitize_rule_draft(req: &RuleDraftRequest, payload: LlmRuleDraftPayload) -> 
                 Value::Number(_) => c.value,
                 Value::String(s) => {
                     if let Ok(n) = s.trim().parse::<f64>() {
-                        serde_json::Number::from_f64(n).map(Value::Number).unwrap_or(Value::String(s.clone()))
+                        serde_json::Number::from_f64(n)
+                            .map(Value::Number)
+                            .unwrap_or(Value::String(s.clone()))
                     } else {
                         Value::String(s.clone())
                     }
@@ -1321,7 +1485,12 @@ fn sanitize_rule_draft(req: &RuleDraftRequest, payload: LlmRuleDraftPayload) -> 
         });
     }
 
-    let condition = match payload.mode.as_deref().map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+    let condition = match payload
+        .mode
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .as_deref()
+    {
         Some("any" | "or" | "lub") => Condition::Any { any: leaves },
         _ => Condition::All { all: leaves },
     };
@@ -1334,11 +1503,9 @@ fn sanitize_rule_draft(req: &RuleDraftRequest, payload: LlmRuleDraftPayload) -> 
         }
         let is_person = r.kind.trim().eq_ignore_ascii_case("person");
         if !is_person {
-            if let Some((tid, _)) = req
-                .available_teams
-                .iter()
-                .find(|(id, tname)| id.eq_ignore_ascii_case(&target) || tname.to_ascii_lowercase().contains(&target))
-            {
+            if let Some((tid, _)) = req.available_teams.iter().find(|(id, tname)| {
+                id.eq_ignore_ascii_case(&target) || tname.to_ascii_lowercase().contains(&target)
+            }) {
                 let rec = Recipient::Team(tid.clone());
                 if !recipients.contains(&rec) {
                     recipients.push(rec);
@@ -1346,22 +1513,18 @@ fn sanitize_rule_draft(req: &RuleDraftRequest, payload: LlmRuleDraftPayload) -> 
                 continue;
             }
         }
-        if let Some((pid, _)) = req
-            .available_people
-            .iter()
-            .find(|(id, pname)| id.eq_ignore_ascii_case(&target) || pname.to_ascii_lowercase().contains(&target))
-        {
+        if let Some((pid, _)) = req.available_people.iter().find(|(id, pname)| {
+            id.eq_ignore_ascii_case(&target) || pname.to_ascii_lowercase().contains(&target)
+        }) {
             let rec = Recipient::Person(pid.clone());
             if !recipients.contains(&rec) {
                 recipients.push(rec);
             }
             continue;
         }
-        if let Some((tid, _)) = req
-            .available_teams
-            .iter()
-            .find(|(id, tname)| id.eq_ignore_ascii_case(&target) || tname.to_ascii_lowercase().contains(&target))
-        {
+        if let Some((tid, _)) = req.available_teams.iter().find(|(id, tname)| {
+            id.eq_ignore_ascii_case(&target) || tname.to_ascii_lowercase().contains(&target)
+        }) {
             let rec = Recipient::Team(tid.clone());
             if !recipients.contains(&rec) {
                 recipients.push(rec);
@@ -1478,13 +1641,15 @@ mod tests {
         let app = Router::new()
             .route(
                 "/v1/chat/completions",
-                post(move |State(c): State<Arc<Mutex<Vec<Value>>>>, Json(req): Json<Value>| {
-                    let body = body.clone();
-                    async move {
-                        c.lock().unwrap().push(req);
-                        (status, Json(body))
-                    }
-                }),
+                post(
+                    move |State(c): State<Arc<Mutex<Vec<Value>>>>, Json(req): Json<Value>| {
+                        let body = body.clone();
+                        async move {
+                            c.lock().unwrap().push(req);
+                            (status, Json(body))
+                        }
+                    },
+                ),
             )
             .with_state(cap);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1544,7 +1709,8 @@ mod tests {
         )
         .await;
 
-        let author = OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let author =
+            OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
         let req = DraftRequest {
             id: Some("payments-recovery".into()),
             title: None,
@@ -1554,7 +1720,6 @@ mod tests {
         };
         let outcome = author.draft(&req, &sample_actions()).await.unwrap();
 
-        // Sprawdzamy, że do mock serwera poszedł wyłącznie zredagowany tekst.
         let sent = captured.lock().unwrap();
         assert_eq!(sent.len(), 1);
         let user_msg = sent[0]["messages"][1]["content"].as_str().unwrap();
@@ -1564,18 +1729,18 @@ mod tests {
         assert!(user_msg.contains("{{raw.service}}"));
         assert_eq!(outcome.redacted_count, 3);
 
-        // Krok 1: risk=high ⇒ wymuszone approval=required, automation=automated.
         let s1 = &outcome.draft.steps[0];
         assert_eq!(s1.automation, Automation::Automated);
         assert_eq!(s1.approval, Approval::Required);
-        assert_eq!(s1.params.get("service").and_then(Value::as_str), Some("{{raw.service}}"));
+        assert_eq!(
+            s1.params.get("service").and_then(Value::as_str),
+            Some("{{raw.service}}")
+        );
 
-        // Krok 2: halucynowana akcja ⇒ degradacja do manual + ostrzeżenie.
         let s2 = &outcome.draft.steps[1];
         assert_eq!(s2.automation, Automation::Manual);
         assert_eq!(outcome.warnings.len(), 2);
 
-        // Wyrenderowany YAML parsuje się poprawnie przez `parse::parse_runbook`.
         let reparsed = crate::parse::parse_runbook("draft.yaml", &outcome.yaml).unwrap();
         assert_eq!(reparsed.id, "payments-recovery");
         assert_eq!(reparsed.steps.len(), 2);
@@ -1583,19 +1748,31 @@ mod tests {
 
     #[tokio::test]
     async fn handles_upstream_error_and_invalid_json() {
-        let (base_url, _) = spawn_mock_llm(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "boom"})).await;
-        let author = OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
-        let req = DraftRequest { id: None, title: None, text: "Check service".into(), matches: None, rule_ids: vec![] };
+        let (base_url, _) =
+            spawn_mock_llm(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "boom"})).await;
+        let author =
+            OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let req = DraftRequest {
+            id: None,
+            title: None,
+            text: "Check service".into(),
+            matches: None,
+            rule_ids: vec![],
+        };
         let err = author.draft(&req, &[]).await.unwrap_err();
         assert!(matches!(err, AuthorError::Upstream(_)));
-        assert!(!err.to_string().contains("boom"), "raw upstream error body should not be reflected: {err}");
+        assert!(
+            !err.to_string().contains("boom"),
+            "raw upstream error body should not be reflected: {err}"
+        );
 
         let (bad_url, _) = spawn_mock_llm(
             StatusCode::OK,
             json!({ "choices": [{ "message": { "content": "not json at all" } }] }),
         )
         .await;
-        let author2 = OpenAiCompatAuthor::new("local", bad_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let author2 =
+            OpenAiCompatAuthor::new("local", bad_url, "qwen2.5:7b".into(), None, 5000).unwrap();
         let err2 = author2.draft(&req, &[]).await.unwrap_err();
         assert!(matches!(err2, AuthorError::InvalidResponse(_)));
     }
@@ -1603,7 +1780,8 @@ mod tests {
     #[tokio::test]
     async fn redacts_system_prompt_and_caps_oversized_llm_response() {
         let mut actions = sample_actions();
-        actions[0].description = Some("Calls https://secret.corp/api with Bearer tok_secret123".into());
+        actions[0].description =
+            Some("Calls https://secret.corp/api with Bearer tok_secret123".into());
         actions[0].params_schema = Some(json!({
             "type": "object",
             "required": ["service"],
@@ -1630,8 +1808,15 @@ mod tests {
             json!({ "choices": [{ "message": { "content": llm_content.to_string() } }] }),
         )
         .await;
-        let author = OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
-        let req = DraftRequest { id: None, title: None, text: "Check service".into(), matches: None, rule_ids: vec![] };
+        let author =
+            OpenAiCompatAuthor::new("local", base_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let req = DraftRequest {
+            id: None,
+            title: None,
+            text: "Check service".into(),
+            matches: None,
+            rule_ids: vec![],
+        };
         let outcome = author.draft(&req, &actions).await.unwrap();
 
         let sent = captured.lock().unwrap();
@@ -1640,16 +1825,15 @@ mod tests {
         assert!(!sys_msg.contains("tok_secret123"));
         assert!(!sys_msg.contains("db-01.prod.internal"));
 
-        // LLM-drafted http_get requires approval and emits warnings for http_get, unverified param, and redacted placeholder.
         assert_eq!(outcome.draft.steps[0].approval, Approval::Required);
         assert!(outcome.warnings.iter().any(|w| w.contains("http_get")));
         assert!(outcome.warnings.iter().any(|w| w.contains("extra_param")));
         assert!(outcome.warnings.iter().any(|w| w.contains("placeholder")));
 
-        // Oversized LLM response (> 1 MiB) is rejected.
         let huge = "x".repeat(MAX_LLM_RESPONSE_BYTES + 1024);
         let (huge_url, _) = spawn_mock_llm(StatusCode::OK, json!({ "padding": huge })).await;
-        let huge_author = OpenAiCompatAuthor::new("local", huge_url, "qwen2.5:7b".into(), None, 5000).unwrap();
+        let huge_author =
+            OpenAiCompatAuthor::new("local", huge_url, "qwen2.5:7b".into(), None, 5000).unwrap();
         let err = huge_author.draft(&req, &[]).await.unwrap_err();
         assert!(matches!(err, AuthorError::Upstream(_)));
     }
@@ -1657,7 +1841,13 @@ mod tests {
     #[test]
     fn rejects_invalid_template_in_llm_generated_params() {
         let registry = Registry::new(sample_actions());
-        let req = DraftRequest { id: None, title: None, text: "test".into(), matches: None, rule_ids: vec![] };
+        let req = DraftRequest {
+            id: None,
+            title: None,
+            text: "test".into(),
+            matches: None,
+            rule_ids: vec![],
+        };
         let payload = LlmDraftPayload {
             title: "Bad".into(),
             steps: vec![LlmStep {

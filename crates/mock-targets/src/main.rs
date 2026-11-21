@@ -91,7 +91,10 @@ struct Call {
 }
 
 fn app_with_token(calls_token: Option<String>) -> Router {
-    let state = AppState { calls_token, ..AppState::default() };
+    let state = AppState {
+        calls_token,
+        ..AppState::default()
+    };
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/calls", get(list_calls).delete(clear_calls))
@@ -100,7 +103,9 @@ fn app_with_token(calls_token: Option<String>) -> Router {
 }
 
 fn app() -> Router {
-    let calls_token = std::env::var("MOCK_TARGETS_TOKEN").ok().filter(|v| !v.is_empty());
+    let calls_token = std::env::var("MOCK_TARGETS_TOKEN")
+        .ok()
+        .filter(|v| !v.is_empty());
     app_with_token(calls_token)
 }
 
@@ -111,7 +116,9 @@ async fn list_calls(
     if !authorized(&headers, s.calls_token.as_deref()) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    Ok(Json(s.calls.lock().unwrap_or_else(|e| e.into_inner()).clone()))
+    Ok(Json(
+        s.calls.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+    ))
 }
 
 async fn clear_calls(State(s): State<AppState>, headers: HeaderMap) -> StatusCode {
@@ -119,7 +126,10 @@ async fn clear_calls(State(s): State<AppState>, headers: HeaderMap) -> StatusCod
         return StatusCode::UNAUTHORIZED;
     }
     s.calls.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    s.seen_keys.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    s.seen_keys
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
     StatusCode::NO_CONTENT
 }
 
@@ -139,11 +149,18 @@ async fn record(
         .and_then(|v| v.parse::<u16>().ok())
         .and_then(|c| StatusCode::from_u16(c).ok())
         .unwrap_or(StatusCode::OK);
-    let idempotency_key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::to_string);
-    let replayed = idempotency_key
-        .as_ref()
-        .is_some_and(|k| !s.seen_keys.lock().unwrap_or_else(|e| e.into_inner()).insert(k.clone()));
-    let body = serde_json::from_slice(&body).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()));
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let replayed = idempotency_key.as_ref().is_some_and(|k| {
+        !s.seen_keys
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(k.clone())
+    });
+    let body = serde_json::from_slice(&body)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()));
     let path = uri.path().to_string();
     tracing::info!(%method, path, replayed, status = status.as_u16(), "mock call");
 
@@ -161,7 +178,10 @@ async fn record(
         let excess = calls.len() - MAX_CALLS;
         calls.drain(..excess);
     }
-    (status, Json(json!({ "ok": status.is_success(), "path": path, "replayed": replayed })))
+    (
+        status,
+        Json(json!({ "ok": status.is_success(), "path": path, "replayed": replayed })),
+    )
 }
 
 #[tokio::main]
@@ -170,7 +190,9 @@ async fn main() -> anyhow::Result<()> {
     let port = common::Config::port("MOCK_TARGETS", 8090);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!(port, "mock-targets listening");
-    axum::serve(listener, app()).with_graceful_shutdown(common::shutdown_signal()).await?;
+    axum::serve(listener, app())
+        .with_graceful_shutdown(common::shutdown_signal())
+        .await?;
     Ok(())
 }
 
@@ -199,7 +221,14 @@ mod tests {
                 .unwrap();
             assert!(resp.status().is_success());
         }
-        let calls: Vec<Value> = client.get(format!("{base}/calls")).send().await.unwrap().json().await.unwrap();
+        let calls: Vec<Value> = client
+            .get(format!("{base}/calls"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0]["path"], "/retry_workflow");
         assert_eq!(calls[0]["body"]["workflowId"], "WF-20261023-00042");
@@ -210,7 +239,9 @@ mod tests {
     #[tokio::test]
     async fn status_override() {
         let base = spawn().await;
-        let resp = reqwest::get(format!("{base}/counterparty-service/health?status=503")).await.unwrap();
+        let resp = reqwest::get(format!("{base}/counterparty-service/health?status=503"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 503);
     }
 
@@ -222,7 +253,6 @@ mod tests {
         }
         assert_eq!(seen.set.len(), MAX_SEEN_KEYS);
         assert_eq!(seen.order.len(), MAX_SEEN_KEYS);
-        // Oldest keys were evicted, newest are still deduplicated.
         assert!(!seen.insert(format!("k-{}", MAX_SEEN_KEYS + 9)));
         assert!(seen.insert("k-0".into()));
     }
@@ -241,13 +271,22 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            axum::serve(listener, app_with_token(Some("secret-token".into()))).await.unwrap()
+            axum::serve(listener, app_with_token(Some("secret-token".into())))
+                .await
+                .unwrap()
         });
         let base = format!("http://{addr}");
         let client = reqwest::Client::new();
 
-        // Missing or wrong token is rejected on GET and DELETE /calls.
-        assert_eq!(client.get(format!("{base}/calls")).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            client
+                .get(format!("{base}/calls"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
         assert_eq!(
             client
                 .get(format!("{base}/calls"))
@@ -258,9 +297,16 @@ mod tests {
                 .status(),
             StatusCode::UNAUTHORIZED
         );
-        assert_eq!(client.delete(format!("{base}/calls")).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            client
+                .delete(format!("{base}/calls"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
 
-        // Valid bearer token is accepted.
         assert_eq!(
             client
                 .get(format!("{base}/calls"))

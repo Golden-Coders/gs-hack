@@ -1,5 +1,3 @@
-// Adapter (D2): ikona lucide jako komponent zgodny z propsami ikon ADS (`iconBefore`, `IconButton icon`).
-// Ikony ADS (`@atlaskit/icon`) są zakazane w naszym kodzie (licencja) — tylko lucide-react.
 import type { LucideIcon } from "lucide-react";
 
 export function adsIcon(Icon: LucideIcon) {

@@ -1,5 +1,3 @@
-// Przykładowy payload z UNMAPPED: koperta ma `format` json albo yaml; dla YAML API zwraca tekst,
-// więc w UI parsujemy go do drzewa.
 import { parse } from "yaml";
 
 export type ParsedSample = { value: unknown; format: "json" | "yaml" | "invalid"; error?: string };
@@ -10,7 +8,6 @@ export function parseSample(sample: unknown): ParsedSample {
   try {
     return { value: JSON.parse(sample), format: "json" };
   } catch {
-    // nie JSON – próbujemy YAML
   }
   try {
     const value: unknown = parse(sample);

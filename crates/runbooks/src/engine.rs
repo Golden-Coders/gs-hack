@@ -18,15 +18,15 @@ use arc_swap::ArcSwap;
 use common::db::sqlx::{self, PgPool};
 use common::kafka::{self, rdkafka::producer::FutureProducer, rdkafka::Message};
 use contracts::{
-    topics, Actor, AlertChanged, Approval, Automation, RunbookCommand, RunbookCommandKind, RunbookDef, RunbookKind, StepDef, StepStatus, Transition,
-    UiEvent, UiEventKind,
+    topics, Actor, AlertChanged, Approval, Automation, RunbookCommand, RunbookCommandKind,
+    RunbookDef, RunbookKind, StepDef, StepStatus, Transition, UiEvent, UiEventKind,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{matching, notify};
 use crate::registry::Executor;
 use crate::store::Snapshot;
+use crate::{matching, notify};
 
 /// Co zrobić z runem, patrząc na kroki i ich bieżące stany.
 #[derive(Debug, PartialEq)]
@@ -44,11 +44,18 @@ pub enum Next<'a> {
 /// `states`: step_id → (status, attempt) bieżącej próby; brak = `Pending`, próba 0.
 pub fn next<'a>(steps: &'a [StepDef], states: &HashMap<String, (StepStatus, i32)>) -> Next<'a> {
     for step in steps {
-        let (status, attempt) = states.get(&step.id).copied().unwrap_or((StepStatus::Pending, 0));
+        let (status, attempt) = states
+            .get(&step.id)
+            .copied()
+            .unwrap_or((StepStatus::Pending, 0));
         return match status {
             StepStatus::Succeeded | StepStatus::Skipped => continue,
-            StepStatus::Pending if step.automation == Automation::Manual => Next::Wait(step, attempt, StepStatus::WaitingManual),
-            StepStatus::Pending if step.approval == Approval::Required => Next::Wait(step, attempt, StepStatus::WaitingApproval),
+            StepStatus::Pending if step.automation == Automation::Manual => {
+                Next::Wait(step, attempt, StepStatus::WaitingManual)
+            }
+            StepStatus::Pending if step.approval == Approval::Required => {
+                Next::Wait(step, attempt, StepStatus::WaitingApproval)
+            }
             StepStatus::Pending | StepStatus::Running => Next::Execute(step, attempt, status),
             other => Next::Stopped(other),
         };
@@ -67,11 +74,15 @@ fn run_status(next: &Next) -> &'static str {
 }
 
 pub fn status_str(s: StepStatus) -> String {
-    serde_json::to_value(s).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+    serde_json::to_value(s)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 fn parse_status(s: &str) -> anyhow::Result<StepStatus> {
-    serde_json::from_value(Value::String(s.to_string())).with_context(|| format!("unknown step status `{s}`"))
+    serde_json::from_value(Value::String(s.to_string()))
+        .with_context(|| format!("unknown step status `{s}`"))
 }
 
 /// Run wczytany z bazy (to, czego potrzeba do wykonania kroków).
@@ -116,10 +127,16 @@ impl Drop for RunGuard {
     }
 }
 
-async fn try_acquire_run(active: &Arc<tokio::sync::Mutex<HashSet<Uuid>>>, run_id: Uuid) -> Option<RunGuard> {
+async fn try_acquire_run(
+    active: &Arc<tokio::sync::Mutex<HashSet<Uuid>>>,
+    run_id: Uuid,
+) -> Option<RunGuard> {
     let mut set = active.lock().await;
     if set.insert(run_id) {
-        Some(RunGuard { active: active.clone(), run_id })
+        Some(RunGuard {
+            active: active.clone(),
+            run_id,
+        })
     } else {
         None
     }
@@ -130,13 +147,25 @@ impl Engine {
     /// Offset commitowany po zapisaniu skutków; błąd bazy = ponowienie tej samej wiadomości.
     /// Kroki wykonują się w osobnych zadaniach, żeby wolna akcja nie blokowała partycji.
     pub async fn consume(self: Arc<Self>, brokers: String) -> anyhow::Result<()> {
-        let consumer = kafka::consumer(&brokers, topics::groups::RUNBOOKS, &[topics::ALERTS_CHANGED, topics::RUNBOOKS_COMMANDS])?;
-        tracing::info!("consuming {} and {}", topics::ALERTS_CHANGED, topics::RUNBOOKS_COMMANDS);
+        let consumer = kafka::consumer(
+            &brokers,
+            topics::groups::RUNBOOKS,
+            &[topics::ALERTS_CHANGED, topics::RUNBOOKS_COMMANDS],
+        )?;
+        tracing::info!(
+            "consuming {} and {}",
+            topics::ALERTS_CHANGED,
+            topics::RUNBOOKS_COMMANDS
+        );
         loop {
             let msg = consumer.recv().await.context("receiving from kafka")?;
             let runs = if msg.topic() == topics::RUNBOOKS_COMMANDS {
                 match kafka::decode::<RunbookCommand>(&msg) {
-                    Ok(cmd) => self.retrying("applying command", || self.apply_command(&cmd)).await.into_iter().collect(),
+                    Ok(cmd) => self
+                        .retrying("applying command", || self.apply_command(&cmd))
+                        .await
+                        .into_iter()
+                        .collect(),
                     Err(e) => {
                         tracing::warn!(error = %e, "skipping undecodable runbooks.commands message");
                         vec![]
@@ -144,14 +173,18 @@ impl Engine {
                 }
             } else {
                 match kafka::decode::<AlertChanged>(&msg) {
-                    Ok(alert) => self.retrying("creating runs", || self.on_alert(&alert)).await,
+                    Ok(alert) => {
+                        self.retrying("creating runs", || self.on_alert(&alert))
+                            .await
+                    }
                     Err(e) => {
                         tracing::warn!(error = %e, "skipping undecodable alerts.changed message");
                         vec![]
                     }
                 }
             };
-            runs.into_iter().for_each(|run_id| self.clone().spawn_advance(run_id));
+            runs.into_iter()
+                .for_each(|run_id| self.clone().spawn_advance(run_id));
             kafka::commit(&consumer, &msg)?;
         }
     }
@@ -188,16 +221,71 @@ impl Engine {
         };
         let (step, actor) = (cmd.step_id.as_str(), &cmd.actor);
         let applied = match &cmd.kind {
-            RunbookCommandKind::Approve => self.transition(&run, step, attempt, &[WaitingApproval], Running, None, None, actor, Some("step_approved")).await?,
-            RunbookCommandKind::Reject => self.transition(&run, step, attempt, &[WaitingApproval], Rejected, None, None, actor, Some("step_rejected")).await?,
+            RunbookCommandKind::Approve => {
+                self.transition(
+                    &run,
+                    step,
+                    attempt,
+                    &[WaitingApproval],
+                    Running,
+                    None,
+                    None,
+                    actor,
+                    Some("step_approved"),
+                )
+                .await?
+            }
+            RunbookCommandKind::Reject => {
+                self.transition(
+                    &run,
+                    step,
+                    attempt,
+                    &[WaitingApproval],
+                    Rejected,
+                    None,
+                    None,
+                    actor,
+                    Some("step_rejected"),
+                )
+                .await?
+            }
             RunbookCommandKind::Done { note } => {
-                self.transition(&run, step, attempt, &[WaitingManual, Failed], Succeeded, None, note.as_deref(), actor, Some("step_done")).await?
+                self.transition(
+                    &run,
+                    step,
+                    attempt,
+                    &[WaitingManual, Failed],
+                    Succeeded,
+                    None,
+                    note.as_deref(),
+                    actor,
+                    Some("step_done"),
+                )
+                .await?
             }
             RunbookCommandKind::Skip => {
-                self.transition(&run, step, attempt, &[Failed, WaitingManual, WaitingApproval], Skipped, None, None, actor, Some("step_skipped")).await?
+                self.transition(
+                    &run,
+                    step,
+                    attempt,
+                    &[Failed, WaitingManual, WaitingApproval],
+                    Skipped,
+                    None,
+                    None,
+                    actor,
+                    Some("step_skipped"),
+                )
+                .await?
             }
-            RunbookCommandKind::Retry => status == Failed && self.new_attempt(&run, step, attempt + 1, actor, "step_retry").await?,
-            RunbookCommandKind::ManualMode => self.manual_mode(&run, step, status, attempt, actor).await?,
+            RunbookCommandKind::Retry => {
+                status == Failed
+                    && self
+                        .new_attempt(&run, step, attempt + 1, actor, "step_retry")
+                        .await?
+            }
+            RunbookCommandKind::ManualMode => {
+                self.manual_mode(&run, step, status, attempt, actor).await?
+            }
         };
         if !applied {
             tracing::info!(run_id = %run.run_id, step_id = step, status = status_str(status), command = ?cmd.kind, "command ignored, step state changed");
@@ -207,7 +295,14 @@ impl Engine {
     }
 
     /// Nowa próba kroku (`pending`) – nowy klucz idempotencji, więc akcja wykona się naprawdę.
-    async fn new_attempt(&self, run: &Run, step_id: &str, attempt: i32, actor: &Actor, audit_action: &str) -> anyhow::Result<bool> {
+    async fn new_attempt(
+        &self,
+        run: &Run,
+        step_id: &str,
+        attempt: i32,
+        actor: &Actor,
+        audit_action: &str,
+    ) -> anyhow::Result<bool> {
         let mut tx = self.pool.begin().await?;
         let inserted = sqlx::query(
             "INSERT INTO step_runs (run_id, step_id, attempt, status, risk)
@@ -225,7 +320,17 @@ impl Engine {
             tx.rollback().await?;
             return Ok(false);
         }
-        let entry = audit(&mut tx, run.alert_id, run.episode, Some(run.run_id), Some(step_id), actor, audit_action, None).await?;
+        let entry = audit(
+            &mut tx,
+            run.alert_id,
+            run.episode,
+            Some(run.run_id),
+            Some(step_id),
+            actor,
+            audit_action,
+            None,
+        )
+        .await?;
         tx.commit().await?;
         let status = json!({ "run_id": run.run_id, "step_id": step_id, "attempt": attempt, "status": "pending", "result": null, "note": null });
         self.ui(run.alert_id, UiEventKind::StepStatus, status).await;
@@ -234,26 +339,66 @@ impl Engine {
     }
 
     /// Tryb ręczny: ten krok i wszystkie dalsze stają się manualne (automatyka zatrzymana).
-    async fn manual_mode(&self, run: &Run, step_id: &str, status: StepStatus, attempt: i32, actor: &Actor) -> anyhow::Result<bool> {
+    async fn manual_mode(
+        &self,
+        run: &Run,
+        step_id: &str,
+        status: StepStatus,
+        attempt: i32,
+        actor: &Actor,
+    ) -> anyhow::Result<bool> {
         use StepStatus::*;
         if !matches!(status, Pending | Failed | WaitingApproval | WaitingManual) {
             return Ok(false);
         }
-        let Some(from) = run.steps.iter().position(|s| s.id == step_id) else { return Ok(false) };
+        let Some(from) = run.steps.iter().position(|s| s.id == step_id) else {
+            return Ok(false);
+        };
         let mut steps = run.steps.clone();
-        steps[from..].iter_mut().for_each(|s| s.automation = Automation::Manual);
+        steps[from..]
+            .iter_mut()
+            .for_each(|s| s.automation = Automation::Manual);
         sqlx::query("UPDATE runbook_runs SET steps = $2, updated_at = now() WHERE run_id = $1")
             .bind(run.run_id)
             .bind(serde_json::to_value(&steps)?)
             .execute(&self.pool)
             .await?;
-        let run = Run { steps, ..run.clone() };
+        let run = Run {
+            steps,
+            ..run.clone()
+        };
         match status {
-            Failed => self.new_attempt(&run, step_id, attempt + 1, actor, "manual_mode").await,
-            WaitingApproval => self.transition(&run, step_id, attempt, &[WaitingApproval], WaitingManual, None, None, actor, Some("manual_mode")).await,
+            Failed => {
+                self.new_attempt(&run, step_id, attempt + 1, actor, "manual_mode")
+                    .await
+            }
+            WaitingApproval => {
+                self.transition(
+                    &run,
+                    step_id,
+                    attempt,
+                    &[WaitingApproval],
+                    WaitingManual,
+                    None,
+                    None,
+                    actor,
+                    Some("manual_mode"),
+                )
+                .await
+            }
             _ => {
                 let mut tx = self.pool.begin().await?;
-                let entry = audit(&mut tx, run.alert_id, run.episode, Some(run.run_id), Some(step_id), actor, "manual_mode", None).await?;
+                let entry = audit(
+                    &mut tx,
+                    run.alert_id,
+                    run.episode,
+                    Some(run.run_id),
+                    Some(step_id),
+                    actor,
+                    "manual_mode",
+                    None,
+                )
+                .await?;
                 tx.commit().await?;
                 self.ui(run.alert_id, UiEventKind::AuditEntry, entry).await;
                 Ok(true)
@@ -271,11 +416,15 @@ impl Engine {
 
     /// Po restarcie: dokończ runy, które były w toku (kroki `running` i następne `pending`).
     pub async fn resume_all(self: &Arc<Self>) -> anyhow::Result<()> {
-        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT run_id FROM runbook_runs WHERE status = 'running'").fetch_all(&self.pool).await?;
+        let ids: Vec<Uuid> =
+            sqlx::query_scalar("SELECT run_id FROM runbook_runs WHERE status = 'running'")
+                .fetch_all(&self.pool)
+                .await?;
         if !ids.is_empty() {
             tracing::info!(runs = ids.len(), "resuming runs after restart");
         }
-        ids.into_iter().for_each(|id| self.clone().spawn_advance(id));
+        ids.into_iter()
+            .for_each(|id| self.clone().spawn_advance(id));
         Ok(())
     }
 
@@ -294,7 +443,13 @@ impl Engine {
         Ok(runs)
     }
 
-    pub async fn create_run(&self, alert: &AlertChanged, def: &RunbookDef, specificity: i32, ctx: &Value) -> anyhow::Result<Uuid> {
+    pub async fn create_run(
+        &self,
+        alert: &AlertChanged,
+        def: &RunbookDef,
+        specificity: i32,
+        ctx: &Value,
+    ) -> anyhow::Result<Uuid> {
         let (kind, status) = match def.kind {
             RunbookKind::Automatic => ("automatic", "running"),
             RunbookKind::Manual => ("manual", "manual"),
@@ -336,7 +491,12 @@ impl Engine {
 
         let registry = &self.snapshot.load().registry;
         for step in &def.steps {
-            let risk = step.action.as_deref().and_then(|a| registry.get(a)).map(|a| serde_json::to_value(a.risk)).transpose()?;
+            let risk = step
+                .action
+                .as_deref()
+                .and_then(|a| registry.get(a))
+                .map(|a| serde_json::to_value(a.risk))
+                .transpose()?;
             sqlx::query("INSERT INTO step_runs (run_id, step_id, attempt, status, risk) VALUES ($1, $2, 0, 'pending', $3)")
                 .bind(run_id)
                 .bind(&step.id)
@@ -345,10 +505,21 @@ impl Engine {
                 .await?;
         }
         let detail = format!("{} (v{})", def.title, def.version);
-        let entry = audit(&mut tx, alert.alert_id, alert.episode, Some(run_id), None, &Actor::System, "run_started", Some(&detail)).await?;
+        let entry = audit(
+            &mut tx,
+            alert.alert_id,
+            alert.episode,
+            Some(run_id),
+            None,
+            &Actor::System,
+            "run_started",
+            Some(&detail),
+        )
+        .await?;
         tx.commit().await?;
         tracing::info!(%run_id, alert_id = %alert.alert_id, episode = alert.episode, runbook = def.id, "run started");
-        self.ui(alert.alert_id, UiEventKind::AuditEntry, entry).await;
+        self.ui(alert.alert_id, UiEventKind::AuditEntry, entry)
+            .await;
         Ok(run_id)
     }
 
@@ -358,7 +529,9 @@ impl Engine {
                 .bind(run_id)
                 .fetch_optional(&self.pool)
                 .await?;
-        let Some((alert_id, episode, kind, title, steps, context)) = row else { return Ok(None) };
+        let Some((alert_id, episode, kind, title, steps, context)) = row else {
+            return Ok(None);
+        };
         Ok(Some(Run {
             run_id,
             alert_id,
@@ -370,14 +543,19 @@ impl Engine {
         }))
     }
 
-    async fn step_states(&self, run_id: Uuid) -> anyhow::Result<HashMap<String, (StepStatus, i32)>> {
+    async fn step_states(
+        &self,
+        run_id: Uuid,
+    ) -> anyhow::Result<HashMap<String, (StepStatus, i32)>> {
         let rows: Vec<(String, String, i32)> = sqlx::query_as(
             "SELECT DISTINCT ON (step_id) step_id, status, attempt FROM step_runs WHERE run_id = $1 ORDER BY step_id, attempt DESC",
         )
         .bind(run_id)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(|(id, status, attempt)| Ok((id, (parse_status(&status)?, attempt)))).collect()
+        rows.into_iter()
+            .map(|(id, status, attempt)| Ok((id, (parse_status(&status)?, attempt))))
+            .collect()
     }
 
     /// Prowadzi run do pierwszego kroku, który wymaga człowieka, błędu albo końca.
@@ -387,12 +565,17 @@ impl Engine {
             return Ok(());
         };
         loop {
-            let mut run = self.load_run(run_id).await?.with_context(|| format!("run {run_id} not found"))?;
+            let mut run = self
+                .load_run(run_id)
+                .await?
+                .with_context(|| format!("run {run_id} not found"))?;
             if run.kind != RunbookKind::Automatic {
                 return Ok(());
             }
-            // Przeładowujemy kroki w każdej iteracji (m.in. tryb ręczny) i wymuszamy zatwierdzenie przy eskalacji ryzyka.
-            self.snapshot.load().registry.enforce_approval(&mut run.steps);
+            self.snapshot
+                .load()
+                .registry
+                .enforce_approval(&mut run.steps);
 
             let states = self.step_states(run_id).await?;
             let next = next(&run.steps, &states);
@@ -404,12 +587,35 @@ impl Engine {
             match next {
                 Next::Completed | Next::Stopped(_) => return Ok(()),
                 Next::Wait(step, attempt, status) => {
-                    self.transition(&run, &step.id, attempt, &[StepStatus::Pending], status, None, None, &Actor::System, None).await?;
+                    self.transition(
+                        &run,
+                        &step.id,
+                        attempt,
+                        &[StepStatus::Pending],
+                        status,
+                        None,
+                        None,
+                        &Actor::System,
+                        None,
+                    )
+                    .await?;
                     return Ok(());
                 }
                 Next::Execute(step, attempt, current) => {
                     if current == StepStatus::Pending
-                        && !self.transition(&run, &step.id, attempt, &[StepStatus::Pending], StepStatus::Running, None, None, &Actor::System, None).await?
+                        && !self
+                            .transition(
+                                &run,
+                                &step.id,
+                                attempt,
+                                &[StepStatus::Pending],
+                                StepStatus::Running,
+                                None,
+                                None,
+                                &Actor::System,
+                                None,
+                            )
+                            .await?
                     {
                         return Ok(()); // krok przejął ktoś inny
                     }
@@ -417,7 +623,18 @@ impl Engine {
                         Ok(out) => (StepStatus::Succeeded, out),
                         Err(error) => (StepStatus::Failed, error),
                     };
-                    self.transition(&run, &step.id, attempt, &[StepStatus::Running], status, Some(&result), None, &Actor::System, None).await?;
+                    self.transition(
+                        &run,
+                        &step.id,
+                        attempt,
+                        &[StepStatus::Running],
+                        status,
+                        Some(&result),
+                        None,
+                        &Actor::System,
+                        None,
+                    )
+                    .await?;
                 }
             }
         }
@@ -428,10 +645,18 @@ impl Engine {
         let name = step.action.as_deref().ok_or("krok nie ma akcji")?;
         let snapshot = self.snapshot.load();
         if matches!(name, "escalate" | "notify") {
-            let notice = notify::Notice::new(name, run.alert_id, run.episode, run.run_id, &run.title, step, &run.context, &self.public_ui_url);
-            let (requests, unknown) = notify::build(&notice, &step.params, &snapshot, chrono::Utc::now())?;
-            // Odbiorcy już powiadomieni o tym epizodzie na tym kanale (sender by ich pominął) – nie zlecamy
-            // i mówimy to w dzienniku zamiast udawać, że zostali powiadomieni.
+            let notice = notify::Notice::new(
+                name,
+                run.alert_id,
+                run.episode,
+                run.run_id,
+                &run.title,
+                step,
+                &run.context,
+                &self.public_ui_url,
+            );
+            let (requests, unknown) =
+                notify::build(&notice, &step.params, &snapshot, chrono::Utc::now())?;
             let keys: Vec<String> = requests.iter().map(notify::delivery_key).collect();
             let already: std::collections::HashSet<String> =
                 sqlx::query_scalar::<_, String>("SELECT idempotency_key FROM deliveries WHERE idempotency_key = ANY($1) AND status = 'delivered'")
@@ -442,17 +667,38 @@ impl Engine {
                     .into_iter()
                     .collect();
             let summary = notify::summary(&requests, &already, &unknown);
-            for request in requests.iter().filter(|r| !already.contains(&notify::delivery_key(r))) {
-                kafka::publish(&self.producer, topics::DELIVERIES_REQUESTED, &run.alert_id.to_string(), request)
-                    .await
-                    .map_err(|e| format!("publikacja zlecenia dostarczenia: {e}"))?;
+            for request in requests
+                .iter()
+                .filter(|r| !already.contains(&notify::delivery_key(r)))
+            {
+                kafka::publish(
+                    &self.producer,
+                    topics::DELIVERIES_REQUESTED,
+                    &run.alert_id.to_string(),
+                    request,
+                )
+                .await
+                .map_err(|e| format!("publikacja zlecenia dostarczenia: {e}"))?;
             }
             return Ok(summary);
         }
-        let action = snapshot.registry.get(name).ok_or_else(|| format!("akcji `{name}` nie ma już w rejestrze"))?;
+        let action = snapshot
+            .registry
+            .get(name)
+            .ok_or_else(|| format!("akcji `{name}` nie ma już w rejestrze"))?;
         let key = contracts::keys::step(run.run_id, &step.id, attempt as u32);
-        let out = self.executor.execute(action, &step.params, &run.context, &key).await.map_err(|e| e.to_string())?;
-        Ok(format!("{} {}", out.status, out.body.chars().take(200).collect::<String>()).trim_end().to_string())
+        let out = self
+            .executor
+            .execute(action, &step.params, &run.context, &key)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(format!(
+            "{} {}",
+            out.status,
+            out.body.chars().take(200).collect::<String>()
+        )
+        .trim_end()
+        .to_string())
     }
 
     /// Warunkowe przejście stanu kroku + wpis w dzienniku (jedna transakcja) + `ui.events`.
@@ -499,7 +745,17 @@ impl Engine {
             (None, other) => format!("step_{}", status_str(other)),
         };
         let detail = result.or(note);
-        let entry = audit(&mut tx, run.alert_id, run.episode, Some(run.run_id), Some(step_id), actor, &action, detail).await?;
+        let entry = audit(
+            &mut tx,
+            run.alert_id,
+            run.episode,
+            Some(run.run_id),
+            Some(step_id),
+            actor,
+            &action,
+            detail,
+        )
+        .await?;
         tx.commit().await?;
 
         tracing::info!(run_id = %run.run_id, step_id, attempt, status = to_str, "step");
@@ -511,8 +767,20 @@ impl Engine {
 
     /// `ui.events` to tylko podgląd na żywo (źródłem prawdy jest baza), więc błąd = log.
     async fn ui(&self, alert_id: Uuid, kind: UiEventKind, payload: Value) {
-        let event = UiEvent { alert_id: Some(alert_id), kind, payload, at: chrono::Utc::now() };
-        if let Err(e) = kafka::publish(&self.producer, topics::UI_EVENTS, &alert_id.to_string(), &event).await {
+        let event = UiEvent {
+            alert_id: Some(alert_id),
+            kind,
+            payload,
+            at: chrono::Utc::now(),
+        };
+        if let Err(e) = kafka::publish(
+            &self.producer,
+            topics::UI_EVENTS,
+            &alert_id.to_string(),
+            &event,
+        )
+        .await
+        {
             tracing::warn!(error = %e, "publishing ui event failed");
         }
     }
@@ -543,7 +811,9 @@ async fn audit(
     .bind(detail)
     .fetch_one(&mut **tx)
     .await?;
-    Ok(json!({ "id": id, "alert_id": alert_id, "episode": episode, "run_id": run_id, "step_id": step_id, "actor": actor, "action": action, "detail": detail, "at": at }))
+    Ok(
+        json!({ "id": id, "alert_id": alert_id, "episode": episode, "run_id": run_id, "step_id": step_id, "actor": actor, "action": action, "detail": detail, "at": at }),
+    )
 }
 
 #[cfg(test)]
@@ -562,7 +832,9 @@ mod tests {
     }
 
     fn states(list: &[(&str, StepStatus, i32)]) -> HashMap<String, (StepStatus, i32)> {
-        list.iter().map(|(id, s, a)| (id.to_string(), (*s, *a))).collect()
+        list.iter()
+            .map(|(id, s, a)| (id.to_string(), (*s, *a)))
+            .collect()
     }
 
     #[test]
@@ -570,11 +842,26 @@ mod tests {
         use StepStatus::*;
         let steps = steps();
         assert!(matches!(next(&steps, &states(&[])), Next::Execute(s, 0, Pending) if s.id == "s1"));
-        assert!(matches!(next(&steps, &states(&[("s1", Succeeded, 0)])), Next::Wait(s, 0, WaitingApproval) if s.id == "s2"));
-        // Zatwierdzony krok ma status `running` – wykonuje się.
-        assert!(matches!(next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Running, 0)])), Next::Execute(s, 0, Running) if s.id == "s2"));
-        assert!(matches!(next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Succeeded, 0)])), Next::Wait(s, 0, WaitingManual) if s.id == "s3"));
-        assert_eq!(next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Skipped, 0), ("s3", Succeeded, 0)])), Next::Completed);
+        assert!(
+            matches!(next(&steps, &states(&[("s1", Succeeded, 0)])), Next::Wait(s, 0, WaitingApproval) if s.id == "s2")
+        );
+        assert!(
+            matches!(next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Running, 0)])), Next::Execute(s, 0, Running) if s.id == "s2")
+        );
+        assert!(
+            matches!(next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Succeeded, 0)])), Next::Wait(s, 0, WaitingManual) if s.id == "s3")
+        );
+        assert_eq!(
+            next(
+                &steps,
+                &states(&[
+                    ("s1", Succeeded, 0),
+                    ("s2", Skipped, 0),
+                    ("s3", Succeeded, 0)
+                ])
+            ),
+            Next::Completed
+        );
     }
 
     #[test]
@@ -582,18 +869,24 @@ mod tests {
         use StepStatus::*;
         let steps = steps();
         let failed = next(&steps, &states(&[("s1", Failed, 0)]));
-        assert_eq!((run_status(&failed), failed), ("failed", Next::Stopped(Failed)));
-        let rejected = next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Rejected, 0)]));
+        assert_eq!(
+            (run_status(&failed), failed),
+            ("failed", Next::Stopped(Failed))
+        );
+        let rejected = next(
+            &steps,
+            &states(&[("s1", Succeeded, 0), ("s2", Rejected, 0)]),
+        );
         assert_eq!(run_status(&rejected), "rejected");
-        // Ponowienie = nowa próba w stanie pending.
-        assert!(matches!(next(&steps, &states(&[("s1", Pending, 1)])), Next::Execute(s, 1, Pending) if s.id == "s1"));
+        assert!(
+            matches!(next(&steps, &states(&[("s1", Pending, 1)])), Next::Execute(s, 1, Pending) if s.id == "s1")
+        );
     }
 
     #[test]
     fn restart_resumes_from_step_two() {
         use StepStatus::*;
         let steps = steps();
-        // Krok 1 skończony przed restartem, krok 2 nie zaczęty: wznowienie od kroku 2.
         let n = next(&steps, &states(&[("s1", Succeeded, 0), ("s2", Pending, 0)]));
         assert!(matches!(n, Next::Wait(s, _, _) if s.id == "s2"));
     }
@@ -603,35 +896,50 @@ mod tests {
     #[tokio::test]
     #[ignore = "wymaga Postgresa i Redpandy z docker compose"]
     async fn run_against_database() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use axum::{http::HeaderMap, routing::{get, post}, Router};
+        use axum::{
+            http::HeaderMap,
+            routing::{get, post},
+            Router,
+        };
         use contracts::{ActionDef, ActionKind, HttpActionSpec, Risk};
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
-        // Usługa docelowa: liczy wywołania i zapisuje klucze idempotencji.
         let calls = Arc::new(AtomicUsize::new(0));
         let keys = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let (c, k) = (calls.clone(), keys.clone());
-        let app = Router::new().route("/health", get(|| async { "ok" })).route(
-            "/retry",
-            post(move |h: HeaderMap| async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                k.lock().unwrap().push(h["idempotency-key"].to_str().unwrap().to_string());
-                "retried"
-            }),
-        );
+        let app = Router::new()
+            .route("/health", get(|| async { "ok" }))
+            .route(
+                "/retry",
+                post(move |h: HeaderMap| async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    k.lock()
+                        .unwrap()
+                        .push(h["idempotency-key"].to_str().unwrap().to_string());
+                    "retried"
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let config = common::Config::from_env();
-        let pool = common::db::connect_and_migrate(&config.database_url).await.unwrap();
+        let pool = common::db::connect_and_migrate(&config.database_url)
+            .await
+            .unwrap();
         let retry = ActionDef {
             name: "retry_test".into(),
             kind: ActionKind::Http,
             risk: Risk::Low,
             description: None,
             params_schema: None,
-            http: Some(HttpActionSpec { method: "POST".into(), url: format!("{base}/retry"), headers: Default::default(), body: None, timeout_ms: 2000 }),
+            http: Some(HttpActionSpec {
+                method: "POST".into(),
+                url: format!("{base}/retry"),
+                headers: Default::default(),
+                body: None,
+                timeout_ms: 2000,
+            }),
             version: 1,
         };
         let registry = Registry::new(vec![retry]);
@@ -645,18 +953,27 @@ mod tests {
             pool: pool.clone(),
             producer: kafka::producer(&config.kafka_brokers).unwrap(),
             executor: Executor::new(vec!["127.0.0.1".into()]),
-            snapshot: Arc::new(ArcSwap::from_pointee(Snapshot { registry, ..Default::default() })),
+            snapshot: Arc::new(ArcSwap::from_pointee(Snapshot {
+                registry,
+                ..Default::default()
+            })),
             public_ui_url: "http://localhost:5173".into(),
             active_runs: Default::default(),
         };
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/fixtures/topics/alerts.changed.json");
-        let mut alert: AlertChanged = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../contracts/fixtures/topics/alerts.changed.json"
+        );
+        let mut alert: AlertChanged =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         alert.alert_id = Uuid::now_v7();
 
-        // Redelivery tego samego alerts.changed nie tworzy drugiego runa.
         let ctx = matching::alert_context(&alert);
         let run_id = engine.create_run(&alert, &def, 1, &ctx).await.unwrap();
-        assert_eq!(engine.create_run(&alert, &def, 1, &ctx).await.unwrap(), run_id);
+        assert_eq!(
+            engine.create_run(&alert, &def, 1, &ctx).await.unwrap(),
+            run_id
+        );
 
         let status = |step: &'static str| {
             let pool = pool.clone();
@@ -671,27 +988,42 @@ mod tests {
         };
         let run_status = || {
             let pool = pool.clone();
-            async move { sqlx::query_scalar::<_, String>("SELECT status FROM runbook_runs WHERE run_id = $1").bind(run_id).fetch_one(&pool).await.unwrap() }
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT status FROM runbook_runs WHERE run_id = $1")
+                    .bind(run_id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
         };
 
-        // Dwa kroki automatyczne po kolei, potem stop na zatwierdzeniu.
         engine.advance(run_id).await.unwrap();
-        assert_eq!((status("s1").await, status("s2").await, status("s3").await), ("succeeded".into(), "succeeded".into(), "waiting_approval".into()));
+        assert_eq!(
+            (status("s1").await, status("s2").await, status("s3").await),
+            (
+                "succeeded".into(),
+                "succeeded".into(),
+                "waiting_approval".into()
+            )
+        );
         assert_eq!(run_status().await, "waiting");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        // Ponowne advance (np. redelivery) nie powtarza zakończonych kroków.
         engine.advance(run_id).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        // Restart w trakcie kroku 2: krok `running` wykonuje się ponownie z TYM SAMYM kluczem.
-        sqlx::query("UPDATE step_runs SET status = 'running' WHERE run_id = $1 AND step_id = 's2'").bind(run_id).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE step_runs SET status = 'running' WHERE run_id = $1 AND step_id = 's2'")
+            .bind(run_id)
+            .execute(&pool)
+            .await
+            .unwrap();
         engine.advance(run_id).await.unwrap();
         let keys = keys.lock().unwrap().clone();
         assert_eq!(keys, vec![contracts::keys::step(run_id, "s2", 0); 2]);
 
-        // Zatwierdzenie eskalacji (faza C zrobi to z komendy): wykonanie, a do czasu P2 – błąd.
-        let approver = Actor::User { person_id: "jan".into() };
+        let approver = Actor::User {
+            person_id: "jan".into(),
+        };
         let cmd = |step: &str, kind: RunbookCommandKind| RunbookCommand {
             alert_id: alert.alert_id,
             run_id,
@@ -700,33 +1032,81 @@ mod tests {
             actor: approver.clone(),
             at: chrono::Utc::now(),
         };
-        // Odrzucenie nie z tego stanu (krok s2 już zrobiony) jest ignorowane.
-        engine.apply_command(&cmd("s2", RunbookCommandKind::Reject)).await.unwrap();
+        engine
+            .apply_command(&cmd("s2", RunbookCommandKind::Reject))
+            .await
+            .unwrap();
         assert_eq!(status("s2").await, "succeeded");
-        // Zatwierdzenie eskalacji: wykonanie; zespołu `x` nie ma w katalogu osób, więc krok kończy się błędem.
-        engine.apply_command(&cmd("s3", RunbookCommandKind::Approve)).await.unwrap();
+        engine
+            .apply_command(&cmd("s3", RunbookCommandKind::Approve))
+            .await
+            .unwrap();
         engine.advance(run_id).await.unwrap();
         assert_eq!(status("s3").await, "failed");
         assert_eq!(run_status().await, "failed");
-        // Ponów: nowa próba; ryzykowny krok znów czeka na zatwierdzenie. Pomiń: przejście dalej.
-        engine.apply_command(&cmd("s3", RunbookCommandKind::Retry)).await.unwrap();
+        engine
+            .apply_command(&cmd("s3", RunbookCommandKind::Retry))
+            .await
+            .unwrap();
         engine.advance(run_id).await.unwrap();
-        let attempts: i64 = sqlx::query_scalar("SELECT count(*) FROM step_runs WHERE run_id = $1 AND step_id = 's3'").bind(run_id).fetch_one(&pool).await.unwrap();
-        assert_eq!((attempts, status("s3").await), (2, "waiting_approval".into()));
-        engine.apply_command(&cmd("s3", RunbookCommandKind::Skip)).await.unwrap();
+        let attempts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM step_runs WHERE run_id = $1 AND step_id = 's3'",
+        )
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (attempts, status("s3").await),
+            (2, "waiting_approval".into())
+        );
+        engine
+            .apply_command(&cmd("s3", RunbookCommandKind::Skip))
+            .await
+            .unwrap();
         engine.advance(run_id).await.unwrap();
-        assert_eq!((status("s3").await, status("s4").await, run_status().await), ("skipped".into(), "waiting_manual".into(), "waiting".into()));
-        // Zrobione z notatką: koniec runa.
-        engine.apply_command(&cmd("s4", RunbookCommandKind::Done { note: Some("called".into()) })).await.unwrap();
+        assert_eq!(
+            (status("s3").await, status("s4").await, run_status().await),
+            ("skipped".into(), "waiting_manual".into(), "waiting".into())
+        );
+        engine
+            .apply_command(&cmd(
+                "s4",
+                RunbookCommandKind::Done {
+                    note: Some("called".into()),
+                },
+            ))
+            .await
+            .unwrap();
         engine.advance(run_id).await.unwrap();
-        assert_eq!((status("s4").await, run_status().await), ("succeeded".into(), "completed".into()));
+        assert_eq!(
+            (status("s4").await, run_status().await),
+            ("succeeded".into(), "completed".into())
+        );
 
-        let actions: Vec<String> = sqlx::query_scalar("SELECT action FROM audit_log WHERE run_id = $1 ORDER BY id").bind(run_id).fetch_all(&pool).await.unwrap();
+        let actions: Vec<String> =
+            sqlx::query_scalar("SELECT action FROM audit_log WHERE run_id = $1 ORDER BY id")
+                .bind(run_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         assert_eq!(
             actions,
             [
-                "run_started", "step_started", "step_succeeded", "step_started", "step_succeeded", "step_waiting_approval", "step_succeeded",
-                "step_approved", "step_failed", "step_retry", "step_waiting_approval", "step_skipped", "step_waiting_manual", "step_done",
+                "run_started",
+                "step_started",
+                "step_succeeded",
+                "step_started",
+                "step_succeeded",
+                "step_waiting_approval",
+                "step_succeeded",
+                "step_approved",
+                "step_failed",
+                "step_retry",
+                "step_waiting_approval",
+                "step_skipped",
+                "step_waiting_manual",
+                "step_done",
             ]
         );
     }
@@ -734,7 +1114,10 @@ mod tests {
     #[test]
     fn status_strings_match_contract() {
         assert_eq!(status_str(StepStatus::WaitingApproval), "waiting_approval");
-        assert_eq!(parse_status("waiting_manual").unwrap(), StepStatus::WaitingManual);
+        assert_eq!(
+            parse_status("waiting_manual").unwrap(),
+            StepStatus::WaitingManual
+        );
     }
 
     #[tokio::test]

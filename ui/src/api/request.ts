@@ -1,4 +1,3 @@
-// Wspólna obsługa odpowiedzi API: czytelny opis błędu i wysyłanie komend zmieniających stan.
 import type { Schemas } from "./client";
 
 /** Opis błędu HTTP dla człowieka: komunikat z backendu (`Error.error`) albo sam status. */

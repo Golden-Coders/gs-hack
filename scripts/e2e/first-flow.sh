@@ -6,7 +6,7 @@
 # Reguła `settlements-prod` (config/rules/settlements-prod.yaml) kieruje alert (severity
 # nadpisane na critical) do zespołu `settlements` (jan, ola). Oboje nie mają własnych
 # preferencji, więc dostają kanały domyślne zespołu dla critical: phone + sms
-# (config/people.yaml). Skrypt sprawdza SMS dla obojga.
+# (config/people.yaml). Skrypt sprawdza SMS dla członków zespołu.
 #
 # Działa na niepustym systemie: payload dostaje unikalny `error.code` (składnik fingerprintu
 # w config/mappings/workflow.v1.yaml), więc za każdym razem powstaje nowy alert.

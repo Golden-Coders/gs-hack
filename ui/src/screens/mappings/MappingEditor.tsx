@@ -1,7 +1,3 @@
-// Maksymalnie prosty i przejrzysty edytor mappingu:
-// - Użytkownik wpisuje zwykłe nazwy pól (np. "annotations.summary" albo "payload.tradeId"),
-//   a prefiks "$." / "raw." jest dodawany automatycznie pod spodem.
-// - Jeśli dostępny jest przykładowy payload, jednym kliknięciem na pigułkę pola można je wstawić.
 import { useMemo, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
@@ -72,8 +68,6 @@ export default function MappingEditor({
   const [schema, setSchema] = useState(initial.schema);
   const [title, setTitle] = useState(() => stripJsonPath(initial.title));
 
-  // Priorytet: uproszczony do 2 czytelnych trybów ("const" = stały, "path" = z pola zdarzenia)
-  // Jeśli w pliku było "rules", zachowujemy możliwość przełączenia lub edycji
   const initialSevMode = initial.severity.type === "path" ? "path" : "const";
   const [sevMode, setSevMode] = useState<"const" | "path">(initialSevMode);
   const [sevConst, setSevConst] = useState<Severity>(
@@ -88,13 +82,11 @@ export default function MappingEditor({
     initial.severity.type !== "const" ? (initial.severity.default ?? "warning") : "warning",
   );
 
-  // Łączenie duplikatów (fingerprint)
   const [groupFields, setGroupFields] = useState<string[]>(() => {
     const list = (initial.fingerprint ?? []).map(stripJsonPath).filter(Boolean);
     return list.length > 0 ? list : [""];
   });
 
-  // Dodatkowe pola wyciągane ze zdarzenia
   const [extraFields, setExtraFields] = useState<FieldRow[]>(() =>
     Object.entries(initial.fields ?? {}).map(([name, path]) => ({
       uid: uidSeq++,

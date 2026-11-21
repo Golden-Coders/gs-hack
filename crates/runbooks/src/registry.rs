@@ -54,21 +54,38 @@ fn builtins() -> Vec<ActionDef> {
 
 /// Sprawdza akcję z pliku albo z API, zanim trafi do rejestru.
 pub fn validate_action(def: &ActionDef) -> Result<(), String> {
-    if def.name.is_empty() || !def.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        return Err(format!("niepoprawna nazwa akcji `{}` (dozwolone: litery, cyfry, _ i -)", def.name));
+    if def.name.is_empty()
+        || !def
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "niepoprawna nazwa akcji `{}` (dozwolone: litery, cyfry, _ i -)",
+            def.name
+        ));
     }
     if builtins().iter().any(|b| b.name == def.name) {
-        return Err(format!("`{}` to akcja wbudowana; wybierz inną nazwę", def.name));
+        return Err(format!(
+            "`{}` to akcja wbudowana; wybierz inną nazwę",
+            def.name
+        ));
     }
     if def.kind != ActionKind::Http {
         return Err("w konfiguracji można definiować tylko akcje `kind: http`".into());
     }
     let http = def.http.as_ref().ok_or("brak sekcji `http`")?;
     if !METHODS.contains(&http.method.as_str()) {
-        return Err(format!("metoda `{}` niedozwolona (dozwolone: {})", http.method, METHODS.join(", ")));
+        return Err(format!(
+            "metoda `{}` niedozwolona (dozwolone: {})",
+            http.method,
+            METHODS.join(", ")
+        ));
     }
     if !(1..=MAX_TIMEOUT_MS).contains(&http.timeout_ms) {
-        return Err(format!("timeout_ms musi być w zakresie 1..={MAX_TIMEOUT_MS}"));
+        return Err(format!(
+            "timeout_ms musi być w zakresie 1..={MAX_TIMEOUT_MS}"
+        ));
     }
     condition::validate_template(&http.url).map_err(|e| format!("url: {e}"))?;
     if let Some(body) = &http.body {
@@ -133,7 +150,12 @@ impl Registry {
     /// które mógł zmienić tryb ręczny).
     pub fn enforce_approval(&self, steps: &mut [StepDef]) {
         for step in steps {
-            if step.action.as_deref().and_then(|a| self.get(a)).is_some_and(|a| a.risk == Risk::High) {
+            if step
+                .action
+                .as_deref()
+                .and_then(|a| self.get(a))
+                .is_some_and(|a| a.risk == Risk::High)
+            {
                 step.approval = Approval::Required;
             }
         }
@@ -147,7 +169,10 @@ impl Registry {
 
 /// Akcje użyte w krokach, których nie ma w rejestrze (po `classify`).
 pub fn unhandled_actions(def: &RunbookDef) -> impl Iterator<Item = &str> {
-    def.steps.iter().filter(|s| s.automation == Automation::Manual).filter_map(|s| s.action.as_deref())
+    def.steps
+        .iter()
+        .filter(|s| s.automation == Automation::Manual)
+        .filter_map(|s| s.action.as_deref())
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -205,7 +230,10 @@ impl Executor {
                 attempt.error(ActionError::RedirectNotAllowed)
             }
         });
-        let client = reqwest::Client::builder().redirect(policy).build().expect("reqwest client");
+        let client = reqwest::Client::builder()
+            .redirect(policy)
+            .build()
+            .expect("reqwest client");
         Self { client, allowlist }
     }
 
@@ -220,14 +248,33 @@ impl Executor {
     ) -> Result<ActionOutput, ActionError> {
         let (method, url, headers, body, timeout_ms) = match (action.kind, action.http.as_ref()) {
             (ActionKind::Builtin, _) if action.name == "http_get" => {
-                let url = params.get("url").and_then(Value::as_str).ok_or(ActionError::MissingParam("url"))?;
-                ("GET".to_string(), url.to_string(), BTreeMap::new(), None, HTTP_GET_TIMEOUT_MS)
+                let url = params
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .ok_or(ActionError::MissingParam("url"))?;
+                (
+                    "GET".to_string(),
+                    url.to_string(),
+                    BTreeMap::new(),
+                    None,
+                    HTTP_GET_TIMEOUT_MS,
+                )
             }
             (ActionKind::Http, Some(http)) => {
                 let ctx = overlay(alert_ctx, params);
                 let url = render_escaped(&http.url, &ctx, escape_url_component)?;
-                let body = http.body.as_deref().map(|t| render_escaped(t, &ctx, escape_json_string)).transpose()?;
-                (http.method.clone(), url, http.headers.clone(), body, http.timeout_ms)
+                let body = http
+                    .body
+                    .as_deref()
+                    .map(|t| render_escaped(t, &ctx, escape_json_string))
+                    .transpose()?;
+                (
+                    http.method.clone(),
+                    url,
+                    http.headers.clone(),
+                    body,
+                    http.timeout_ms,
+                )
             }
             _ => return Err(ActionError::NotHttp(action.name.clone())),
         };
@@ -237,12 +284,17 @@ impl Executor {
             return Err(ActionError::InvalidUrl(url.to_string()));
         }
         if !url.username().is_empty() || url.password().is_some() {
-            return Err(ActionError::InvalidUrl("URL z danymi uwierzytelniającymi (userinfo) jest niedozwolony".into()));
+            return Err(ActionError::InvalidUrl(
+                "URL z danymi uwierzytelniającymi (userinfo) jest niedozwolony".into(),
+            ));
         }
         if !host_allowed(&self.allowlist, &url) {
-            return Err(ActionError::HostNotAllowed(url.host_str().unwrap_or_default().to_string()));
+            return Err(ActionError::HostNotAllowed(
+                url.host_str().unwrap_or_default().to_string(),
+            ));
         }
-        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| ActionError::Request(format!("metoda {method}")))?;
+        let method = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|_| ActionError::Request(format!("metoda {method}")))?;
         let mut req = self
             .client
             .request(method, url)
@@ -284,29 +336,42 @@ impl Executor {
 const MAX_RENDERED_TEMPLATE_BYTES: usize = 64 * 1024;
 
 /// Renderuje szablon `{{ścieżka}}`, przepuszczając wyłącznie podstawiane wartości przez `escape`.
-fn render_escaped(template: &str, ctx: &Value, escape: impl Fn(&str) -> String) -> Result<String, ActionError> {
+fn render_escaped(
+    template: &str,
+    ctx: &Value,
+    escape: impl Fn(&str) -> String,
+) -> Result<String, ActionError> {
     condition::validate_template(template).map_err(|e| ActionError::Template(e.to_string()))?;
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
         let literal = &rest[..start];
         if out.len() + literal.len() > MAX_RENDERED_TEMPLATE_BYTES {
-            return Err(ActionError::Template("rendered output exceeds maximum size".into()));
+            return Err(ActionError::Template(
+                "rendered output exceeds maximum size".into(),
+            ));
         }
         out.push_str(literal);
         let after_open = &rest[start..];
-        let end = after_open.find("}}").ok_or_else(|| ActionError::Template("unclosed `{{`".into()))?;
+        let end = after_open
+            .find("}}")
+            .ok_or_else(|| ActionError::Template("unclosed `{{`".into()))?;
         let placeholder = &after_open[..end + 2];
-        let raw_val = condition::render_template(placeholder, ctx).map_err(|e| ActionError::Template(e.to_string()))?;
+        let raw_val = condition::render_template(placeholder, ctx)
+            .map_err(|e| ActionError::Template(e.to_string()))?;
         let escaped = escape(&raw_val);
         if out.len() + escaped.len() > MAX_RENDERED_TEMPLATE_BYTES {
-            return Err(ActionError::Template("rendered output exceeds maximum size".into()));
+            return Err(ActionError::Template(
+                "rendered output exceeds maximum size".into(),
+            ));
         }
         out.push_str(&escaped);
         rest = &after_open[end + 2..];
     }
     if out.len() + rest.len() > MAX_RENDERED_TEMPLATE_BYTES {
-        return Err(ActionError::Template("rendered output exceeds maximum size".into()));
+        return Err(ActionError::Template(
+            "rendered output exceeds maximum size".into(),
+        ));
     }
     out.push_str(rest);
     Ok(out)
@@ -396,7 +461,10 @@ fn is_allowed_secret(name: &str) -> bool {
         return true;
     }
     if let Ok(extra) = std::env::var("ACTION_SECRET_ALLOWLIST") {
-        return extra.split(',').map(str::trim).any(|entry| !entry.is_empty() && entry == name);
+        return extra
+            .split(',')
+            .map(str::trim)
+            .any(|entry| !entry.is_empty() && entry == name);
     }
     false
 }
@@ -404,9 +472,8 @@ fn is_allowed_secret(name: &str) -> bool {
 /// `Bearer ${TOKEN}` → wartość z env (wyłącznie dozwolone zmienne). Sekret nie trafia do definicji, dziennika ani błędów.
 fn expand_secrets(value: &str) -> Result<String, ActionError> {
     static SECRET_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = SECRET_RE.get_or_init(|| {
-        regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").expect("valid regex")
-    });
+    let re = SECRET_RE
+        .get_or_init(|| regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").expect("valid regex"));
     let mut err: Option<ActionError> = None;
     let out = re.replace_all(value, |c: &regex::Captures| {
         if err.is_some() {
@@ -442,7 +509,13 @@ mod tests {
             risk,
             description: None,
             params_schema: None,
-            http: Some(HttpActionSpec { method: "POST".into(), url: url.into(), headers: BTreeMap::new(), body: None, timeout_ms }),
+            http: Some(HttpActionSpec {
+                method: "POST".into(),
+                url: url.into(),
+                headers: BTreeMap::new(),
+                body: None,
+                timeout_ms,
+            }),
             version: 1,
         }
     }
@@ -450,17 +523,34 @@ mod tests {
     /// Lokalna usługa docelowa: echo nagłówków, wolna odpowiedź, duża odpowiedź, przekierowanie.
     async fn spawn_target() -> String {
         let app = Router::new()
-            .route("/ok", get(|| async { "ok" }).post(|h: HeaderMap| async move {
-                let get = |n: &str| h.get(n).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-                format!("{}|{}", get("idempotency-key"), get("authorization"))
-            }))
-            .route("/slow", get(|| async {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                "late"
-            }))
+            .route(
+                "/ok",
+                get(|| async { "ok" }).post(|h: HeaderMap| async move {
+                    let get = |n: &str| {
+                        h.get(n)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_string()
+                    };
+                    format!("{}|{}", get("idempotency-key"), get("authorization"))
+                }),
+            )
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    "late"
+                }),
+            )
             .route("/big", get(|| async { "x".repeat(MAX_RESPONSE_BYTES + 1) }))
-            .route("/fail", get(|| async { (axum::http::StatusCode::SERVICE_UNAVAILABLE, "down") }))
-            .route("/redirect", get(|| async { Redirect::temporary("http://evil.example/steal") }));
+            .route(
+                "/fail",
+                get(|| async { (axum::http::StatusCode::SERVICE_UNAVAILABLE, "down") }),
+            )
+            .route(
+                "/redirect",
+                get(|| async { Redirect::temporary("http://evil.example/steal") }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -474,20 +564,30 @@ mod tests {
     async fn http_get(url: &str) -> Result<ActionOutput, ActionError> {
         let registry = Registry::default();
         let params = json!({ "url": url }).as_object().unwrap().clone();
-        executor().execute(registry.get("http_get").unwrap(), &params, &json!({}), "k").await
+        executor()
+            .execute(registry.get("http_get").unwrap(), &params, &json!({}), "k")
+            .await
     }
 
     #[tokio::test]
     async fn http_get_ok_and_failure() {
         let base = spawn_target().await;
         assert_eq!(http_get(&format!("{base}/ok")).await.unwrap().body, "ok");
-        assert!(matches!(http_get(&format!("{base}/fail")).await, Err(ActionError::Status { status: 503, .. })));
+        assert!(matches!(
+            http_get(&format!("{base}/fail")).await,
+            Err(ActionError::Status { status: 503, .. })
+        ));
     }
 
     #[tokio::test]
     async fn host_outside_allowlist_is_rejected() {
-        let err = http_get("http://counterparty-service.evil/health").await.unwrap_err();
-        assert!(matches!(err, ActionError::HostNotAllowed(ref h) if h == "counterparty-service.evil"), "{err}");
+        let err = http_get("http://counterparty-service.evil/health")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ActionError::HostNotAllowed(ref h) if h == "counterparty-service.evil"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
@@ -503,7 +603,10 @@ mod tests {
         let mut action = http_action("slow", Risk::Low, &format!("{base}/slow"), 200);
         action.http.as_mut().unwrap().method = "GET".into();
         let started = std::time::Instant::now();
-        let err = executor().execute(&action, &Map::new(), &json!({}), "k").await.unwrap_err();
+        let err = executor()
+            .execute(&action, &Map::new(), &json!({}), "k")
+            .await
+            .unwrap_err();
         assert!(matches!(err, ActionError::Timeout(200)), "{err}");
         assert!(started.elapsed() < Duration::from_secs(2));
     }
@@ -511,21 +614,39 @@ mod tests {
     #[tokio::test]
     async fn oversized_response_fails() {
         let base = spawn_target().await;
-        assert!(matches!(http_get(&format!("{base}/big")).await, Err(ActionError::ResponseTooLarge)));
+        assert!(matches!(
+            http_get(&format!("{base}/big")).await,
+            Err(ActionError::ResponseTooLarge)
+        ));
     }
 
     #[tokio::test]
     async fn secret_and_idempotency_key_are_sent() {
         let base = spawn_target().await;
         let mut action = http_action("open_ticket", Risk::Low, &format!("{base}/ok"), 1000);
-        action.http.as_mut().unwrap().headers.insert("Authorization".into(), "Bearer ${P3_TEST_TICKET_TOKEN}".into());
+        action.http.as_mut().unwrap().headers.insert(
+            "Authorization".into(),
+            "Bearer ${P3_TEST_TICKET_TOKEN}".into(),
+        );
         std::env::set_var("P3_TEST_TICKET_TOKEN", "s3cret");
-        let out = executor().execute(&action, &Map::new(), &json!({}), "step:r:s2:0").await.unwrap();
+        let out = executor()
+            .execute(&action, &Map::new(), &json!({}), "step:r:s2:0")
+            .await
+            .unwrap();
         assert_eq!(out.body, "step:r:s2:0|Bearer s3cret");
 
-        action.http.as_mut().unwrap().headers.insert("Authorization".into(), "Bearer ${P3_TEST_MISSING_TOKEN}".into());
-        let err = executor().execute(&action, &Map::new(), &json!({}), "k").await.unwrap_err();
-        assert!(matches!(err, ActionError::MissingSecret(ref n) if n == "P3_TEST_MISSING_TOKEN"), "{err}");
+        action.http.as_mut().unwrap().headers.insert(
+            "Authorization".into(),
+            "Bearer ${P3_TEST_MISSING_TOKEN}".into(),
+        );
+        let err = executor()
+            .execute(&action, &Map::new(), &json!({}), "k")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ActionError::MissingSecret(ref n) if n == "P3_TEST_MISSING_TOKEN"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -534,7 +655,10 @@ mod tests {
         std::env::set_var("API_TOKEN", "super-secret-api-token");
         std::env::set_var("ACTION_SECRET_MY_KEY", "allowed-val");
 
-        assert_eq!(expand_secrets("Bearer ${ACTION_SECRET_MY_KEY}").unwrap(), "Bearer allowed-val");
+        assert_eq!(
+            expand_secrets("Bearer ${ACTION_SECRET_MY_KEY}").unwrap(),
+            "Bearer allowed-val"
+        );
 
         let err_existing = expand_secrets("Bearer ${DATABASE_URL}").unwrap_err();
         let err_api = expand_secrets("Bearer ${API_TOKEN}").unwrap_err();
@@ -554,7 +678,12 @@ mod tests {
             "summary": "alert\", \"admin\": true, \"x\": \"line1\nline2",
         });
 
-        let url = render_escaped("http://mock-targets:8090/cache/{{service}}/flush", &ctx, escape_url_component).unwrap();
+        let url = render_escaped(
+            "http://mock-targets:8090/cache/{{service}}/flush",
+            &ctx,
+            escape_url_component,
+        )
+        .unwrap();
         assert_eq!(
             url,
             "http://mock-targets:8090/cache/..%2F..%2Fadmin%3Fforce%3Dtrue%23frag%26x%3D%252f/flush"
@@ -565,27 +694,60 @@ mod tests {
         assert!(parsed_url.path().starts_with("/cache/"));
         assert!(parsed_url.path().ends_with("/flush"));
 
-        let dotdot = render_escaped("http://mock-targets:8090/cache/{{s}}/flush", &json!({"s": ".."}), escape_url_component).unwrap();
+        let dotdot = render_escaped(
+            "http://mock-targets:8090/cache/{{s}}/flush",
+            &json!({"s": ".."}),
+            escape_url_component,
+        )
+        .unwrap();
         assert_eq!(dotdot, "http://mock-targets:8090/cache/%2E%2E/flush");
 
-        let body = render_escaped(r#"{"summary": "{{summary}}"}"#, &ctx, escape_json_string).unwrap();
+        let body =
+            render_escaped(r#"{"summary": "{{summary}}"}"#, &ctx, escape_json_string).unwrap();
         let parsed: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed.as_object().unwrap().len(), 1);
-        assert_eq!(parsed["summary"], "alert\", \"admin\": true, \"x\": \"line1\nline2");
+        assert_eq!(
+            parsed["summary"],
+            "alert\", \"admin\": true, \"x\": \"line1\nline2"
+        );
     }
 
     #[tokio::test]
     async fn userinfo_and_port_allowlist_are_enforced() {
-        let err = http_get("http://user:pass@127.0.0.1:8080/ok").await.unwrap_err();
+        let err = http_get("http://user:pass@127.0.0.1:8080/ok")
+            .await
+            .unwrap_err();
         assert!(matches!(err, ActionError::InvalidUrl(_)), "{err}");
 
-        let allow = vec!["mock-targets:8090".into(), "example.com:443".into(), "[::1]:9000".into()];
-        assert!(host_allowed(&allow, &Url::parse("http://mock-targets:8090/restart").unwrap()));
-        assert!(!host_allowed(&allow, &Url::parse("http://mock-targets:9090/restart").unwrap()));
-        assert!(host_allowed(&allow, &Url::parse("https://example.com/health").unwrap()));
-        assert!(!host_allowed(&allow, &Url::parse("http://example.com/health").unwrap()));
-        assert!(host_allowed(&allow, &Url::parse("http://[::1]:9000/ok").unwrap()));
-        assert!(!host_allowed(&allow, &Url::parse("http://user@mock-targets:8090/restart").unwrap()));
+        let allow = vec![
+            "mock-targets:8090".into(),
+            "example.com:443".into(),
+            "[::1]:9000".into(),
+        ];
+        assert!(host_allowed(
+            &allow,
+            &Url::parse("http://mock-targets:8090/restart").unwrap()
+        ));
+        assert!(!host_allowed(
+            &allow,
+            &Url::parse("http://mock-targets:9090/restart").unwrap()
+        ));
+        assert!(host_allowed(
+            &allow,
+            &Url::parse("https://example.com/health").unwrap()
+        ));
+        assert!(!host_allowed(
+            &allow,
+            &Url::parse("http://example.com/health").unwrap()
+        ));
+        assert!(host_allowed(
+            &allow,
+            &Url::parse("http://[::1]:9000/ok").unwrap()
+        ));
+        assert!(!host_allowed(
+            &allow,
+            &Url::parse("http://user@mock-targets:8090/restart").unwrap()
+        ));
     }
 
     #[test]
@@ -595,20 +757,44 @@ mod tests {
             "steps:\n  - action: restart_service\n    approval: none\n  - action: flush_cdn\n  - action: shell\n    command: rm -rf /\n",
         )
         .unwrap();
-        let registry = Registry::new(vec![http_action("restart_service", Risk::High, "http://mock-targets:8090/restart_service", 5000)]);
+        let registry = Registry::new(vec![http_action(
+            "restart_service",
+            Risk::High,
+            "http://mock-targets:8090/restart_service",
+            5000,
+        )]);
         let resolved = registry.classify(&def);
-        assert_eq!((resolved.steps[0].automation, resolved.steps[0].approval), (Automation::Automated, Approval::Required));
+        assert_eq!(
+            (resolved.steps[0].automation, resolved.steps[0].approval),
+            (Automation::Automated, Approval::Required)
+        );
         assert_eq!(resolved.steps[1].automation, Automation::Manual);
-        assert_eq!(unhandled_actions(&resolved).collect::<Vec<_>>(), ["flush_cdn", "shell"]);
+        assert_eq!(
+            unhandled_actions(&resolved).collect::<Vec<_>>(),
+            ["flush_cdn", "shell"]
+        );
 
-        // Dodanie brakującej akcji: przy kolejnym przeładowaniu krok jest automatyczny.
-        let registry = Registry::new(vec![http_action("flush_cdn", Risk::Low, "http://mock-targets:8090/cdn/flush", 5000)]);
-        assert_eq!(registry.classify(&def).steps[1].automation, Automation::Automated);
+        let registry = Registry::new(vec![http_action(
+            "flush_cdn",
+            Risk::Low,
+            "http://mock-targets:8090/cdn/flush",
+            5000,
+        )]);
+        assert_eq!(
+            registry.classify(&def).steps[1].automation,
+            Automation::Automated
+        );
     }
 
     #[test]
     fn builtins_cannot_be_redefined() {
-        assert!(validate_action(&http_action("escalate", Risk::Low, "http://x/", 1000)).unwrap_err().contains("wbudowana"));
-        assert!(validate_action(&http_action("flush_cache", Risk::High, "http://x/", 1000)).is_ok());
+        assert!(
+            validate_action(&http_action("escalate", Risk::Low, "http://x/", 1000))
+                .unwrap_err()
+                .contains("wbudowana")
+        );
+        assert!(
+            validate_action(&http_action("flush_cache", Risk::High, "http://x/", 1000)).is_ok()
+        );
     }
 }

@@ -8,7 +8,6 @@ import App from "./App";
 import "./styles.css";
 import "./ui/ui.css";
 
-// Render dopiero po załadowaniu motywu (bez mignięcia bez tokenów); `auto` = motyw systemu, zmiany na żywo.
 setGlobalTheme({ colorMode: "auto", light: "light", dark: "dark", spacing: "spacing", typography: "typography" }).finally(
   () =>
     createRoot(document.getElementById("root")!).render(

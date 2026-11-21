@@ -1,5 +1,3 @@
-// Przejrzysty, maksymalnie prosty ekran Runbooków z możliwością tworzenia/edycji na stronie
-// oraz generowania kroków runbooka przez lokalny model AI (Ollama).
 import { useEffect, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
@@ -300,7 +298,6 @@ function RunbookEditor({
     return [emptyEditableStep()];
   });
 
-  // Panel AI (połączony z lokalnym modelem Ollama przez POST /runbooks/draft)
   const [aiPrompt, setAiPrompt] = useState(initial?.kind === "manual" && initial?.body ? initial.body : "");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);

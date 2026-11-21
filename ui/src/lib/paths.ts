@@ -1,5 +1,3 @@
-// Ścieżki do pól payloadu: JSONPath (`$.a.b[0]`, używany w mappingu) i notacja kropkowa warunków (`raw.a.b.0`).
-// Segment to klucz obiektu (string) albo indeks tablicy (number).
 
 export type PathSeg = string | number;
 
