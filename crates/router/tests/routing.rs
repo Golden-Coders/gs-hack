@@ -586,3 +586,55 @@ version: 2
     assert!(recipients_after.contains("kasia"));
 }
 
+#[test]
+fn pricing_warnings_rule_routes_to_ui_as_primary_channel() {
+    let snap = load_repo_snapshot();
+    let now = Utc::now();
+
+    let mut fields = serde_json::Map::new();
+    fields.insert("service".into(), serde_json::json!("pricing-engine-7"));
+    let event = CanonicalEvent {
+        event_id: Uuid::new_v4(),
+        schema: "pricing.log.v1".into(),
+        source: "http".into(),
+        severity: Severity::Warning,
+        title: "Pricing latency > 1s".into(),
+        fingerprint: "pricing.log.v1|pricing-engine-7|latency".into(),
+        resolved: false,
+        fields,
+        raw: serde_json::json!({
+            "service": "pricing-engine-7",
+            "level": "WARN",
+            "message": "Pricing latency > 1s"
+        }),
+        received_at: now,
+        mapping_version: 1,
+    };
+    let alert = AlertChanged {
+        alert_id: Uuid::new_v4(),
+        fingerprint: event.fingerprint.clone(),
+        episode: 1,
+        transition: Transition::Opened,
+        state: AlertState::Open,
+        severity: Severity::Warning,
+        count: 1,
+        event,
+        actor: None,
+        at: now,
+    };
+
+    let reqs = route_alert(&snap, &alert, "http://localhost:5173");
+    assert_eq!(reqs.len(), 1, "pricing-warnings kieruje do zespołu pricing (tomek) na kanał UI");
+    let req = &reqs[0];
+    assert_eq!(req.person_id, "tomek");
+    assert_eq!(req.origin, DeliveryOrigin::Rule { rule_id: "pricing-warnings".into() });
+    assert_eq!(req.chain, vec![Channel::Ui]);
+    assert_eq!(req.rendered[&Channel::Ui].title, "Pricing warning: Pricing latency > 1s");
+
+    // Severity INFO poniżej progu `gte warning` nie powinno dopasować reguły.
+    let mut info_alert = alert;
+    info_alert.severity = Severity::Info;
+    info_alert.event.severity = Severity::Info;
+    assert!(route_alert(&snap, &info_alert, "http://localhost:5173").is_empty());
+}
+

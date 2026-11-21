@@ -496,3 +496,76 @@ fn formatting_helpers_handle_links_and_empty_bodies() {
     };
     assert_eq!(format_phone_body(&empty_body), "Call: WORKFLOW_FAILED order-settlement");
 }
+
+#[tokio::test]
+async fn concurrent_sender_and_retry_on_same_key_sends_only_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct SlowCountingSms {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ChannelAdapter for SlowCountingSms {
+        fn kind(&self) -> Channel {
+            Channel::Sms
+        }
+
+        fn send<'a>(
+            &'a self,
+            _req: &'a DeliveryRequest,
+            _rendered: &'a Rendered,
+            _to: Option<&'a str>,
+        ) -> futures::future::BoxFuture<'a, Result<String, SendError>> {
+            let calls = self.calls.clone();
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+                Ok("slow-sms:ok".to_string())
+            })
+        }
+    }
+
+    let backend = Arc::new(InMemoryBackend::new());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut adapters: BTreeMap<Channel, Arc<dyn ChannelAdapter>> = BTreeMap::new();
+    adapters.insert(Channel::Sms, Arc::new(SlowCountingSms { calls: calls.clone() }));
+    adapters.insert(Channel::Ui, Arc::new(UiAdapter::new(backend.clone())));
+
+    let engine = SenderEngine::with_adapters(backend.clone(), adapters, SenderConfig::default());
+    let req1 = fixture_delivery_request();
+    let mut req2 = req1.clone();
+    req2.attempt = 1; // symuluje równoległą próbę z `sender-retry` na tym samym kluczu
+
+    let (r1, r2) = tokio::join!(engine.process_request(req1), engine.process_request(req2));
+    let o1 = r1.unwrap();
+    let o2 = r2.unwrap();
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "równoległe przetwarzanie nie może wysłać dwukrotnie");
+    let outcomes = [o1, o2];
+    assert!(outcomes.iter().any(|o| matches!(o, ProcessOutcome::Delivered(_))));
+    assert!(outcomes
+        .iter()
+        .any(|o| matches!(o, ProcessOutcome::InProgress(_) | ProcessOutcome::AlreadyDelivered(_))));
+}
+
+#[tokio::test]
+async fn ui_as_primary_channel_delivers_and_emits_ui_event() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let engine = SenderEngine::new(backend.clone(), "localhost", 1025, SenderConfig::default());
+    let mut req = fixture_delivery_request();
+    req.chain = vec![Channel::Ui];
+    req.chain_index = 0;
+
+    let outcome = engine.process_request(req.clone()).await.unwrap();
+    let ProcessOutcome::Delivered(rec) = outcome else {
+        panic!("expected Delivered for UI primary channel, got {outcome:?}");
+    };
+    assert_eq!(rec.channel, Channel::Ui);
+    assert_eq!(rec.status, DeliveryStatus::Delivered);
+    assert!(rec.delivered_at.is_some());
+    assert!(backend.mock_outbox().is_empty(), "kanał UI nie zapisuje do mock_outbox");
+    assert!(backend
+        .ui_events()
+        .iter()
+        .any(|e| e.kind == UiEventKind::DeliveryStatus && e.alert_id == Some(req.alert_id)));
+}

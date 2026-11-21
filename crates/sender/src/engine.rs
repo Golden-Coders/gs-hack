@@ -10,7 +10,7 @@ use contracts::{Channel, DeliveryRequest, DeliveryStatus, Rendered, UiEvent, UiE
 use uuid::Uuid;
 
 use crate::adapters::{ChannelAdapter, EmailAdapter, PhoneMockAdapter, SendError, SmsMockAdapter, UiAdapter};
-use crate::store::{DeliveryBackend, DeliveryRecord, UpsertDelivery};
+use crate::store::{ClaimOutcome, DeliveryBackend, DeliveryRecord, UpsertDelivery};
 
 /// Domyślne odstępy backoffu między próbami (1 s, 5 s, 30 s) zgodnie z design D8.
 pub const DEFAULT_BACKOFF_MS: [u64; 3] = [1_000, 5_000, 30_000];
@@ -75,6 +75,8 @@ pub enum ProcessOutcome {
     Delivered(DeliveryRecord),
     /// Dostarczenie dla tego `(alert_id, episode, person_id, channel)` było już wcześniej w stanie `delivered`.
     AlreadyDelivered(DeliveryRecord),
+    /// Inny worker (np. równoległy `sender` / `sender-retry`) już wysyła ten sam klucz idempotencji.
+    InProgress(DeliveryRecord),
     /// Błąd tymczasowy – zaplanowano ponowną próbę na `deliveries.retry`.
     Retrying {
         record: DeliveryRecord,
@@ -176,10 +178,26 @@ impl SenderEngine {
 
             let idem_key = contracts::keys::delivery(req.alert_id, req.episode, &req.person_id, channel);
 
-            // 1. Sprawdzenie idempotencji (design D9):
-            // Ponowna próba wysłania tylko wtedy, gdy status != delivered.
-            if let Some(existing) = self.backend.get_delivery_by_key(&idem_key).await? {
-                if existing.status == DeliveryStatus::Delivered {
+            let attempt_num = req.attempt + 1;
+
+            // 1. Atomowe sprawdzenie idempotencji i przejęcie klucza (design D9 + hardening 6.2):
+            // Zapobiega wyścigowi między `sender` i `sender-retry` (lub dwiema instancjami)
+            // próbującymi równocześnie wysłać ten sam `(alert_id, episode, person_id, channel)`.
+            let pending_record = match self
+                .backend
+                .claim_delivery(UpsertDelivery {
+                    idempotency_key: &idem_key,
+                    request: &req,
+                    channel,
+                    status: DeliveryStatus::Pending,
+                    attempts: attempt_num as i32,
+                    last_error: req.last_error.as_deref(),
+                    delivered_at: None,
+                })
+                .await?
+            {
+                ClaimOutcome::Claimed(rec) => rec,
+                ClaimOutcome::AlreadyDelivered(existing) => {
                     tracing::info!(
                         alert_id = %req.alert_id,
                         episode = req.episode,
@@ -190,24 +208,18 @@ impl SenderEngine {
                     );
                     return Ok(ProcessOutcome::AlreadyDelivered(existing));
                 }
-                req.delivery_id = existing.id;
-            }
-
-            let attempt_num = req.attempt + 1;
-
-            // 2. Zapis stanu `pending` przed próbą wysyłki.
-            let pending_record = self
-                .backend
-                .upsert_delivery(UpsertDelivery {
-                    idempotency_key: &idem_key,
-                    request: &req,
-                    channel,
-                    status: DeliveryStatus::Pending,
-                    attempts: attempt_num as i32,
-                    last_error: req.last_error.as_deref(),
-                    delivered_at: None,
-                })
-                .await?;
+                ClaimOutcome::InProgress(existing) => {
+                    tracing::info!(
+                        alert_id = %req.alert_id,
+                        episode = req.episode,
+                        person_id = %req.person_id,
+                        ?channel,
+                        delivery_id = %existing.id,
+                        "skipping concurrent delivery: already in progress by another worker"
+                    );
+                    return Ok(ProcessOutcome::InProgress(existing));
+                }
+            };
             req.delivery_id = pending_record.id;
 
             let rendered = req

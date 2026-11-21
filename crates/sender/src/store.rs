@@ -105,6 +105,20 @@ pub struct UpsertDelivery<'a> {
     pub delivered_at: Option<Timestamp>,
 }
 
+/// Wynik atomowego przejęcia dostarczenia do wysyłki (eliminuje wyścig `sender`/`sender-retry` na tym samym kluczu).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClaimOutcome {
+    /// Dostarczenie przejęte przez bieżącego workera (`status = 'pending'`, `attempts = attempt_num`).
+    Claimed(DeliveryRecord),
+    /// Dostarczenie zostało już wcześniej zakończone sukcesem (`status = 'delivered'`).
+    AlreadyDelivered(DeliveryRecord),
+    /// Inny worker właśnie wysyła to dostarczenie (`status = 'pending'`, `attempts > 0`, świeży lease < 60 s).
+    InProgress(DeliveryRecord),
+}
+
+/// Czas ważności lease'a `pending` przed uznaniem, że poprzedni worker uległ awarii w trakcie wysyłki.
+const PENDING_LEASE_SECS: i64 = 60;
+
 /// Abstrakcja nad bazą danych (`deliveries`, `mock_outbox`, `mock_channels`) oraz publikacją na topiki Kafki.
 pub trait DeliveryBackend: Send + Sync {
     /// Sprawdza, czy dany kanał jest włączony w `mock_channels` (domyślnie `true`).
@@ -118,6 +132,9 @@ pub trait DeliveryBackend: Send + Sync {
         &self,
         delivery_id: Uuid,
     ) -> BoxFuture<'_, anyhow::Result<Option<(DeliveryRecord, DeliveryRequest)>>>;
+
+    /// Atomowo przejmuje klucz idempotencji do wysyłki (chroni przed podwójną wysyłką przy wyścigu `sender`/`sender-retry`).
+    fn claim_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>>;
 
     /// Tworzy lub aktualizuje wiersz w `deliveries` (z zachowaniem istniejącego `id` przy konflikcie klucza idempotencji).
     fn upsert_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>>;
@@ -278,6 +295,62 @@ pub mod db {
         rows.iter().map(row_to_delivery).collect()
     }
 
+    pub async fn claim_delivery(pool: &PgPool, params: UpsertDelivery<'_>) -> anyhow::Result<ClaimOutcome> {
+        let ch = channel_to_str(params.channel);
+        let req_json = serde_json::to_value(params.request).context("serializing DeliveryRequest")?;
+        let now = Utc::now();
+        let lease_cutoff = now - chrono::Duration::seconds(PENDING_LEASE_SECS);
+
+        let claimed = sqlx::query(
+            "INSERT INTO deliveries (
+                id, idempotency_key, alert_id, episode, person_id, channel,
+                status, attempts, last_error, request, received_at, delivered_at, updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, NULL, $11)
+             ON CONFLICT (idempotency_key) DO UPDATE SET
+                status = 'pending',
+                attempts = GREATEST(deliveries.attempts, EXCLUDED.attempts),
+                last_error = EXCLUDED.last_error,
+                request = EXCLUDED.request,
+                updated_at = EXCLUDED.updated_at
+             WHERE deliveries.status <> 'delivered'
+               AND (
+                    deliveries.status <> 'pending'
+                    OR deliveries.attempts = 0
+                    OR deliveries.updated_at < $12
+               )
+             RETURNING id, alert_id, episode, person_id, channel, status, attempts, last_error, received_at, delivered_at, updated_at",
+        )
+        .bind(params.request.delivery_id)
+        .bind(params.idempotency_key)
+        .bind(params.request.alert_id)
+        .bind(params.request.episode)
+        .bind(&params.request.person_id)
+        .bind(ch)
+        .bind(params.attempts)
+        .bind(params.last_error)
+        .bind(req_json)
+        .bind(params.request.received_at)
+        .bind(now)
+        .bind(lease_cutoff)
+        .fetch_optional(pool)
+        .await
+        .context("claiming delivery row")?;
+
+        if let Some(row) = claimed {
+            return Ok(ClaimOutcome::Claimed(row_to_delivery(&row)?));
+        }
+
+        let existing = get_delivery_by_key(pool, params.idempotency_key)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("delivery disappeared during claim: {}", params.idempotency_key))?;
+        if existing.status == DeliveryStatus::Delivered {
+            Ok(ClaimOutcome::AlreadyDelivered(existing))
+        } else {
+            Ok(ClaimOutcome::InProgress(existing))
+        }
+    }
+
     pub async fn upsert_delivery(pool: &PgPool, params: UpsertDelivery<'_>) -> anyhow::Result<DeliveryRecord> {
         let ch = channel_to_str(params.channel);
         let st = status_to_str(params.status);
@@ -401,6 +474,10 @@ impl DeliveryBackend for PgKafkaBackend {
         delivery_id: Uuid,
     ) -> BoxFuture<'_, anyhow::Result<Option<(DeliveryRecord, DeliveryRequest)>>> {
         Box::pin(db::get_delivery_with_request(&self.pool, delivery_id))
+    }
+
+    fn claim_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>> {
+        Box::pin(async move { db::claim_delivery(&self.pool, params).await })
     }
 
     fn upsert_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>> {
@@ -573,6 +650,52 @@ impl DeliveryBackend for InMemoryBackend {
             .find(|(r, _)| r.id == delivery_id)
             .cloned();
         Box::pin(async move { Ok(found) })
+    }
+
+    fn claim_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<ClaimOutcome>> {
+        let mut s = self.state.lock().unwrap();
+        let now = Utc::now();
+        let lease_cutoff = now - chrono::Duration::seconds(PENDING_LEASE_SECS);
+        let key = params.idempotency_key.to_string();
+
+        if let Some((existing, _)) = s.deliveries_by_key.get(&key) {
+            if existing.status == DeliveryStatus::Delivered {
+                let rec = existing.clone();
+                return Box::pin(async move { Ok(ClaimOutcome::AlreadyDelivered(rec)) });
+            }
+            if existing.status == DeliveryStatus::Pending && existing.attempts > 0 && existing.updated_at >= lease_cutoff {
+                let rec = existing.clone();
+                return Box::pin(async move { Ok(ClaimOutcome::InProgress(rec)) });
+            }
+        }
+
+        let (id, prev_attempts, existing_delivered_at) = match s.deliveries_by_key.get(&key) {
+            Some((existing, _)) => (existing.id, existing.attempts, existing.delivered_at),
+            None => {
+                s.key_order.push(key.clone());
+                (params.request.delivery_id, 0, None)
+            }
+        };
+
+        let mut req_copy = params.request.clone();
+        req_copy.delivery_id = id;
+
+        let record = DeliveryRecord {
+            id,
+            alert_id: params.request.alert_id,
+            episode: params.request.episode,
+            person_id: params.request.person_id.clone(),
+            channel: params.channel,
+            status: DeliveryStatus::Pending,
+            attempts: prev_attempts.max(params.attempts),
+            last_error: params.last_error.map(ToOwned::to_owned),
+            received_at: params.request.received_at,
+            delivered_at: existing_delivered_at,
+            updated_at: now,
+        };
+
+        s.deliveries_by_key.insert(key, (record.clone(), req_copy));
+        Box::pin(async move { Ok(ClaimOutcome::Claimed(record)) })
     }
 
     fn upsert_delivery<'a>(&'a self, params: UpsertDelivery<'a>) -> BoxFuture<'a, anyhow::Result<DeliveryRecord>> {
