@@ -1,5 +1,7 @@
 // Czytelny widok drzewa warunków: all / any / not z liśćmi `field op value`. Tylko do odczytu,
 // użyteczny też w edytorze reguł. Ewaluacją zajmuje się backend (crate `condition`).
+import { Code } from "@atlaskit/code";
+import { Text } from "@atlaskit/primitives/compiled";
 import type { Schemas } from "../api/client";
 import "./ConditionView.css";
 
@@ -19,6 +21,14 @@ const OP_LABEL: Record<NonNullable<Cond["op"]>, string> = {
   glob: "pasuje do wzorca",
 };
 
+// Operator logiczny („nie” to operator, nie porażka — bez czerwieni).
+const Op = ({ children }: { children: string }) => (
+  <Text size="small" weight="semibold" color="color.text.subtle">
+    {children.toUpperCase()}
+  </Text>
+);
+const Muted = ({ children }: { children: string }) => <Text color="color.text.subtlest">{children}</Text>;
+
 function fmt(value: unknown): string {
   return typeof value === "string" ? `"${value}"` : JSON.stringify(value);
 }
@@ -28,12 +38,14 @@ function Node({ cond }: { cond: Cond }) {
   if (cond.all) {
     items.push(
       <li key="all">
-        <span className="condition-op">wszystkie z</span>
+        <Op>wszystkie z</Op>
         <ul>
           {cond.all.length ? (
             cond.all.map((c, i) => <Node key={i} cond={c} />)
           ) : (
-            <li className="condition-empty">(pusta lista = prawda)</li>
+            <li>
+              <Muted>(pusta lista = prawda)</Muted>
+            </li>
           )}
         </ul>
       </li>,
@@ -42,12 +54,14 @@ function Node({ cond }: { cond: Cond }) {
   if (cond.any) {
     items.push(
       <li key="any">
-        <span className="condition-op">dowolny z</span>
+        <Op>dowolny z</Op>
         <ul>
           {cond.any.length ? (
             cond.any.map((c, i) => <Node key={i} cond={c} />)
           ) : (
-            <li className="condition-empty">(pusta lista = fałsz)</li>
+            <li>
+              <Muted>(pusta lista = fałsz)</Muted>
+            </li>
           )}
         </ul>
       </li>,
@@ -56,7 +70,7 @@ function Node({ cond }: { cond: Cond }) {
   if (cond.not) {
     items.push(
       <li key="not">
-        <span className="condition-op not">nie</span>
+        <Op>nie</Op>
         <ul>
           <Node cond={cond.not} />
         </ul>
@@ -67,9 +81,9 @@ function Node({ cond }: { cond: Cond }) {
     const op = cond.op ?? "eq";
     items.push(
       <li key="leaf" className="condition-leaf">
-        <span className="condition-field">{cond.field}</span>
-        <span className="condition-cmp">{OP_LABEL[op] ?? op}</span>
-        {op !== "exists" && <span className="condition-value">{fmt(cond.value)}</span>}
+        <Code>{cond.field}</Code>
+        <Text color="color.text.subtle">{OP_LABEL[op] ?? op}</Text>
+        {op !== "exists" && <Code>{fmt(cond.value)}</Code>}
       </li>,
     );
   }
@@ -78,7 +92,7 @@ function Node({ cond }: { cond: Cond }) {
 
 export default function ConditionView({ condition }: { condition?: Cond | null }) {
   const empty = !condition || (!condition.all && !condition.any && !condition.not && condition.field === undefined);
-  if (empty) return <span className="condition-empty">brak warunku (pasuje do każdego alertu)</span>;
+  if (empty) return <Muted>brak warunku (pasuje do każdego alertu)</Muted>;
   return (
     <div className="condition">
       <ul>

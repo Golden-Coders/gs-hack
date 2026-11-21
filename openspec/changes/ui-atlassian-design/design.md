@@ -4,7 +4,7 @@
 
 Motywacja: `proposal.md` → Why. Stan obecny `ui/` (gałąź `main` po refaktorze `p4/ui-refactor-1`):
 
-- React 19, Vite 6, TypeScript 5.6 (`skipLibCheck: true`), react-router 7, vitest 3 w środowisku `node` (tylko `src/**/*.test.ts`, bez DOM), npm (`package-lock.json`), kontener `ui` robi `npm ci` przy starcie.
+- React 19 (w fazie 2 zejście na React 18.3 — D1), Vite 6, TypeScript 5.6 (`skipLibCheck: true`), react-router 7, vitest 3 w środowisku `node` (tylko `src/**/*.test.ts`, bez DOM), npm (`package-lock.json`), kontener `ui` robi `npm ci` przy starcie.
 - Wygląd: własne zmienne CSS w `styles.css` (43 kolory hex, w tym ciemny pasek nawigacji), style prymitywów w `ui/ui.css`, 9 plików CSS ekranów i 3 komponentów. Statusy jako `Badge` z 7 tonami (`components/Badges.tsx`), w kilku miejscach wyróżniane samym kolorem (lewa krawędź `.ad-step-*`, `.approval-high`, `.channel-down`, `.rules-saved`).
 - Nie ma ESLinta ani żadnej automatycznej kontroli kolorów.
 - Źródła dla decyzji: lustro dokumentacji ADS (`~/.claude/skills/atlassian-design/references/docs/`), `npm view <pkg> peerDependencies` (wyniki niżej), typy pakietów `@atlaskit/lozenge`, `@atlaskit/tokens`, `@atlaskit/side-navigation`, `@atlaskit/page-layout`, `@atlaskit/eslint-plugin-design-system` i `lucide-react` pobrane przez `npm pack` (bez instalacji w repo).
@@ -76,7 +76,7 @@ Dodatkowo `ui/ui.css`: `.data-table`, `.table-wrap`, `.nowrap`, `.field*`, `.seg
 
 Format: decyzja → uzasadnienie → odrzucone alternatywy.
 
-### D1. Pakiety `@atlaskit/*` na React 19; powłoka na `page-layout` + `side-navigation`
+### D1. Pakiety `@atlaskit/*` na React 18.3; powłoka na `page-layout` + `side-navigation`
 
 `npm view <pkg> version peerDependencies` (2026-11-21):
 
@@ -103,12 +103,15 @@ Format: decyzja → uzasadnienie → odrzucone alternatywy.
 | `@atlaskit/page-header` | 13.3.4 | `^18.2.0 \|\| ^19.0.0` | |
 | `@atlaskit/page-layout` | 5.5.9 | `^18.2.0 \|\| ^19.0.0` (+ react-dom) | `PageLayout`, `LeftSidebar`, `Main`, `Content` |
 | `@atlaskit/side-navigation` | 13.3.10 | `^18.2.0 \|\| ^19.0.0` | `SideNavigation`, `NavigationHeader`, `NavigationContent`, `Section`, `CustomItem` (prop `component` → `NavLink`), `NavigationFooter` |
-| **`@atlaskit/navigation-system`** | 12.0.1 | **`^18.2.0`** (+ react-dom `^18.2.0`) | **niezgodny z React 19 — nie używamy** |
+| **`@atlaskit/navigation-system`** | 12.0.1 | **`^18.2.0`** (+ react-dom `^18.2.0`) | **niezgodny z React 19; mimo zejścia na 18.3 nie używamy (decyzja człowieka: page-layout + side-navigation)** |
 | `@atlassian/navigation-system` | — | — | 404 w publicznym npm (lustro docs opisuje tę wersję) |
 | `@atlaskit/eslint-plugin-design-system` | 16.16.1 | `^18.2.0 \|\| ^19.0.0` | preset `recommended/flat` istnieje |
 | `lucide-react` | 1.77.0 | `^16.5.1 … \|\| ^19.0.0` | |
 
-Wniosek: poza `navigation-system` wszystko deklaruje React 19. Powłoka: `@atlaskit/page-layout` + `@atlaskit/side-navigation` (oba w lustrze docs: `pageLayout.md`) zamiast nowego systemu nawigacji.
+**Korekta po zadaniu 2.1 (decyzja człowieka): React 18.3.1 zamiast 19.** Pakiety bezpośrednie deklarują `^19.0.0`, ale ich zależności przechodnie w najnowszych wersjach (`latest`, brak nowszych tagów) mają peer tylko `^18.2.0`: `@atlaskit/analytics-next` 12.6.0 (`react`, `react-dom`), `@atlaskit/portal` 7.1.0 (`react`, `react-dom`), `@atlaskit/interaction-context` 4.1.0, `@atlaskit/browser-apis` 1.2.0. Na React 19 npm po cichu zagnieżdżał ~17 kopii `react-dom@18.3.1` (`npm ls` → `invalid`), a `@atlaskit/portal` (Flag, Modal, Tooltip) importuje z nich `createPortal` — załadowanie `react-dom@18` przy `react@19` kończy się błędem `Cannot read properties of undefined (reading 'ReactCurrentDispatcher')`. Kod UI nie używa API specyficznych dla React 19, `react-router-dom` 7 i `react-markdown` 10 mają peer `react >=18`. Wersje: `react`/`react-dom` 18.3.1, `@types/react` 18.3.31, `@types/react-dom` 18.3.7 (dokładne). Odrzucone: `overrides` (pakiety nie deklarują wsparcia React 19), `resolve.dedupe` w Vite (zostawia `invalid` w `npm ls`, maskuje problem tylko w bundlu).
+Pozostałe ostrzeżenia `npm warn ERESOLVE overriding peer dependency` (bez flag, `npm ci` przechodzi): `react-scrolllock` 5.0.1 (zależność `@atlaskit/modal-dialog`, peer `react ^16.3.0`) i `@atlaskit/analytics-next-stable-react-context` 1.0.1 (peer `react ^16.8.0`) — przestarzałe zakresy, których nie spełnia żadna wersja React ≥ 17; `npm ls` pokazuje jedną fizyczną kopię `react`/`react-dom` 18.3.1, ale oznacza `react` jako `invalid` z powodu `react-scrolllock`.
+
+Wniosek: poza `navigation-system` wszystkie pakiety bezpośrednie deklarują React 18 i 19; o wersji decydują zależności przechodnie (wyżej). Powłoka: `@atlaskit/page-layout` + `@atlaskit/side-navigation` (oba w lustrze docs: `pageLayout.md`) zamiast nowego systemu nawigacji.
 Odrzucone: `@atlaskit/navigation-system` z `--legacy-peer-deps` (ryzyko błędów w runtime, `npm ci` w kontenerze bez flag); `@atlaskit/atlassian-navigation` (górny pasek produktów Atlassian — nadmiarowy dla 8 pozycji menu).
 
 ### D2. Ikony: `lucide-react`; `@atlaskit/icon` zakazany w naszym kodzie
@@ -136,7 +139,7 @@ Mapa stary → ADS:
 
 | Stary element | ADS | Pakiet / dokument | Uzasadnienie |
 |---|---|---|---|
-| powłoka `.layout` + `<nav>` (`App.tsx`) | `PageLayout` › `LeftSidebar` › `SideNavigation` (`NavigationHeader`/`Header` „Alerting”, `NavigationContent` z `Section` „Operacje” / „Konfiguracja”, `CustomItem component={NavLink}` z `isSelected`, `NavigationFooter` z `SessionBar`) + `Main` | `@atlaskit/page-layout`, `@atlaskit/side-navigation`; `pageLayout.md` | wzorzec Jira; skip-linki z `page-layout`; zgodne z React 19 |
+| powłoka `.layout` + `<nav>` (`App.tsx`) | `PageLayout` › `LeftSidebar` › `SideNavigation` (`NavigationHeader`/`Header` „Alerting”, `NavigationContent` z `Section` „Operacje” / „Konfiguracja”, `CustomItem component={NavLink}` z `isSelected`, `NavigationFooter` z `SessionBar`) + `Main` | `@atlaskit/page-layout`, `@atlaskit/side-navigation`; `pageLayout.md` | wzorzec Jira; skip-linki z `page-layout` |
 | nagłówek ekranu (`<h1>` + przyciski) | `PageHeader` (`actions`, `bottomBar` dla filtrów) | `@atlaskit/page-header`; `pageHeader.md` | jednolite nagłówki |
 | `<h1>`–`<h3>` | `Heading` (`size`, `as`) | `@atlaskit/heading`; `heading.md` | reguła lint `use-heading` |
 | `button`, `.primary`, `.danger` | `Button` (`appearance="primary" \| "danger" \| "subtle"`, `isLoading`, `isDisabled`), `IconButton` (`label` wymagany) | `@atlaskit/button/new`; `button.md`, `iconButton.md` | `isLoading` zastępuje „Wysyłanie…” |
@@ -284,7 +287,7 @@ Grupy fazy 3 (żaden plik nie należy do dwóch grup; importy między grupami �
 
 ## Risks / Trade-offs
 
-- [React 19 i peer deps] Wszystkie wybrane `@atlaskit/*` deklarują `^19.0.0`, ale transytywne zależności (np. `react-select`, `@emotion/react`) mogą zgłaszać ostrzeżenia peer. → Zadanie 2.1: `npm install` bez `--legacy-peer-deps` i bez `ERESOLVE`; `npm ls react` pokazuje jedną kopię React; kontener `ui` (`npm ci`) startuje. Jeśli którykolwiek pakiet wymaga React 18 — stop i pytanie do człowieka, nie flagi npm.
+- [React i peer deps] **Zmaterializowane w 2.1:** przechodnie `@atlaskit/{analytics-next,portal,interaction-context,browser-apis}` mają peer tylko `^18.2.0`, a zagnieżdżony `react-dom@18` wywracał się z React 19. → Decyzja człowieka: zejście na React 18.3.1 (D1). Weryfikacja 2.1: `npm install` bez `--legacy-peer-deps` i bez `overrides`, jedna fizyczna kopia `react`/`react-dom` 18.3.1, `rm -rf node_modules && npm ci` przechodzi; zostają ostrzeżenia peer `react-scrolllock` (`^16.3.0`) i `analytics-next-stable-react-context` (`^16.8.0`) nie do spełnienia przez żadną wersję React ≥ 17. Powrót na React 19 — gdy Atlassian wyda te pakiety z peer `^19`.
 - [Runtime `@compiled/react` bez pluginu buildu] Pakiety ADS są dystrybuowane jako skompilowany JS ze stylami w runtime; nasz kod nie używa `css`/`cssMap`, więc plugin Compiled nie jest potrzebny. → Weryfikacja w 2.4: `/dev/components` renderuje `Button`, `Lozenge`, `Box` ze stylami w `npm run build && npm run preview`.
 - [ESLint 9 vs plugin] Plugin ma w devDependencies `eslint ^8.57.0`, ale eksportuje preset flat. → Zadanie 2.5 sprawdza, że `npm run lint` działa na ESLint 9; jeśli nie — ESLint 8.57 + `.eslintrc.cjs` z `plugin:@atlaskit/design-system/recommended` (README pakietu).
 - [Typy ikon ADS vs lucide] `IconButton`/`iconBefore` oczekują typu ikony ADS. → Adapter `ui/icons.tsx` (D2), weryfikacja `npm run typecheck` w 2.6.

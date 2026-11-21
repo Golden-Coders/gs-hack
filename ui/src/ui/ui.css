@@ -1,39 +1,15 @@
-/* Style prymitywów z primitives.tsx. Tylko tokeny z styles.css. */
+/* Style uzupełniające prymitywy (primitives.tsx). Tylko tokeny ADS. */
 
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4); }
-.card-head { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-2); }
-.card-head h2 { font-size: 16px; margin: 0; }
-.card-actions { margin-left: auto; display: flex; gap: var(--space-2); align-items: center; }
-.card .error-box { margin-bottom: var(--space-2); }
-.error-box button { margin-left: var(--space-2); }
-
-.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
-.segmented button { border: 0; border-radius: 0; background: transparent; }
-.segmented button + button { border-left: 1px solid var(--border); }
-.segmented button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
-
-.tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-2); }
-.tabs button[role="tab"] { border-radius: 6px; }
-.tabs button[aria-selected="true"] { background: var(--blue-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
-
-.field { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-3); }
-.field > label { font-weight: 600; font-size: 13px; }
-.field input, .field select, .field textarea { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
-.field.has-error input, .field.has-error select, .field.has-error textarea { border-color: var(--red); }
-.field-hint { font-size: 12px; color: var(--text-muted); }
-.field-error { font-size: 12px; color: var(--red); font-weight: 600; }
-
-.confirm-inline { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-
-.copy-status { color: var(--green); font-size: 12px; margin-left: var(--space-2); }
-.copy-status.failed { color: var(--red); }
+/* Odstępy między sekcjami i polami — w CSS (nie inline), żeby CSS ekranów mógł je nadpisać (.rules-editor .field …). */
+.card { margin-bottom: var(--ds-space-200); }
+.field { display: flex; flex-direction: column; margin-bottom: var(--ds-space-150); }
 
 /* Tabela danych: owiń w .table-wrap, żeby przewijała się w miejscu. */
-.table-wrap { overflow-x: auto; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.data-table th { text-align: left; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); padding: var(--space-1) var(--space-2); white-space: nowrap; }
-.data-table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
+.table-wrap { overflow-x: auto; position: relative; } /* relative: .sr-only w nagłówkach nie wychodzi poza przewijany obszar */
+.data-table { width: 100%; border-collapse: collapse; font: var(--ds-font-body-small); margin: 0; }
+.data-table th { text-align: left; font-weight: var(--ds-font-weight-semibold); color: var(--ds-text-subtle); border-bottom: var(--ds-border-width-selected) solid var(--ds-border); padding: var(--ds-space-050) var(--ds-space-100); white-space: nowrap; }
+.data-table td { padding: var(--ds-space-050) var(--ds-space-100); border-bottom: var(--ds-border-width) solid var(--ds-border); vertical-align: top; }
 .data-table tr:last-child td { border-bottom: 0; }
 .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.data-table code { font-family: var(--font-mono); font-size: 12px; }
+.data-table code { font-family: var(--ds-font-family-code); }
 .nowrap { white-space: nowrap; }
