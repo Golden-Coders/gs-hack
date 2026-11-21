@@ -6,6 +6,8 @@ import { useStreamStatus } from "../api/stream";
 import { useAlertFeed, useTeamsOf } from "../api/useAlertFeed";
 import { SeverityBadge, StateBadge } from "../components/Badges";
 import { paletteColor } from "../components/colors";
+import { ago } from "../ui/format";
+import { Segmented } from "../ui/primitives";
 import "./AlertFeed.css";
 
 type Filter = "mine" | "all";
@@ -20,14 +22,6 @@ function readFilter(): Filter | null {
   } catch {
     return null;
   }
-}
-
-function ago(iso: string, now: number): string {
-  const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-  if (s < 60) return `${s} s temu`;
-  if (s < 3600) return `${Math.floor(s / 60)} min temu`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h temu`;
-  return new Date(iso).toLocaleString();
 }
 
 // Odświeżanie „x s temu” bez zapytań do API.
@@ -74,14 +68,15 @@ export default function AlertFeed() {
             {lastChange && ` · ostatnia zmiana ${new Date(lastChange).toLocaleTimeString()}`}
           </p>
         </div>
-        <div className="segmented" role="group" aria-label="Filtr alertów">
-          <button aria-pressed={filter === "mine"} onClick={() => setFilter("mine")}>
-            Mój zespół{myTeams?.length ? ` (${myTeams.join(", ")})` : ""}
-          </button>
-          <button aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
-            Wszystkie
-          </button>
-        </div>
+        <Segmented
+          label="Filtr alertów"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "mine", label: `Mój zespół${myTeams?.length ? ` (${myTeams.join(", ")})` : ""}` },
+            { value: "all", label: "Wszystkie" },
+          ]}
+        />
       </header>
 
       {error && <p className="error-box">{error}</p>}

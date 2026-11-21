@@ -3,10 +3,6 @@
 .feed-live { margin: var(--space-1) 0 0; font-size: 13px; }
 .feed-hint { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
 
-.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
-.segmented button { border: 0; border-radius: 0; background: transparent; }
-.segmented button + button { border-left: 1px solid var(--border); }
-.segmented button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
 
 .feed-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .feed-table { width: 100%; border-collapse: collapse; }
