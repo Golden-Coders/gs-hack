@@ -1,6 +1,6 @@
 # Alerting Service od środka
 
-Ten dokument opisuje kod, który jest w repozytorium, a nie tylko plan. Stan: gałąź `main` po scaleniu pull requesta nr 32 (21 listopada 2026). Każde pojęcie jest zdefiniowane w sekcji [Pojęcia](#2-pojęcia), zanim zostanie użyte dalej.
+Ten dokument opisuje kod, który jest w repozytorium, a nie tylko plan. Stan: gałąź `main` po scaleniu pull requesta nr 34 (21 listopada 2026). Ostatnia zmiana kodu to pull request nr 32; pull requesty 33 i 34 zmieniły tylko dokumentację i plan OpenSpec. Każde pojęcie jest zdefiniowane w sekcji [Pojęcia](#2-pojęcia), zanim zostanie użyte dalej.
 
 **Co robi system.** Inne systemy firmy wysyłają do niego zdarzenia, na przykład „workflow rozliczenia WF-42 przekroczył czas oczekiwania”. Zdarzenia mogą mieć dowolny kształt. System sprowadza każde zdarzenie do jednego wspólnego kształtu, łączy powtórzenia tego samego problemu w jeden alert z licznikiem, sprawdza reguły zespołów, powiadamia właściwe osoby kanałem, który te osoby wybrały, i prowadzi operatora przez runbook, czyli instrukcję naprawy. Część kroków runbooka system wykonuje sam, a ryzykowne kroki wykonuje dopiero po zatwierdzeniu przez człowieka.
 
@@ -22,9 +22,11 @@ Spis treści:
 
 ## 1. Stan prac
 
-Liczby to zadania odhaczone w `openspec/changes/archive/2026-11-21-alerting-service-mvp/tasks.md`. Zadanie odhacza się dopiero wtedy, gdy przeszła opisana przy nim weryfikacja.
+Plan MVP (`alerting-service-mvp`) jest zarchiwizowany w `openspec/changes/archive/2026-11-21-alerting-service-mvp/` z wynikiem 70 z 87 zadań. Jego wymagania stały się głównymi specyfikacjami w `openspec/specs/` (10 capabilities). 17 nieodhaczonych zadań przeniesiono do aktywnego change'a `alerting-service-hardening` (sekcja [12](#12-co-zostało-do-zrobienia)). Zadanie odhacza się dopiero wtedy, gdy przeszła opisana przy nim weryfikacja.
 
-| Strumień | Osoba | Sekcje | Zrobione |
+Wynik MVP według strumieni:
+
+| Strumień | Osoba | Sekcje MVP | Zrobione |
 |---|---|---|---|
 | Faza 0: kontrakty i szkielet | wszyscy | 1 | 9 z 9 |
 | P1: ingest i cykl życia alertu | Krzysztof Jet | 2–5 | 16 z 17 |
@@ -34,7 +36,16 @@ Liczby to zadania odhaczone w `openspec/changes/archive/2026-11-21-alerting-serv
 | Integracja od początku do końca | wszyscy | 18 | 2 z 6 |
 | Pipeline P1+P2 (dokończenie integracji) | Krzysztof Jet, Krzysztof Wojt | 19 | 10 z 14 |
 
-Cały kod przepływu jest napisany i działa: od przyjęcia zdarzenia, przez alert, reguły, powiadomienia i runbooki, aż po zmiany na żywo w interfejsie. Brakujące zadania to w większości weryfikacje na czystym klonie, testy odporności i skalowania oraz pomiar wydajności. Szczegóły są w sekcji [12](#12-co-zostało-do-zrobienia).
+Cały kod przepływu jest napisany i działa: od przyjęcia zdarzenia, przez alert, reguły, powiadomienia i runbooki, aż po zmiany na żywo w interfejsie. Brakujące zadania to w większości weryfikacje na czystym klonie, testy odporności i skalowania oraz pomiar wydajności. `alerting-service-hardening` nie zmienia wymagań, tylko je weryfikuje; decyzje D1–D15 z MVP obowiązują bez zmian.
+
+| Sekcja `alerting-service-hardening` | Właściciel | Zrobione |
+|---|---|---|
+| 1. Przygotowanie środowiska | wszyscy | 0 z 1 |
+| 2. Odporność i skalowanie | P1+P2 | 0 z 4 |
+| 3. Pomiar końcowy | P1+P2 | 0 z 1 |
+| 4. Weryfikacja UI na prawdziwym backendzie | P4 | 0 z 6 |
+| 5. Integracja i demo | wszyscy | 0 z 4 |
+| 6. Otwarte kwestie | P1+P2 | 0 z 2 |
 
 ---
 
@@ -413,7 +424,7 @@ Każda zasada ma przyczynę. Przyczyna jest opisana pod zasadą.
 
 ## 11. Jak pracuje zespół
 
-Plan powstał jako zmiana OpenSpec o nazwie `alerting-service-mvp`. Pracę wykonują ludzie z pomocą Claude Code, a każdy agent pisze tylko w katalogach swojego strumienia.
+Plan powstał jako zmiana OpenSpec o nazwie `alerting-service-mvp`. Pracę wykonują ludzie z pomocą Claude Code, a każdy agent pisze tylko w katalogach swojego strumienia. Poniższy graf pokazuje przebieg MVP. Po jego archiwizacji wymagania leżą w `openspec/specs/<capability>/spec.md`, a dalsza praca idzie przez change `alerting-service-hardening` (`/openspec-apply-change alerting-service-hardening`). Zmiana zachowania systemu wymaga tam delta speca, który po zakończeniu change'a trafia do głównych specyfikacji przez `/openspec-archive-change`.
 
 ```mermaid
 flowchart LR
@@ -435,11 +446,13 @@ flowchart LR
   TICK --> INT["sekcje 18 i 19<br/>integracja"]
 ```
 
-**Scenariusze jako testy.** Każde wymaganie w `specs/` ma scenariusze w formie „GDY … WTEDY …”. Testy w kodzie i skrypty w `scripts/e2e/` sprawdzają właśnie te scenariusze, na przykład „500 zdarzeń, jedno uruchomienie”, „Runbook od jury z nieznaną akcją” albo „Restart w trakcie runbooka”.
+**Scenariusze jako testy.** Każde wymaganie w `openspec/specs/` ma scenariusze w formie „GDY … WTEDY …”. Testy w kodzie i skrypty w `scripts/e2e/` sprawdzają właśnie te scenariusze, na przykład „500 zdarzeń, jedno uruchomienie”, „Runbook od jury z nieznaną akcją” albo „Restart w trakcie runbooka”.
 
 **Kontrakty zamrożone.** Po Fazie 0 strumienie pracują równolegle na wspólnych typach z `crates/contracts` i wspólnym opisie API w `contracts/openapi.yaml`. Zmiana kontraktu może tylko dodawać (nowe pole opcjonalne, nowy adres), i to po uzgodnieniu z zespołem. Dzięki temu interfejs powstał na udawanym API, zanim backend był gotowy.
 
-**Pipeline P1+P2.** Po zakończeniu sekcji 2–9 Krzysztof Jet i Krzysztof Wojt prowadzą wspólnie sekcję 19: kolejne etapy integracji (SSE, testy całego przepływu, pomiar, odporność, skalowanie), każdy z bramką do spełnienia przed odhaczeniem.
+**Pipeline P1+P2.** Po zakończeniu sekcji 2–9 Krzysztof Jet i Krzysztof Wojt prowadzili wspólnie sekcję 19 MVP: kolejne etapy integracji (SSE, testy całego przepływu, pomiar, odporność, skalowanie), każdy z bramką do spełnienia przed odhaczeniem. W `alerting-service-hardening` kontynuują sekcje 2, 3 i 6; sekcja 4 należy do P4, sekcje 1 i 5 do wszystkich.
+
+**Wspólny stos.** Pomiary obciążenia, przełączanie symulowanych kanałów, zmiany reguł i czyszczenie danych (`docker compose down -v`) wpływają na pracę innych osób, więc robi się je w uzgodnionym oknie czasowym. Skrypty e2e muszą działać na systemie z danymi (unikalne fingerprinty) i przechodzić dwa razy z rzędu.
 
 **Agenci AI.** W działającym systemie nie ma żadnego wywołania modelu językowego. Jest tylko interfejs `RunbookAuthor` z implementacją `none` (`crates/runbooks/src/author.rs`). Agenci AI (Claude Code) pomagali pisać kod: plik `CLAUDE.md` mówi im, który strumień w których katalogach pisze. Część pracy wykonywali agenci równolegle w osobnych kopiach repozytorium (`git worktree`), co widać w historii jako scalenia gałęzi `worktree-agent-…`. Polecenia OpenSpec dla agentów leżą w `.agents/skills/`.
 
@@ -447,18 +460,26 @@ flowchart LR
 
 ## 12. Co zostało do zrobienia
 
-Kod przepływu jest kompletny. Zostały weryfikacje, pomiary i dwie znane niezgodności.
+Kod przepływu jest kompletny. Pozostała praca jest w `openspec/changes/alerting-service-hardening/tasks.md`; w nawiasach numer zadania tam, a po strzałce numer z archiwum MVP, gdzie jest pełna historia.
 
-**Weryfikacje i pomiary (zadania nieodhaczone):**
+**Weryfikacje i pomiary:**
 
-1. **Pomiar końcowy wydajności** (5.3, 19.H2). Pomiar 1 jest w `docs/LOADTEST.md`: 500 zdarzeń na sekundę przez 60 sekund przyjęte bez błędów, deduplikacja poprawna (suma liczników alertów wzrosła dokładnie o liczbę wysłanych zdarzeń), brak zdublowanych dostarczeń. **Wąskim gardłem jest `sender`:** przetwarza zlecenia jedno po drugim, a każdy e-mail otwiera nowe połączenie SMTP, więc wysyła około 200–260 powiadomień na sekundę na instancję. Kolejka przed nim rosła przez cały przebieg, dlatego opóźnienie e-maili wyniosło p50 26 s i p99 40 s. Na pustym systemie (SMS i telefon) cały przepływ trwa około 30 ms. Do zrobienia: decyzja o optymalizacji sendera i pomiar końcowy.
-2. **Odporność** (18.4, 19.F1): wyłączenie Mailpit i symulowanego SMS oraz restart każdej binarki w trakcie ruchu, bez utraconych alertów i bez zdublowanych powiadomień.
-3. **Skalowanie** (18.5, 19.G1): po dwie instancje `lifecycle` i `sender` pod obciążeniem, z poprawną deduplikacją.
-4. **Runbooki i kryteria demo w UI** (18.3, 18.6, 19.H1): skrypty `scripts/e2e/runbooks.sh` i `criteria.sh` istnieją; brakuje przejścia przez interfejs na czystym klonie.
-5. **Ekrany interfejsu na prawdziwym backendzie** (14.3, 14.4, 15.1–15.3): ekrany są scalone, weryfikacja odbywa się razem z 18.3 i 18.6.
-6. **README, demo i nagranie** (16.1, 17.1, 17.2): `make demo` i `docs/DEMO.md` są w repozytorium; brakuje dwóch prób generalnych na czystym klonie.
+1. **Przebudowa stosu z aktualnego `main`** (1.1). Pomiar 1 był na obrazach sprzed PR #26 i #27, więc wszystkie bramki z sekcji 2–3 trzeba wykonać na obrazach zbudowanych po PR #32, zapisując commit i czas budowy.
+2. **Odporność** (2.1 ← 19.F1, 18.4): nowy skrypt `scripts/e2e/resilience.sh`. W trakcie ruchu z `loadgen` wyłącza Mailpit i symulowany SMS oraz restartuje kolejno `ingest`, `lifecycle`, `router`, `sender`. Bramka: liczba alertów równa liczbie unikalnych fingerprintów, brak zdublowanych kluczy idempotencji w `deliveries`, fallback i DLQ widoczne w API.
+3. **Skalowanie** (2.3 ← 19.G1, 18.5): `--scale lifecycle=2 --scale sender=2` pod obciążeniem, z poprawną deduplikacją.
+4. **Optymalizacja `sender`** (2.4, opcjonalna, po 2.3). Pomiar 1 (`docs/LOADTEST.md`): 500 zdarzeń na sekundę przez 60 sekund przyjęte bez błędów, suma liczników alertów zgodna z liczbą wysłanych zdarzeń, brak zdublowanych dostarczeń. **Wąskim gardłem jest `sender`:** przetwarza zlecenia jedno po drugim, a każdy e-mail otwiera nowe połączenie SMTP, więc wysyła około 200–260 powiadomień na sekundę na instancję. Kolejka przed nim rosła przez cały przebieg, dlatego opóźnienie e-maili wyniosło p50 26 s i p99 40 s. Na pustym systemie (SMS i telefon) cały przepływ trwa około 30 ms. Plan: przetwarzanie współbieżne z commitem offsetów w kolejności i pula połączeń SMTP, bez zmiany kluczy idempotencji. Alternatywa bez zmiany kodu: więcej instancji `sender` (do 12). Decyzja po skalowaniu.
+5. **Pomiar końcowy** (3.1 ← 19.H2, 5.3): na obrazach z `main`, z opóźnieniem p50 i p99 osobno dla każdego kanału, także bez e-maila.
+6. **Ekrany interfejsu na prawdziwym backendzie** (4.1–4.5 ← 14.3, 14.4, 15.1–15.3): kolejka zatwierdzeń, podgląd symulowanych kanałów z fallbackiem, edytor reguł, mappingi i UNMAPPED, formularz akcji HTTP.
+7. **README** (4.6 ← 16.1): osoba spoza strumienia uruchamia demo ze świeżego klona według README.
+8. **Integracja i demo** (5.1–5.4 ← 18.3, 18.6, 19.H1, 17.1, 17.2): `scripts/e2e/runbooks.sh` i `criteria.sh` istnieją, brakuje przejścia przez interfejs na czystym klonie, `make demo` po `docker compose down -v` i dwóch prób generalnych według `docs/DEMO.md` (nagranie do 5 minut).
 
-**Znane niezgodności:**
+**Znane niezgodności i otwarte kwestie:**
 
-- `GET /alerts` i `GET /alerts/{id}` zwracają puste `rule_ids`, `teams` i `color`, bo `lifecycle` nie zna reguł. Filtr „mój zespół” w feedzie działa przez SSE (`?team=`), ale nie przez REST.
-- Alert pokazuje severity z mappingu, a router kieruje powiadomienia według severity podniesionego przez regułę (`severity_override`). Operator może więc widzieć `error`, a dostać SMS jak dla `critical`.
+- **Różnica 3 alertów w pomiarze 1** (2.2): alertów jest o 3 mniej niż unikalnych fingerprintów według `loadgen` (14 928 wobec 14 931, w rozgrzewce 1 019 wobec 1 022). Trzeba ustalić, czy to błąd liczenia w `loadgen`, czy utrata zdarzeń w potoku.
+- **Reguły w `GET /alerts`** (6.1, decyzja D10): `GET /alerts` i `GET /alerts/{id}` zwracają puste `rule_ids`, `teams` i `color`, bo `lifecycle` nie zna reguł. Filtr „mój zespół” działa przez SSE (`?team=`), ale nie przez REST. Proponowane rozwiązanie: `api` czyta tabelę `rules` tylko do odczytu, tak jak robią to router, `runbooks` i `/stream`.
+- **Severity alertu a severity powiadomienia** (6.1): alert pokazuje severity z mappingu, a router kieruje powiadomienia według severity podniesionego przez regułę (`severity_override`). Operator może więc widzieć `error`, a dostać SMS jak dla `critical`.
+- **Drobne znaleziska testera** (6.2), każde do naprawy z testem albo świadomego odrzucenia:
+  - wyścig grup konsumentów `sender` i `sender-retry` na tym samym kluczu, który w teorii może dać podwójną wysyłkę;
+  - eskalacja z runbooka bierze severity z kontekstu zdarzenia, a nie z reguły;
+  - `runbooks` widzi zmianę reguł z opóźnieniem do 2 sekund;
+  - brak pozytywnego testu reguły `pricing-warnings` i kanału `ui` jako kanału podstawowego.
