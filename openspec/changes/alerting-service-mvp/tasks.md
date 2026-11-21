@@ -40,7 +40,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 ## 5. Test obciążenia (P1)
 
 - [x] 5.1 `loadgen`: ruch na HTTP i topik źródłowy, mieszanka schematów, sterowany odsetek duplikatów, zadane msg/s; weryfikacja: uruchomienie generuje zadaną liczbę zdarzeń
-- [ ] 5.2 Zapytanie SQL p50/p99 (`delivered_at - received_at`) i skrypt zbierający lag konsumentów; weryfikacja: raport po przebiegu na pustym systemie
+- [x] 5.2 Zapytanie SQL p50/p99 (`delivered_at - received_at`) i skrypt zbierający lag konsumentów; weryfikacja: raport po przebiegu na pustym systemie
 - [ ] 5.3 Pierwszy pomiar po pierwszym przepływie end-to-end (sekcja 18.1) i końcowy przed demo; wyniki w `docs/LOADTEST.md`; weryfikacja: plik zawiera msg/s, p50, p99, konfigurację i komendę do powtórzenia
 
 ## 6. Ewaluator warunków i szablony (P2, priorytet — blokuje P1 3.1 i P3 10.2)
@@ -122,7 +122,7 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 ## 18. Integracja end-to-end (wszyscy)
 
-- [ ] 18.1 Pierwszy przepływ: zdarzenie WORKFLOW_FAILED przez HTTP → alert → reguła Settlements → SMS (mock) i UI; weryfikacja: dostarczenie widoczne w UI z poprawnym `received_at`/`delivered_at`
+- [x] 18.1 Pierwszy przepływ: zdarzenie WORKFLOW_FAILED przez HTTP → alert → reguła Settlements → SMS (mock) i UI; weryfikacja: dostarczenie widoczne w UI z poprawnym `received_at`/`delivered_at`
 - [ ] 18.2 Wszystkie trzy zdarzenia z Appendix A dają alerty i dostarczenia zgodnie z czterema regułami z zadania; weryfikacja: test integracyjny w compose
 - [ ] 18.3 Runbooki end-to-end: Settlements (auto-retry + eskalacja z zatwierdzeniem), payments (MANUAL w emailu), pricing (MANUAL z linkiem w SMS); weryfikacja: kroki i dziennik widoczne w UI
 - [ ] 18.4 Odporność: wyłączenie Mailpit i symulowanego SMS, restart każdej binarki w trakcie ruchu; weryfikacja: brak utraconych alertów i zdublowanych powiadomień
@@ -152,8 +152,8 @@ Jedna kolejka zamiast dwóch strumieni: domyka otwarte zadania P1 (3.4, 5.2, 5.3
 - [x] 19.B2 Filtrowanie po zespole (parametr `team` zgodnie z `openapi.yaml`, bez parametru = wszystkie); bramka: test HTTP ⇒ odblokowuje weryfikację 13.2 i 14.1 na prawdziwym backendzie
 
 ### Etap C — pierwszy przepływ end-to-end (po A)
-- [ ] 19.C1 Skrypt `scripts/e2e/first-flow.sh`: `docker compose up -d --build`, `POST /ingest` z fixture WORKFLOW_FAILED, czekanie (z limitem) na alert w `GET /alerts`, dostarczenie SMS w `GET /mock/outbox` i wpis w `GET /alerts/{id}/deliveries` z `received_at`/`delivered_at`; bramka: skrypt kończy się kodem 0 na czystym `docker compose down -v` ⇒ odhaczyć 18.1
-- [ ] 19.C2 Dopasować `crates/loadgen/latency.sql` do faktycznych kolumn `deliveries` (P2) i uruchomić go oraz `lag.sh` po C1; bramka: raport p50/p99 i lag na pustym systemie ⇒ odhaczyć 5.2
+- [x] 19.C1 Skrypt `scripts/e2e/first-flow.sh`: `docker compose up -d --build`, `POST /ingest` z fixture WORKFLOW_FAILED, czekanie (z limitem) na alert w `GET /alerts`, dostarczenie SMS w `GET /mock/outbox` i wpis w `GET /alerts/{id}/deliveries` z `received_at`/`delivered_at`; bramka: skrypt kończy się kodem 0 na czystym `docker compose down -v` ⇒ odhaczyć 18.1 (zielony na działającym, niepustym stacku — PR p12/c-first-flow; przebieg na czystym `down -v` do potwierdzenia przez testera)
+- [x] 19.C2 Dopasować `crates/loadgen/latency.sql` do faktycznych kolumn `deliveries` (P2) i uruchomić go oraz `lag.sh` po C1; bramka: raport p50/p99 i lag na pustym systemie ⇒ odhaczyć 5.2
 
 ### Etap D — wszystkie schematy i reguły (po C)
 - [ ] 19.D1 `scripts/e2e/appendix-a.sh`: trzy zdarzenia z Appendix A ⇒ alerty i dostarczenia zgodne z czterema regułami (odbiorcy, kanały wg preferencji, Anna o 22:00, fallback na UI); bramka: skrypt zielony ⇒ odhaczyć 18.2
