@@ -1,9 +1,12 @@
 // Dostarczenia alertu: wszystkie i nieudane (błąd techniczny kanału / DLQ) z „wyślij ponownie”.
+import { Text } from "@atlaskit/primitives/compiled";
 import { useState } from "react";
 import { api, asPerson, type Schemas } from "../../api/client";
 import { usePersonId } from "../../api/session";
 import { DeliveryStatusBadge } from "../../components/Badges";
-import { Card, ErrorBox, Tabs } from "../../ui/primitives";
+import Button from "@atlaskit/button/new";
+import { Card, Empty, Tabs } from "../../ui/primitives";
+import { useResultFlag } from "./flags";
 import { send } from "../../api/request";
 import type { Resource } from "../../api/useResource";
 import { formatTime } from "../../ui/format";
@@ -33,12 +36,12 @@ function FallbackInfo({ all, d }: { all: Schemas["Delivery"][]; d: Schemas["Deli
         : null;
   return (
     <div className="muted">
-      {label && <strong>{label}</strong>}{" "}
+      {label && <Text weight="bold">{label}</Text>}{" "}
       <span title="Łańcuch kanałów dla tej osoby w tym epizodzie">
         {chain.map((x, k) => (
           <span key={x.id}>
             {k > 0 && " → "}
-            {x.id === d.id ? <strong>[{CHANNEL[x.channel]}]</strong> : CHANNEL[x.channel]}
+            {x.id === d.id ? <Text weight="bold">[{CHANNEL[x.channel]}]</Text> : CHANNEL[x.channel]}
           </span>
         ))}
       </span>
@@ -56,7 +59,7 @@ export default function Deliveries({
   const personId = usePersonId();
   const [tab, setTab] = useState<"all" | "failed">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const flag = useResultFlag();
 
   const all = resource.data ?? [];
   const failed = all.filter(isFailed);
@@ -64,34 +67,23 @@ export default function Deliveries({
 
   async function resend(id: string) {
     setBusyId(id);
-    setError(null);
     const err = await send(() =>
       api.POST("/deliveries/{delivery_id}/resend", {
         params: { path: { delivery_id: id }, header: asPerson() },
       }),
     );
     setBusyId(null);
-    if (err) setError(`Nie udało się wysłać ponownie: ${err}`);
-    else onChanged();
+    flag(err, "Zlecono ponowne wysłanie", "Nie udało się wysłać ponownie");
+    if (!err) onChanged();
   }
 
-  return (
-    <Card title="Dostarczenia" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
-      <Tabs
-        label="Filtr dostarczeń"
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { value: "all", label: `Wszystkie (${all.length})` },
-          { value: "failed", label: `Nieudane (${failed.length})` },
-        ]}
-      />
-      {error && <ErrorBox message={error} />}
+  const panel = (
+    <>
       {!resource.loading && !resource.error && rows.length === 0 && (
-        <p className="muted">{tab === "failed" ? "Brak nieudanych dostarczeń." : "Brak dostarczeń."}</p>
+        <Empty>{tab === "failed" ? "Brak nieudanych dostarczeń." : "Brak dostarczeń."}</Empty>
       )}
       {rows.length > 0 && (
-        <div className="table-wrap" role="tabpanel">
+        <div className="table-wrap">
           <table className="data-table">
             <thead>
               <tr>
@@ -103,9 +95,7 @@ export default function Deliveries({
                 <th>Zlecono</th>
                 <th>Dostarczono</th>
                 <th>Błąd</th>
-                <th>
-                  <span className="sr-only">Akcje</span>
-                </th>
+                <th aria-label="Akcje" />
               </tr>
             </thead>
             <tbody>
@@ -126,14 +116,15 @@ export default function Deliveries({
                   <td className={d.last_error ? "ad-error-text" : undefined}>{d.last_error ?? "—"}</td>
                   <td>
                     {isFailed(d) && (
-                      <button
-                        type="button"
+                      <Button
+                        spacing="compact"
                         onClick={() => resend(d.id)}
-                        disabled={busyId !== null || !personId}
+                        isLoading={busyId === d.id}
+                        isDisabled={busyId !== null || !personId}
                         title={personId ? undefined : "Wybierz osobę w polu „Działam jako”"}
                       >
-                        {busyId === d.id ? "Wysyłanie…" : "Wyślij ponownie"}
-                      </button>
+                        Wyślij ponownie
+                      </Button>
                     )}
                   </td>
                 </tr>
@@ -142,6 +133,22 @@ export default function Deliveries({
           </table>
         </div>
       )}
+    </>
+  );
+
+  return (
+    <Card title="Dostarczenia" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
+      <Tabs
+        label="Filtr dostarczeń"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: "all", label: `Wszystkie (${all.length})` },
+          { value: "failed", label: `Nieudane (${failed.length})` },
+        ]}
+      >
+        {panel}
+      </Tabs>
     </Card>
   );
 }

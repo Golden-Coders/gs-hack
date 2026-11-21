@@ -1,38 +1,26 @@
-/* Szczegóły alertu (14.2). Tylko tokeny z styles.css – bez surowych kolorów. */
+/* Szczegóły alertu (14.2). Tylko tokeny ADS. */
 .alert-detail { max-width: 1100px; }
-.ad-back { margin: 0 0 var(--space-3); }
-.ad-back a { color: var(--accent); }
+.ad-back { margin: 0 0 var(--ds-space-150); }
 
-.ad-meta { margin-bottom: var(--space-4); }
-.ad-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
-.ad-meta .error-box { margin-bottom: var(--space-3); }
-.ad-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: var(--space-2) var(--space-4); margin: 0; }
-.ad-facts dt { font-size: 12px; color: var(--text-muted); }
+.ad-meta { margin-bottom: var(--ds-space-200); }
+.ad-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ds-space-100); margin-bottom: var(--ds-space-150); }
+.ad-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: var(--ds-space-100) var(--ds-space-200); margin: 0; }
+.ad-facts dt { font: var(--ds-font-body-small); color: var(--ds-text-subtle); }
 .ad-facts dd { margin: 0; word-break: break-word; }
 
-.ad-step code { font-family: var(--font-mono); font-size: 12px; }
-.ad-error-text { color: var(--red); }
+.ad-error-text { color: var(--ds-text-danger); }
 
-.ad-runbook { border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-3); }
+.ad-runbook { border-top: var(--ds-border-width) solid var(--ds-border); padding-top: var(--ds-space-150); margin-top: var(--ds-space-150); }
 .ad-runbook:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
-.ad-runbook > header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
-.ad-runbook h3 { font-size: 14px; margin: 0; }
-.ad-runbook .markdown { margin-bottom: 0; background: var(--surface-muted); }
+.ad-runbook > header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ds-space-100); margin-bottom: var(--ds-space-100); }
 
-.ad-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-.ad-step { border: 1px solid var(--border); border-left: 4px solid var(--gray); border-radius: 6px; padding: var(--space-2) var(--space-3); background: var(--surface); }
-.ad-step-succeeded { border-left-color: var(--green); }
-.ad-step-running { border-left-color: var(--blue); }
-.ad-step-failed, .ad-step-rejected { border-left-color: var(--red); background: var(--red-bg); }
-.ad-step-waiting_approval { border-left-color: var(--orange); }
-.ad-step-waiting_manual { border-left-color: var(--yellow); }
-.ad-step-skipped { border-left-color: var(--gray); }
-.ad-step-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); }
-.ad-step-no { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.ad-step-text { font-weight: 600; }
-.ad-step-meta { font-size: 12px; margin-top: var(--space-1); }
-.ad-step-result { font-size: 13px; margin-top: var(--space-1); }
-.ad-step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
-.ad-step-actions a { color: var(--accent); }
-.ad-note input { min-width: 220px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
-
+.ad-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--ds-space-100); }
+.ad-step { border: var(--ds-border-width) solid var(--ds-border); border-radius: var(--ds-radius-medium); padding: var(--ds-space-100) var(--ds-space-150); background: var(--ds-surface); }
+.ad-step-main { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ds-space-100); }
+.ad-step-no { color: var(--ds-text-subtle); font-variant-numeric: tabular-nums; }
+.ad-step-text { font-weight: var(--ds-font-weight-semibold); }
+.ad-step-meta { font: var(--ds-font-body-small); margin-top: var(--ds-space-050); }
+.ad-step-meta code { font-family: var(--ds-font-family-code); }
+.ad-step-result { margin-top: var(--ds-space-050); }
+.ad-step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ds-space-100); margin-top: var(--ds-space-100); }
+.ad-note { min-width: 220px; }

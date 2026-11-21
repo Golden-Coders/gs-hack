@@ -1,20 +1,20 @@
-.ptree { font-family: var(--font-mono); font-size: 13px; }
+/* Układ drzewa payloadu (tokeny ADS). Liść = Pressable: style przez `.ptree-leaf > button`. */
+.ptree { font: var(--ds-font-code); }
 .ptree ul { list-style: none; margin: 0; padding: 0; }
-.ptree ul ul { margin-left: var(--space-2); padding-left: var(--space-3); border-left: 1px solid var(--border); }
-.ptree li { margin: 1px 0; }
-.ptree summary { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; padding: 3px var(--space-2); border-radius: 6px; min-height: 28px; }
-.ptree summary:hover { background: var(--surface-muted); }
-.ptree .ptree-key { color: var(--text); font-weight: 600; }
-.ptree .ptree-meta { color: var(--text-muted); font-size: 12px; }
+.ptree ul ul { margin-left: var(--ds-space-100); padding-left: var(--ds-space-150); border-left: var(--ds-border-width) solid var(--ds-border); }
+.ptree li { margin: var(--ds-space-025) 0; }
+.ptree summary { display: flex; align-items: center; gap: var(--ds-space-100); cursor: pointer; padding: var(--ds-space-050) var(--ds-space-100); border-radius: var(--ds-radius-small); min-height: 28px; }
+.ptree summary:hover { background: var(--ds-background-neutral-subtle-hovered); }
+.ptree .ptree-key { color: var(--ds-text); font-weight: var(--ds-font-weight-semibold); }
+.ptree .ptree-meta { color: var(--ds-text-subtle); }
 
-.ptree .ptree-leaf { display: flex; align-items: baseline; gap: var(--space-2); width: 100%; min-height: 28px; padding: 3px var(--space-2); border: 1px solid transparent; border-radius: 6px; background: transparent; text-align: left; font: inherit; }
-.ptree .ptree-leaf:hover:not(:disabled) { background: var(--blue-bg); border-color: var(--accent); }
-.ptree .ptree-leaf.used { background: var(--surface-muted); border-color: var(--border); }
-.ptree .ptree-val { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
-.ptree .ptree-string { color: var(--green); }
-.ptree .ptree-number { color: var(--blue); }
-.ptree .ptree-boolean { color: var(--orange); }
-.ptree .ptree-null { color: var(--text-muted); font-style: italic; }
-.ptree .ptree-marks { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); margin-left: auto; }
-.ptree .ptree-mark { font-family: system-ui, sans-serif; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--blue-bg); border-radius: 999px; padding: 0 var(--space-2); line-height: 18px; }
-.ptree .ptree-pick, .ptree .ptree-more { font-size: 12px; min-height: 24px; padding: 0 var(--space-2); }
+.ptree .ptree-leaf > button { display: flex; align-items: baseline; gap: var(--ds-space-100); width: 100%; min-height: 28px; padding: var(--ds-space-050) var(--ds-space-100); border: var(--ds-border-width) solid transparent; border-radius: var(--ds-radius-small); background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.ptree .ptree-leaf > button:hover { background: var(--ds-background-selected-hovered); border-color: var(--ds-border-selected); }
+.ptree .ptree-leaf.used > button { background: var(--ds-background-neutral-subtle-hovered); border-color: var(--ds-border); }
+.ptree .ptree-val { color: var(--ds-text-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.ptree .ptree-string { color: var(--ds-text-accent-green); }
+.ptree .ptree-number { color: var(--ds-text-accent-blue); }
+.ptree .ptree-boolean { color: var(--ds-text-accent-orange); }
+.ptree .ptree-null { color: var(--ds-text-subtle); font-style: italic; }
+.ptree .ptree-marks { display: inline-flex; flex-wrap: wrap; gap: var(--ds-space-050); margin-left: auto; }
+.ptree .ptree-mark { font: var(--ds-font-body-small); font-weight: var(--ds-font-weight-semibold); color: var(--ds-text-selected); background: var(--ds-background-selected); border-radius: var(--ds-radius-full); padding: 0 var(--ds-space-100); }

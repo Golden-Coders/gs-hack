@@ -1,12 +1,17 @@
 // Mappingi i zdarzenia UNMAPPED (tasks.md 15.2): lista schematów bez mappingu z przykładowym payloadem
 // oraz istniejących mappingów; tworzenie i edycja mappingu przez wybór pól z przykładowego payloadu.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import Button from "@atlaskit/button/new";
+import { Code, CodeBlock } from "@atlaskit/code";
+import DynamicTable from "@atlaskit/dynamic-table";
+import { useFlags } from "@atlaskit/flag/use-flags";
+import { Inline, Text } from "@atlaskit/primitives/compiled";
+import { useNavigate } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
 import { send } from "../api/request";
 import { usePollWhenQuiet, useStream } from "../api/stream";
 import { useResource } from "../api/useResource";
-import { Card, ConfirmInline, Empty, ErrorBox, Field, Loading } from "../ui/primitives";
+import { Card, ConfirmInline, Empty, ErrorBox, Field, Loading, PageHeader, TextInput } from "../ui/primitives";
 import { formatTime } from "../ui/format";
 import MappingEditor from "./mappings/MappingEditor";
 import { parseSample } from "./mappings/sample";
@@ -34,7 +39,7 @@ function SampleView({ sample }: { sample: unknown }) {
   return (
     <details className="mp-sample-view">
       <summary>Przykładowy payload{p.format !== "invalid" ? ` (${p.format.toUpperCase()})` : ""}</summary>
-      <pre className="mono">{text}</pre>
+      <CodeBlock language={p.format === "yaml" ? "yaml" : "json"} text={text} />
     </details>
   );
 }
@@ -45,7 +50,8 @@ export default function Mappings() {
   const unmapped: Unmapped[] = unmappedRes.data ?? [];
   const mappings: Mapping[] = mappingsRes.data ?? [];
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [notice, setNotice] = useState<{ schema: string; version?: number } | null>(null);
+  const { showFlag } = useFlags();
+  const navigate = useNavigate();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
@@ -72,12 +78,10 @@ export default function Mappings() {
   usePollWhenQuiet(refresh);
 
   function startNew(u: Unmapped) {
-    setNotice(null);
     setEditing({ mapping: newMapping(u.schema), sample: u.sample, count: u.count, isNew: true });
   }
 
   function startEdit(m: Mapping) {
-    setNotice(null);
     const u = unmapped.find((x) => x.schema === m.schema);
     setEditing({ mapping: m, sample: u?.sample, count: u?.count, isNew: false });
   }
@@ -91,13 +95,19 @@ export default function Mappings() {
     const u = unmapped.find((x) => x.schema === schema);
     setManualError(null);
     setManual("");
-    setNotice(null);
     setEditing({ mapping: newMapping(schema), sample: u?.sample, count: u?.count, isNew: true });
   }
 
   function saved(m: Mapping) {
     setEditing(null);
-    setNotice({ schema: m.schema, version: m.version });
+    showFlag({
+      id: `mapping-saved-${m.schema}`,
+      appearance: "success",
+      title: `Zapisano mapping ${m.schema}${m.version && m.version > 0 ? ` (wersja ${m.version})` : ""}`,
+      description: "Czekające zdarzenia są przetwarzane ponownie.",
+      isAutoDismiss: true,
+      actions: [{ content: "Zobacz alerty w feedzie", onClick: () => navigate("/alerts") }],
+    });
     refresh();
     // Ponowne przetworzenie UNMAPPED dzieje się asynchronicznie – odświeżamy listę jeszcze dwa razy.
     timers.current.push(window.setTimeout(refresh, 2_000), window.setTimeout(refresh, 5_000));
@@ -130,26 +140,11 @@ export default function Mappings() {
 
   return (
     <section className="mp">
-      <header className="mp-head">
-        <div>
-          <h1>Mappingi i UNMAPPED</h1>
-          <p className="muted">
-            Zdarzenie ze schematem bez mappingu nie ginie: czeka jako UNMAPPED. Utwórz mapping, wskazując pola w
-            przykładowym payloadzie – zdarzenia zostaną przetworzone i pojawią się w feedzie.
-          </p>
-        </div>
-        <button type="button" onClick={refresh}>
-          Odśwież
-        </button>
-      </header>
-
-      {notice && (
-        <p className="mp-success" role="status">
-          Zapisano mapping <strong className="mono">{notice.schema}</strong>
-          {notice.version && notice.version > 0 ? ` (wersja ${notice.version})` : ""}. Czekające zdarzenia są przetwarzane ponownie –{" "}
-          <Link to="/alerts">zobacz alerty w feedzie</Link>.
-        </p>
-      )}
+      <PageHeader actions={<Button onClick={refresh}>Odśwież</Button>}>Mappingi i UNMAPPED</PageHeader>
+      <Text as="p" color="color.text.subtle">
+        Zdarzenie ze schematem bez mappingu nie ginie: czeka jako UNMAPPED. Utwórz mapping, wskazując pola w
+        przykładowym payloadzie – zdarzenia zostaną przetworzone i pojawią się w feedzie.
+      </Text>
 
       <Card title="Krok 1. Wybierz schemat bez mappingu (UNMAPPED)" error={unmappedRes.error} onRetry={unmappedRes.reload} loading={unmappedRes.loading && unmappedRes.data !== null}>
         {unmappedRes.loading && unmappedRes.data === null ? (
@@ -167,9 +162,9 @@ export default function Mappings() {
                       {u.count} {u.count === 1 ? "zdarzenie" : "zdarzeń"} · ostatnie {formatTime(u.last_seen)}
                     </div>
                   </div>
-                  <button type="button" className="primary" onClick={() => startNew(u)}>
+                  <Button appearance="primary" onClick={() => startNew(u)}>
                     Utwórz mapping
-                  </button>
+                  </Button>
                 </div>
                 <SampleView sample={u.sample} />
               </li>
@@ -180,14 +175,14 @@ export default function Mappings() {
           <Field label="Albo nowy schemat ręcznie (wkleisz własny payload)" error={manualError}>
             {(field) => (
               <div className="mp-inline">
-                <input
+                <TextInput
                   {...field}
                   className="mono"
                   value={manual}
-                  onChange={(e) => setManual(e.target.value)}
+                  onChange={(e) => setManual(e.currentTarget.value)}
                   placeholder="np. judges.custom.v1"
                 />
-                <button type="submit">Utwórz</button>
+                <Button type="submit">Utwórz</Button>
               </div>
             )}
           </Field>
@@ -201,47 +196,48 @@ export default function Mappings() {
         ) : mappings.length === 0 ? (
           <Empty>Brak mappingów.</Empty>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">Schemat</th>
-                  <th scope="col">Severity</th>
-                  <th scope="col">Fingerprint</th>
-                  <th scope="col">Resolved</th>
-                  <th scope="col">Wersja</th>
-                  <th scope="col"><span className="sr-only">Akcje</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {mappings.map((m) => (
-                  <tr key={m.schema}>
-                    <td className="mono">{m.schema}</td>
-                    <td>{severitySummary(m)}</td>
-                    <td className="mono mp-small">
-                      {m.fingerprint?.length ? m.fingerprint.join(", ") : <span className="muted">cały payload</span>}
-                    </td>
-                    <td>{m.resolved ? "tak" : <span className="muted">brak</span>}</td>
-                    <td>{m.version ?? "—"}</td>
-                    <td className="mp-actions-cell">
-                      <div className="mp-row-actions">
-                        <button type="button" onClick={() => startEdit(m)} aria-label={`Edytuj mapping ${m.schema}`}>
-                          Edytuj
-                        </button>
-                        <ConfirmInline
-                          label={<>Usuń<span className="sr-only"> mapping {m.schema}</span></>}
-                          question="Usunąć? Nowe zdarzenia tego schematu trafią do UNMAPPED."
-                          confirmLabel="Tak, usuń"
-                          busy={deleting}
-                          onConfirm={() => void remove(m.schema)}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DynamicTable
+            head={{
+              cells: [
+                { key: "schema", content: "Schemat" },
+                { key: "severity", content: "Severity" },
+                { key: "fingerprint", content: "Fingerprint" },
+                { key: "resolved", content: "Resolved" },
+                { key: "version", content: "Wersja" },
+                { key: "actions", content: "Akcje" },
+              ],
+            }}
+            rows={mappings.map((m) => ({
+              key: m.schema,
+              cells: [
+                { key: "schema", content: <span className="mono">{m.schema}</span> },
+                { key: "severity", content: severitySummary(m) },
+                {
+                  key: "fingerprint",
+                  content: m.fingerprint?.length ? <Code>{m.fingerprint.join(", ")}</Code> : <Text color="color.text.subtle">cały payload</Text>,
+                },
+                { key: "resolved", content: m.resolved ? "tak" : <Text color="color.text.subtle">brak</Text> },
+                { key: "version", content: m.version ?? "—" },
+                {
+                  key: "actions",
+                  content: (
+                    <Inline space="space.100" alignBlock="center" alignInline="end" shouldWrap>
+                      <Button onClick={() => startEdit(m)} aria-label={`Edytuj mapping ${m.schema}`}>
+                        Edytuj
+                      </Button>
+                      <ConfirmInline
+                        label={<>Usuń<span className="sr-only"> mapping {m.schema}</span></>}
+                        question="Usunąć? Nowe zdarzenia tego schematu trafią do UNMAPPED."
+                        confirmLabel="Tak, usuń"
+                        busy={deleting}
+                        onConfirm={() => void remove(m.schema)}
+                      />
+                    </Inline>
+                  ),
+                },
+              ],
+            }))}
+          />
         )}
       </Card>
     </section>

@@ -1,5 +1,6 @@
 import type { Schemas } from "../../api/client";
-import { Card } from "../../ui/primitives";
+import { Code } from "@atlaskit/code";
+import { Card, Empty } from "../../ui/primitives";
 import type { Resource } from "../../api/useResource";
 import { actorLabel, formatTime } from "../../ui/format";
 
@@ -7,7 +8,7 @@ export default function Audit({ resource }: { resource: Resource<Schemas["AuditE
   const entries = resource.data ?? [];
   return (
     <Card title="Dziennik działań" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
-      {!resource.loading && !resource.error && entries.length === 0 && <p className="muted">Brak wpisów.</p>}
+      {!resource.loading && !resource.error && entries.length === 0 && <Empty>Brak wpisów.</Empty>}
       {entries.length > 0 && (
         <div className="table-wrap">
           <table className="data-table">
@@ -27,7 +28,7 @@ export default function Audit({ resource }: { resource: Resource<Schemas["AuditE
                   <td>#{e.episode}</td>
                   <td>{actorLabel(e.actor)}</td>
                   <td>
-                    <code>{e.action}</code>
+                    <Code>{e.action}</Code>
                     {e.step_id && <span className="muted"> · krok {e.step_id}</span>}
                   </td>
                   <td>{e.detail ?? "—"}</td>

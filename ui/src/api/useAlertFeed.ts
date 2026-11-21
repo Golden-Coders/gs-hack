@@ -55,7 +55,9 @@ export function useAlertFeed() {
     [merge],
   );
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
     api.GET("/alerts").then(
       ({ data, error }) => {
         if (data) merge(data, false);
@@ -68,6 +70,7 @@ export function useAlertFeed() {
       },
     );
   }, [merge]);
+  useEffect(load, [load]);
 
   useStream((msg) => {
     if (msg.type === "alert_changed") void refetch(msg.data.alert_id);
@@ -87,7 +90,7 @@ export function useAlertFeed() {
   });
 
   const list = [...alerts.values()].sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen));
-  return { alerts: list, touched, loading, error };
+  return { alerts: list, touched, loading, error, retry: load };
 }
 
 /** Zespoły, do których należy osoba (z `GET /teams`). `null` do czasu pobrania. */

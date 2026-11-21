@@ -1,11 +1,16 @@
 // Edytor mappingu krok po kroku: schemat -> zaznacz pola w payloadzie -> severity/fingerprint/resolved -> podgląd -> zapis.
 // Kliknięcie w drzewie payloadu dodaje pole do aktualnie wybranego celu (pola, tytuł, fingerprint, severity, resolved).
-import { useMemo, useState, type SelectHTMLAttributes } from "react";
+import { useMemo, useState, type ComponentProps } from "react";
+import Button from "@atlaskit/button/new";
+import { ErrorMessage } from "@atlaskit/form";
+import { Text } from "@atlaskit/primitives/compiled";
+import SectionMessage from "@atlaskit/section-message";
+import { RadioGroup } from "@atlaskit/radio";
 import { api } from "../../api/client";
 import { describeError } from "../../api/request";
 import ConditionView from "../../components/ConditionView";
 import PayloadTree from "../../components/PayloadTree";
-import { Card, Empty, ErrorBox, Field, Segmented } from "../../ui/primitives";
+import { Card, Checkbox, Empty, ErrorBox, Field, PageHeader, Segmented, Select, TextArea, TextInput } from "../../ui/primitives";
 import PreviewPanel from "./PreviewPanel";
 import {
   OP_LABEL,
@@ -64,20 +69,14 @@ function describeSaveError(e: ApiError, response: Response): string {
   return e?.line ? `${msg} (linia ${e.line})` : msg;
 }
 
+const SEVERITY_OPTIONS = SEVERITIES.map((v) => ({ value: v, label: v }));
+
 function SeveritySelect({
   value,
   onChange,
   ...rest
-}: { value: Severity; onChange: (s: Severity) => void } & Omit<SelectHTMLAttributes<HTMLSelectElement>, "value" | "onChange">) {
-  return (
-    <select {...rest} value={value} onChange={(e) => onChange(e.target.value as Severity)}>
-      {SEVERITIES.map((s) => (
-        <option key={s} value={s}>
-          {s}
-        </option>
-      ))}
-    </select>
-  );
+}: { value: Severity; onChange: (s: Severity) => void } & Omit<ComponentProps<typeof Select>, "value" | "onChange" | "options">) {
+  return <Select {...rest} options={SEVERITY_OPTIONS} value={value} onChange={(v) => onChange(v as Severity)} />;
 }
 
 /** Wiersz warunku-liścia: pole, operator, wartość. */
@@ -87,11 +86,11 @@ function LeafEditor({ cond, onChange, label }: { cond: Cond & { field: string };
     <div className="mp-leaf">
       <Field label="Pole payloadu">
         {(f) => (
-          <input
+          <TextInput
             {...f}
             className="mono"
             value={cond.field}
-            onChange={(e) => onChange({ ...cond, field: e.target.value })}
+            onChange={(e) => onChange({ ...cond, field: e.currentTarget.value })}
             aria-label={`${label}: pole`}
             placeholder="raw.status"
           />
@@ -99,22 +98,22 @@ function LeafEditor({ cond, onChange, label }: { cond: Cond & { field: string };
       </Field>
       <Field label="Operator">
         {(f) => (
-          <select {...f} value={op} onChange={(e) => onChange({ ...cond, op: e.target.value as SimpleOp })} aria-label={`${label}: operator`}>
-            {SIMPLE_OPS.map((o) => (
-              <option key={o} value={o}>
-                {OP_LABEL[o]}
-              </option>
-            ))}
-          </select>
+          <Select
+            {...f}
+            value={op}
+            options={SIMPLE_OPS.map((o) => ({ value: o, label: OP_LABEL[o] }))}
+            onChange={(v) => onChange({ ...cond, op: v as SimpleOp })}
+            aria-label={`${label}: operator`}
+          />
         )}
       </Field>
       {op !== "exists" && (
         <Field label="Wartość">
           {(f) => (
-            <input
+            <TextInput
               {...f}
               value={valueToText(cond.value)}
-              onChange={(e) => onChange({ ...cond, value: coerceValue(e.target.value, cond.value, op) })}
+              onChange={(e) => onChange({ ...cond, value: coerceValue(e.currentTarget.value, cond.value, op) })}
               aria-label={`${label}: wartość`}
             />
           )}
@@ -150,9 +149,9 @@ function Section({
       actions={
         mode &&
         onPick && (
-          <button type="button" aria-pressed={active === mode} onClick={() => onPick(mode)} className="mp-pick-btn">
+          <Button spacing="compact" isSelected={active === mode} aria-pressed={active === mode} onClick={() => onPick(mode)}>
             {active === mode ? "Wybierasz z drzewa" : "Wybierz z drzewa"}
-          </button>
+          </Button>
         )
       }
     >
@@ -279,28 +278,27 @@ export default function MappingEditor({
     : problems.any
       ? "Podgląd pojawi się po poprawieniu błędów w formularzu."
       : undefined;
-  const showErr = (msg?: string) => (msg ? <p className="mp-err" role="alert">{msg}</p> : null);
+  const showErr = (msg?: string) => (msg ? <div role="alert"><ErrorMessage>{msg}</ErrorMessage></div> : null);
   const modeInfo = MODES.find((m) => m.id === mode)!;
   const sev = draft.severity;
 
   return (
     <div className="mp-editor">
-      <header className="mp-editor-head">
-        <div>
-          <h2>
-            {isNew ? "Nowy mapping" : "Edycja mappingu"}: <span className="mono">{draft.schema || "…"}</span>
-          </h2>
-          <p className="muted">
-            {isNew
-              ? "Schemat wybrany (krok 1 z 5). Zaznacz pola w payloadzie, ustaw severity i fingerprint, sprawdź podgląd i zapisz."
-              : `Wersja ${draft.version ?? "?"}. Zmiana działa na kolejne zdarzenia bez restartu.`}
-            {eventCount !== undefined && ` Czekających zdarzeń UNMAPPED: ${eventCount} – po zapisie zostaną przetworzone ponownie.`}
-          </p>
-        </div>
-        <button type="button" onClick={onClose} disabled={saving}>
-          Zamknij edytor
-        </button>
-      </header>
+      <PageHeader
+        actions={
+          <Button onClick={onClose} isDisabled={saving}>
+            Zamknij edytor
+          </Button>
+        }
+      >
+        {isNew ? "Nowy mapping" : "Edycja mappingu"}: <span className="mono">{draft.schema || "…"}</span>
+      </PageHeader>
+      <Text as="p" color="color.text.subtle">
+        {isNew
+          ? "Schemat wybrany (krok 1 z 5). Zaznacz pola w payloadzie, ustaw severity i fingerprint, sprawdź podgląd i zapisz."
+          : `Wersja ${draft.version ?? "?"}. Zmiana działa na kolejne zdarzenia bez restartu.`}
+        {eventCount !== undefined && ` Czekających zdarzeń UNMAPPED: ${eventCount} – po zapisie zostaną przetworzone ponownie.`}
+      </Text>
 
       <div className="mp-grid">
         {/* ----------------------------------------------------------- lewa kolumna: payload */}
@@ -312,9 +310,12 @@ export default function MappingEditor({
               value={mode}
               onChange={setMode}
             />
-            <p className="mp-hint" aria-live="polite">
-              <strong>Klik dodaje do: {MODE_LABEL[mode]}.</strong> {modeInfo.hint}
-            </p>
+            <div aria-live="polite">
+              <Text as="p" color="color.text.subtle">
+                <Text weight="bold">Klik dodaje do: {MODE_LABEL[mode]}.</Text> {modeInfo.hint}
+            
+              </Text>
+            </div>
             {payload !== undefined ? (
               <div className="mp-tree-box">
                 <PayloadTree value={payload} onSelect={pick} marks={marks} actionLabel={`Dodaj do: ${MODE_LABEL[mode]}`} />
@@ -328,17 +329,17 @@ export default function MappingEditor({
               </summary>
               <Field label="Wklej zdarzenie (JSON lub YAML)">
                 {(f) => (
-                  <textarea
+                  <TextArea
                     {...f}
                     className="mono"
                     rows={8}
                     value={sampleText}
-                    onChange={(e) => setSampleText(e.target.value)}
+                    onChange={(e) => setSampleText(e.currentTarget.value)}
                     spellCheck={false}
                   />
                 )}
               </Field>
-              {parsed?.format === "invalid" && <p className="mp-err" role="alert">Nie udało się odczytać payloadu: {parsed.error}</p>}
+              {parsed?.format === "invalid" && <div role="alert"><ErrorMessage>Nie udało się odczytać payloadu: {parsed.error}</ErrorMessage></div>}
             </details>
           </Section>
         </div>
@@ -347,7 +348,7 @@ export default function MappingEditor({
         <div className="mp-right">
           <Section step="Krok 3" title="Pola kanoniczne i tytuł" mode="fields" active={mode} onPick={setMode}>
             {draft.fields.length === 0 ? (
-              <p className="muted">Brak pól. Wybierz „Pola” nad drzewem i kliknij pole payloadu.</p>
+              <Text as="p" color="color.text.subtle">Brak pól. Wybierz „Pola” nad drzewem i kliknij pole payloadu.</Text>
             ) : (
               <ul className="mp-rows">
                 {draft.fields.map((f) => (
@@ -355,28 +356,26 @@ export default function MappingEditor({
                     <div className="mp-row">
                       <Field label="Nazwa pola">
                         {(a) => (
-                          <input
+                          <TextInput
                             {...a}
                             value={f.name}
-                            onChange={(e) => set({ fields: draft.fields.map((x) => (x.id === f.id ? { ...x, name: e.target.value } : x)) })}
+                            onChange={(e) => set({ fields: draft.fields.map((x) => (x.id === f.id ? { ...x, name: e.currentTarget.value } : x)) })}
                           />
                         )}
                       </Field>
                       <div className="mp-grow">
                         <Field label="Ścieżka">
                           {(a) => (
-                            <input
+                            <TextInput
                               {...a}
                               className="mono"
                               value={f.path}
-                              onChange={(e) => set({ fields: draft.fields.map((x) => (x.id === f.id ? { ...x, path: e.target.value } : x)) })}
+                              onChange={(e) => set({ fields: draft.fields.map((x) => (x.id === f.id ? { ...x, path: e.currentTarget.value } : x)) })}
                             />
                           )}
                         </Field>
                       </div>
-                      <button type="button" onClick={() => set({ fields: draft.fields.filter((x) => x.id !== f.id) })} aria-label={`Usuń pole ${f.name}`}>
-                        Usuń
-                      </button>
+                      <Button onClick={() => set({ fields: draft.fields.filter((x) => x.id !== f.id) })} aria-label={`Usuń pole ${f.name}`}>Usuń</Button>
                     </div>
                     {showErr(problems.fields[f.id])}
                   </li>
@@ -386,52 +385,48 @@ export default function MappingEditor({
             <Field label={<>Tytuł alertu (ścieżka lub szablon, np. {"{{raw.error.message}}"})</>} error={problems.title}>
               {(a) => (
                 <div className="mp-inline">
-                  <input
+                  <TextInput
                     {...a}
                     className="mono mp-grow"
                     value={draft.title}
-                    onChange={(e) => set({ title: e.target.value })}
+                    onChange={(e) => set({ title: e.currentTarget.value })}
                     placeholder="$.error.message"
                   />
-                  <button type="button" aria-pressed={mode === "title"} onClick={() => setMode("title")} className="mp-pick-btn">
+                  <Button spacing="compact" isSelected={mode === "title"} aria-pressed={mode === "title"} onClick={() => setMode("title")}>
                     Wybierz z drzewa
-                  </button>
+                  </Button>
                 </div>
               )}
             </Field>
-            {!draft.title.trim() && <p className="muted mp-small">Bez tytułu alert dostanie nazwę schematu.</p>}
+            {!draft.title.trim() && <Text as="p" size="small" color="color.text.subtle">Bez tytułu alert dostanie nazwę schematu.</Text>}
           </Section>
 
           <Section title="Severity" mode="severity" active={mode} onPick={setMode}>
-            <div className="mp-radios" role="radiogroup" aria-label="Skąd brać severity">
-              {(
-                [
-                  ["const", "Stała wartość"],
-                  ["path", "Z pola payloadu"],
-                  ["rules", "Z warunków"],
-                ] as const
-              ).map(([t, label]) => (
-                <label key={t}>
-                  <input
-                    type="radio"
-                    name="sev-type"
-                    checked={sev.type === t}
-                    onChange={() => {
-                      if (t === sev.type) return;
-                      const def = sev.type === "const" ? sev.value : sev.default;
-                      setSeverity(
-                        t === "const"
-                          ? { type: "const", value: def }
-                          : t === "path"
-                            ? { type: "path", path: "", map: [], default: def }
-                            : { type: "rules", rules: [], default: def },
-                      );
-                    }}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
+            <Text as="p" weight="bold" id="sev-type-label">
+              Skąd brać severity
+            </Text>
+            <RadioGroup
+              labelId="sev-type-label"
+              name="sev-type"
+              value={sev.type}
+              options={[
+                { name: "sev-type", value: "const", label: "Stała wartość" },
+                { name: "sev-type", value: "path", label: "Z pola payloadu" },
+                { name: "sev-type", value: "rules", label: "Z warunków" },
+              ]}
+              onChange={(e) => {
+                const t = e.currentTarget.value as SeverityDraft["type"];
+                if (t === sev.type) return;
+                const def = sev.type === "const" ? sev.value : sev.default;
+                setSeverity(
+                  t === "const"
+                    ? { type: "const", value: def }
+                    : t === "path"
+                      ? { type: "path", path: "", map: [], default: def }
+                      : { type: "rules", rules: [], default: def },
+                );
+              }}
+            />
             {sev.type === "const" && (
               <Field label="Severity wszystkich zdarzeń">
                 {(f) => <SeveritySelect {...f} value={sev.value} onChange={(value) => setSeverity({ type: "const", value })} aria-label="Severity" />}
@@ -441,18 +436,18 @@ export default function MappingEditor({
               <>
                 <Field label="Pole z severity">
                   {(f) => (
-                    <input
+                    <TextInput
                       {...f}
                       className="mono"
                       value={sev.path}
-                      onChange={(e) => setSeverity({ ...sev, path: e.target.value })}
+                      onChange={(e) => setSeverity({ ...sev, path: e.currentTarget.value })}
                       placeholder="$.severity"
                     />
                   )}
                 </Field>
-                <p className="muted mp-small">
+                <Text as="p" size="small" color="color.text.subtle">
                   Nazwy critical, error, warning/warn, info są rozpoznawane same. Inne wartości źródła przypisz poniżej.
-                </p>
+                </Text>
                 {sev.map.length > 0 && (
                   <ul className="mp-rows">
                     {sev.map.map((r) => (
@@ -460,10 +455,10 @@ export default function MappingEditor({
                         <div className="mp-grow">
                           <Field label="Wartość w źródle">
                             {(f) => (
-                              <input
+                              <TextInput
                                 {...f}
                                 value={r.key}
-                                onChange={(e) => setSeverity({ ...sev, map: sev.map.map((x) => (x.id === r.id ? { ...x, key: e.target.value } : x)) })}
+                                onChange={(e) => setSeverity({ ...sev, map: sev.map.map((x) => (x.id === r.id ? { ...x, key: e.currentTarget.value } : x)) })}
                               />
                             )}
                           </Field>
@@ -478,21 +473,19 @@ export default function MappingEditor({
                             />
                           )}
                         </Field>
-                        <button type="button" onClick={() => setSeverity({ ...sev, map: sev.map.filter((x) => x.id !== r.id) })} aria-label={`Usuń przypisanie ${r.key}`}>
-                          Usuń
-                        </button>
+                        <Button onClick={() => setSeverity({ ...sev, map: sev.map.filter((x) => x.id !== r.id) })} aria-label={`Usuń przypisanie ${r.key}`}>Usuń</Button>
                       </li>
                     ))}
                   </ul>
                 )}
-                <button type="button" onClick={() => setSeverity({ ...sev, map: [...sev.map, { id: nextId(), key: "", value: "warning" }] })}>
+                <Button onClick={() => setSeverity({ ...sev, map: [...sev.map, { id: nextId(), key: "", value: "warning" }] })}>
                   Dodaj przypisanie wartości
-                </button>
+                </Button>
               </>
             )}
             {sev.type === "rules" && (
               <>
-                {sev.rules.length === 0 && <p className="muted">Brak warunków. Wybierz „Severity” nad drzewem i kliknij pole, albo dodaj regułę ręcznie.</p>}
+                {sev.rules.length === 0 && <Text as="p" color="color.text.subtle">Brak warunków. Wybierz „Severity” nad drzewem i kliknij pole, albo dodaj regułę ręcznie.</Text>}
                 <ul className="mp-rows">
                   {sev.rules.map((r, i) => (
                     <li key={r.id} className="mp-row mp-row-rule">
@@ -505,7 +498,7 @@ export default function MappingEditor({
                       ) : (
                         <div className="mp-grow">
                           <ConditionView condition={r.when} />
-                          <p className="muted mp-small">Złożony warunek – edytuj w pliku konfiguracji; tu można go tylko usunąć.</p>
+                          <Text as="p" size="small" color="color.text.subtle">Złożony warunek – edytuj w pliku konfiguracji; tu można go tylko usunąć.</Text>
                         </div>
                       )}
                       <Field label="Wtedy severity">
@@ -518,21 +511,18 @@ export default function MappingEditor({
                           />
                         )}
                       </Field>
-                      <button type="button" onClick={() => setSeverity({ ...sev, rules: sev.rules.filter((x) => x.id !== r.id) })} aria-label={`Usuń regułę ${i + 1}`}>
-                        Usuń
-                      </button>
+                      <Button onClick={() => setSeverity({ ...sev, rules: sev.rules.filter((x) => x.id !== r.id) })} aria-label={`Usuń regułę ${i + 1}`}>Usuń</Button>
                     </li>
                   ))}
                 </ul>
-                <button
-                  type="button"
+                <Button
                   onClick={() =>
                     setSeverity({ ...sev, rules: [...sev.rules, { id: nextId(), when: { field: "raw.", op: "eq", value: "" }, value: "critical" }] })
                   }
                 >
                   Dodaj regułę
-                </button>
-                <p className="muted mp-small">Pierwsza spełniona reguła wygrywa.</p>
+                </Button>
+                <Text as="p" size="small" color="color.text.subtle">Pierwsza spełniona reguła wygrywa.</Text>
               </>
             )}
             {sev.type !== "const" && (
@@ -546,14 +536,14 @@ export default function MappingEditor({
           </Section>
 
           <Section title="Fingerprint (deduplikacja)" mode="fingerprint" active={mode} onPick={setMode}>
-            <p className="muted mp-small">
+            <Text as="p" size="small" color="color.text.subtle">
               Zdarzenia o tych samych wartościach wskazanych pól łączą się w jeden alert. Wybierz pola opisujące
               „ten sam problem” (np. usługa + kod błędu), nie identyfikator pojedynczego uruchomienia.
-            </p>
+            </Text>
             {draft.fingerprint.length === 0 ? (
-              <p className="mp-note">
+              <SectionMessage appearance="warning">
                 Pusty fingerprint: liczony jest ze schematu i całego payloadu – dedup połączy tylko identyczne zdarzenia.
-              </p>
+              </SectionMessage>
             ) : (
               <ul className="mp-rows">
                 {draft.fingerprint.map((p, i) => (
@@ -562,18 +552,16 @@ export default function MappingEditor({
                       <div className="mp-grow">
                         <Field label={`Ścieżka ${i + 1}`}>
                           {(f) => (
-                            <input
+                            <TextInput
                               {...f}
                               className="mono"
                               value={p}
-                              onChange={(e) => set({ fingerprint: draft.fingerprint.map((x, j) => (j === i ? e.target.value : x)) })}
+                              onChange={(e) => set({ fingerprint: draft.fingerprint.map((x, j) => (j === i ? e.currentTarget.value : x)) })}
                             />
                           )}
                         </Field>
                       </div>
-                      <button type="button" onClick={() => set({ fingerprint: draft.fingerprint.filter((_, j) => j !== i) })} aria-label={`Usuń ścieżkę fingerprintu ${i + 1}`}>
-                        Usuń
-                      </button>
+                      <Button onClick={() => set({ fingerprint: draft.fingerprint.filter((_, j) => j !== i) })} aria-label={`Usuń ścieżkę fingerprintu ${i + 1}`}>Usuń</Button>
                     </div>
                     {showErr(problems.fingerprint[i])}
                   </li>
@@ -583,23 +571,18 @@ export default function MappingEditor({
           </Section>
 
           <Section title="Warunek resolved" mode="resolved" active={mode} onPick={setMode}>
-            <label className="mp-check">
-              <input
-                type="checkbox"
-                checked={draft.resolved !== null}
-                onChange={(e) => set({ resolved: e.target.checked ? { field: "raw.", op: "eq", value: "" } : null })}
-              />
-              Zdarzenie może rozwiązywać alert (np. status = resolved)
-            </label>
+            <Checkbox
+              isChecked={draft.resolved !== null}
+              onChange={(e) => set({ resolved: e.currentTarget.checked ? { field: "raw.", op: "eq", value: "" } : null })}
+              label="Zdarzenie może rozwiązywać alert (np. status = resolved)"
+            />
             {draft.resolved && isSimpleLeaf(draft.resolved) && (
               <LeafEditor cond={draft.resolved} label="Resolved" onChange={(resolved) => set({ resolved })} />
             )}
             {draft.resolved && !isSimpleLeaf(draft.resolved) && (
               <>
                 <ConditionView condition={draft.resolved} />
-                <button type="button" onClick={() => set({ resolved: { field: "raw.", op: "eq", value: "" } })}>
-                  Zastąp prostym warunkiem
-                </button>
+                <Button onClick={() => set({ resolved: { field: "raw.", op: "eq", value: "" } })}>Zastąp prostym warunkiem</Button>
               </>
             )}
             {showErr(problems.resolved)}
@@ -613,12 +596,12 @@ export default function MappingEditor({
             {submitted && problems.any && <ErrorBox message="Popraw zaznaczone błędy w formularzu, żeby zapisać." />}
             {saveError && <ErrorBox message={`Serwer odrzucił mapping: ${saveError}`} />}
             <div className="mp-actions">
-              <button type="button" className="primary" onClick={save} disabled={saving}>
+              <Button appearance="primary" onClick={save} isDisabled={saving}>
                 {saving ? "Zapisywanie…" : isNew ? "Zapisz mapping" : "Zapisz zmiany"}
-              </button>
-              <button type="button" onClick={onClose} disabled={saving}>
+              </Button>
+              <Button onClick={onClose} isDisabled={saving}>
                 Anuluj
-              </button>
+              </Button>
             </div>
           </Section>
         </div>

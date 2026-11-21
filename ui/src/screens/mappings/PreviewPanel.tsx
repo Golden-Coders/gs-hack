@@ -1,11 +1,13 @@
 // Podgląd wyniku mappingu na przykładowym zdarzeniu: POST /mappings/preview (z odświeżaniem po zmianach),
 // a gdy backend nie ma jeszcze podglądu (501) – przybliżony wynik liczony lokalnie, wyraźnie oznaczony.
 import { useEffect, useRef, useState } from "react";
+import Button from "@atlaskit/button/new";
+import { Text } from "@atlaskit/primitives/compiled";
+import SectionMessage from "@atlaskit/section-message";
 import { api, type Schemas } from "../../api/client";
 import { describeError } from "../../api/request";
-import { SeverityBadge } from "../../components/Badges";
 import { formatValue } from "../../components/Presentation";
-import { ErrorBox } from "../../ui/primitives";
+import { ErrorBox, StatusLozenge } from "../../ui/primitives";
 import type { Mapping } from "./draft";
 import { localPreview, type PreviewResult } from "./localPreview";
 
@@ -74,31 +76,29 @@ export default function PreviewPanel({
   return (
     <div className="mp-preview" aria-live="polite">
       {blocked ? (
-        <p className="muted">{blocked}</p>
+        <Text as="p" color="color.text.subtle">{blocked}</Text>
       ) : (
         <>
           <div className="mp-preview-bar">
             <span className="muted">
               {state.kind === "loading" ? "Liczenie podglądu…" : shown ? "Wynik dla przykładowego zdarzenia" : ""}
             </span>
-            <button type="button" onClick={() => setTick((n) => n + 1)}>
-              Odśwież podgląd
-            </button>
+            <Button onClick={() => setTick((n) => n + 1)}>Odśwież podgląd</Button>
           </div>
           {state.kind === "error" && <ErrorBox message={state.message} />}
           {shown && state.kind !== "error" && (
             <>
               {shown.origin === "local" && (
-                <p className="mp-note">
+                <SectionMessage appearance="warning">
                   Podgląd lokalny (przybliżony): serwer nie udostępnia jeszcze podglądu mappingu. Zapisany mapping
                   zadziała według reguł serwera.
-                </p>
+                </SectionMessage>
               )}
               <dl className="mp-result">
                 <dt>Severity</dt>
-                <dd><SeverityBadge severity={shown.severity} /></dd>
+                <dd><StatusLozenge domain="severity" value={shown.severity} /></dd>
                 <dt>Tytuł</dt>
-                <dd>{shown.title || <span className="muted">(pusty)</span>}</dd>
+                <dd>{shown.title || <Text color="color.text.subtle">(pusty)</Text>}</dd>
                 <dt>Fingerprint</dt>
                 <dd className="mono">{shown.fingerprint}</dd>
                 <dt>Rozwiązuje alert</dt>
@@ -106,13 +106,13 @@ export default function PreviewPanel({
                 <dt>Pola</dt>
                 <dd>
                   {Object.keys(shown.fields).length === 0 ? (
-                    <span className="muted">brak dodatkowych pól</span>
+                    <Text color="color.text.subtle">brak dodatkowych pól</Text>
                   ) : (
                     <ul className="mp-result-fields">
                       {Object.entries(shown.fields).map(([k, v]) => (
                         <li key={k}>
                           <span className="mono">{k}</span>
-                          {v === null ? <span className="muted">pusta wartość (pole nie istnieje w payloadzie)</span> : <span>{formatValue(v)}</span>}
+                          {v === null ? <Text color="color.text.subtle">pusta wartość (pole nie istnieje w payloadzie)</Text> : <span>{formatValue(v)}</span>}
                         </li>
                       ))}
                     </ul>
