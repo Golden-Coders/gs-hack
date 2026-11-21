@@ -286,7 +286,7 @@ impl Dedup {
         };
         let mut tx = self.pool.begin().await?;
         let n = common::db::sqlx::query(
-            "UPDATE alerts SET state = 'reopened', episode = episode + 1, count = 1, first_seen = now(), last_seen = $1,
+            "UPDATE alerts SET state = 'reopened', episode = episode + 1, count = 1, first_seen = $1, last_seen = $1,
                     severity = $2, title = $3, last_event = $4, acked_by = NULL, resolved_by = NULL, updated_at = now()
              WHERE id = $5 AND episode = $6 AND state = 'resolved'",
         )
@@ -303,9 +303,10 @@ impl Dedup {
             self.cache.remove(fp);
             return Err(anyhow!("alert {id} changed concurrently, reloading"));
         }
-        common::db::sqlx::query("INSERT INTO alert_episodes (alert_id, episode, opened_at, count) VALUES ($1, $2, now(), 1)")
+        common::db::sqlx::query("INSERT INTO alert_episodes (alert_id, episode, opened_at, count) VALUES ($1, $2, $3, 1)")
             .bind(id)
             .bind(old_ep + 1)
+            .bind(ev.received_at)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
