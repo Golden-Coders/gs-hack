@@ -1,16 +1,16 @@
 import type { Schemas } from "../../api/client";
-import Section from "./Section";
+import { Card } from "../../ui/primitives";
 import type { Resource } from "../../api/useResource";
 import { actorLabel, formatTime } from "../../ui/format";
 
 export default function Audit({ resource }: { resource: Resource<Schemas["AuditEntry"][]> }) {
   const entries = resource.data ?? [];
   return (
-    <Section title="Dziennik działań" resource={resource}>
+    <Card title="Dziennik działań" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
       {!resource.loading && !resource.error && entries.length === 0 && <p className="muted">Brak wpisów.</p>}
       {entries.length > 0 && (
-        <div className="ad-table-wrap">
-          <table className="ad-table">
+        <div className="table-wrap">
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Czas</th>
@@ -37,6 +37,6 @@ export default function Audit({ resource }: { resource: Resource<Schemas["AuditE
           </table>
         </div>
       )}
-    </Section>
+    </Card>
   );
 }

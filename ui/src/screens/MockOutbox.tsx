@@ -1,12 +1,16 @@
 // Wysłane SMS / telefony z symulowanych kanałów + przełącznik dostępności kanału — tasks.md 14.4.
 // Wyłączenie kanału pokazuje awarię: kolejne dostarczenia kończą się błędem, a w szczegółach alertu widać fallback.
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
+import { send } from "../api/request";
 import { usePollWhenQuiet, useStream } from "../api/stream";
+import { useResource } from "../api/useResource";
+import { Badge } from "../components/Badges";
+import { formatTime } from "../ui/format";
+import { Card, Empty, ErrorBox } from "../ui/primitives";
 import "./MockOutbox.css";
 
-type Message = Schemas["MockMessage"];
 type ChannelState = Schemas["MockChannelState"];
 
 const CHANNEL_LABEL: Record<Schemas["Channel"], string> = {
@@ -15,8 +19,6 @@ const CHANNEL_LABEL: Record<Schemas["Channel"], string> = {
   sms: "SMS",
   phone: "Telefon",
 };
-
-const dateFmt = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "medium" });
 
 function ChannelSwitch({
   state,
@@ -53,77 +55,57 @@ function ChannelSwitch({
 }
 
 export default function MockOutbox() {
-  const [messages, setMessages] = useState<Message[] | null>(null);
-  const [channels, setChannels] = useState<ChannelState[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const messages = useResource(() => api.GET("/mock/outbox"));
+  const channels = useResource(() => api.GET("/mock/channels"));
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
+  // Stan kanału zapisany przed odświeżeniem listy – pokazujemy go od razu, serwer potwierdzi przy następnym pobraniu.
+  const [saved, setSaved] = useState<Record<string, boolean>>({});
 
-  const loadMessages = useCallback(async () => {
-    try {
-      const { data, error: err } = await api.GET("/mock/outbox");
-      if (err || !data) throw new Error("outbox");
-      setMessages(data);
-      setError(null);
-    } catch {
-      setError("Nie udało się pobrać wysłanych wiadomości.");
-    }
-  }, []);
+  useEffect(() => setSaved({}), [channels.data]);
 
-  const loadChannels = useCallback(async () => {
-    try {
-      const { data, error: err } = await api.GET("/mock/channels");
-      if (err || !data) throw new Error("channels");
-      setChannels(data);
-      setError(null);
-    } catch {
-      setError("Nie udało się pobrać stanu kanałów.");
-    }
-  }, []);
-
-  const refresh = useCallback(() => {
-    void loadMessages();
-    void loadChannels();
-  }, [loadMessages, loadChannels]);
-
-  useEffect(refresh, [refresh]);
+  const reload = () => {
+    messages.reload();
+    channels.reload();
+  };
 
   // Na żywo: nowa „wysłana” wiadomość albo zmiana statusu dostarczenia.
   useStream((msg) => {
     if (msg.type !== "ui_event") return;
-    if (msg.data.kind === "mock_outbox") void loadMessages();
-    if (msg.data.kind === "delivery_status") void loadMessages();
+    if (msg.data.kind === "mock_outbox" || msg.data.kind === "delivery_status") messages.refresh();
   });
 
-  usePollWhenQuiet(refresh);
+  usePollWhenQuiet(() => {
+    messages.refresh();
+    channels.refresh();
+  });
 
   async function toggle(state: ChannelState) {
     const channel = state.channel;
     setPending((s) => new Set(s).add(channel));
     setToggleError(null);
-    try {
-      const { data, error: err } = await api.PUT("/mock/channels/{channel}", {
-        params: { path: { channel } },
-        body: { available: !state.available },
-      });
-      if (err || !data) throw new Error("toggle");
-      setChannels((cur) => cur?.map((c) => (c.channel === channel ? { ...c, available: data.available } : c)) ?? cur);
-    } catch {
+    const err = await send(() =>
+      api.PUT("/mock/channels/{channel}", { params: { path: { channel } }, body: { available: !state.available } }),
+    );
+    if (err) {
       setToggleError(`Nie udało się zmienić stanu kanału ${CHANNEL_LABEL[channel] ?? channel}.`);
-    } finally {
-      setPending((s) => {
-        const n = new Set(s);
-        n.delete(channel);
-        return n;
-      });
+    } else {
+      setSaved((s) => ({ ...s, [channel]: !state.available }));
+      channels.refresh();
     }
+    setPending((s) => {
+      const n = new Set(s);
+      n.delete(channel);
+      return n;
+    });
   }
 
+  const rows = messages.data;
   return (
     <section className="mock-outbox">
       <header className="mock-head">
         <h1>Wysłane SMS / telefony</h1>
-        <button type="button" onClick={refresh}>
+        <button type="button" onClick={reload}>
           Odśwież
         </button>
       </header>
@@ -132,66 +114,61 @@ export default function MockOutbox() {
         przez ten kanał zakończą się błędem, a w szczegółach alertu zobaczysz kanał zapasowy.
       </p>
 
-      {error && (
-        <p className="error-box" role="alert">
-          {error}
-        </p>
-      )}
+      <Card title="Dostępność kanałów" loading={channels.loading} error={channels.error} onRetry={channels.reload}>
+        {toggleError && <ErrorBox message={toggleError} />}
+        {channels.data && (
+          <ul className="channel-list" aria-label="Dostępność symulowanych kanałów">
+            {channels.data.map((c) => (
+              <ChannelSwitch
+                key={c.channel}
+                state={{ ...c, available: saved[c.channel] ?? c.available }}
+                pending={pending.has(c.channel)}
+                onToggle={toggle}
+              />
+            ))}
+          </ul>
+        )}
+      </Card>
 
-      <h2>Dostępność kanałów</h2>
-      {toggleError && (
-        <p className="error-box" role="alert">
-          {toggleError}
-        </p>
-      )}
-      {channels === null && !error && <p className="muted">Ładowanie…</p>}
-      {channels && (
-        <ul className="channel-list" aria-label="Dostępność symulowanych kanałów">
-          {channels.map((c) => (
-            <ChannelSwitch key={c.channel} state={c} pending={pending.has(c.channel)} onToggle={toggle} />
-          ))}
-        </ul>
-      )}
-
-      <h2>Wysłane wiadomości</h2>
-      {messages === null && !error && <p className="muted">Ładowanie…</p>}
-      {messages?.length === 0 && <p className="muted outbox-empty">Brak wysłanych wiadomości</p>}
-      {messages && messages.length > 0 && (
-        <div className="outbox-scroll">
-          <table className="outbox-table">
-            <thead>
-              <tr>
-                <th scope="col">Czas</th>
-                <th scope="col">Kanał</th>
-                <th scope="col">Do</th>
-                <th scope="col">Treść</th>
-                <th scope="col">Alert</th>
-              </tr>
-            </thead>
-            <tbody>
-              {messages.map((m) => (
-                <tr key={m.id}>
-                  <td className="nowrap">{dateFmt.format(new Date(m.sent_at))}</td>
-                  <td>
-                    <span className={`badge ${m.channel === "phone" ? "badge-blue" : "badge-gray"}`}>
-                      {CHANNEL_LABEL[m.channel] ?? m.channel}
-                    </span>
-                  </td>
-                  <td>
-                    <div>{m.person_id}</div>
-                    <div className="muted outbox-to">{m.to}</div>
-                  </td>
-                  <td>
-                    <strong>{m.title}</strong>
-                    <div className="outbox-body">{m.body}</div>
-                  </td>
-                  <td>{m.alert_id ? <Link to={`/alerts/${m.alert_id}`}>Szczegóły alertu</Link> : <span className="muted">—</span>}</td>
+      <Card title="Wysłane wiadomości" loading={messages.loading} error={messages.error} onRetry={messages.reload}>
+        {rows?.length === 0 && <Empty>Brak wysłanych wiadomości</Empty>}
+        {rows && rows.length > 0 && (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Czas</th>
+                  <th scope="col">Kanał</th>
+                  <th scope="col">Do</th>
+                  <th scope="col">Treść</th>
+                  <th scope="col">Alert</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {rows.map((m) => (
+                  <tr key={m.id}>
+                    <td className="nowrap">{formatTime(m.sent_at)}</td>
+                    <td>
+                      <Badge tone={m.channel === "phone" ? "blue" : "gray"}>{CHANNEL_LABEL[m.channel] ?? m.channel}</Badge>
+                    </td>
+                    <td>
+                      <div>{m.person_id}</div>
+                      <div className="muted outbox-to">{m.to}</div>
+                    </td>
+                    <td>
+                      <strong>{m.title}</strong>
+                      <div className="outbox-body">{m.body}</div>
+                    </td>
+                    <td>
+                      {m.alert_id ? <Link to={`/alerts/${m.alert_id}`}>Szczegóły alertu</Link> : <span className="muted">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </section>
   );
 }
