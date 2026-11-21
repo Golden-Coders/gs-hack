@@ -1,6 +1,6 @@
 # Alerting Service od środka
 
-Ten dokument opisuje kod, który jest w repozytorium, a nie tylko plan. Stan: gałąź `main` po scaleniu pull requesta nr 31 (21 listopada 2026). Każde pojęcie jest zdefiniowane w sekcji [Pojęcia](#2-pojęcia), zanim zostanie użyte dalej.
+Ten dokument opisuje kod, który jest w repozytorium, a nie tylko plan. Stan: gałąź `main` po scaleniu pull requesta nr 32 (21 listopada 2026). Każde pojęcie jest zdefiniowane w sekcji [Pojęcia](#2-pojęcia), zanim zostanie użyte dalej.
 
 **Co robi system.** Inne systemy firmy wysyłają do niego zdarzenia, na przykład „workflow rozliczenia WF-42 przekroczył czas oczekiwania”. Zdarzenia mogą mieć dowolny kształt. System sprowadza każde zdarzenie do jednego wspólnego kształtu, łączy powtórzenia tego samego problemu w jeden alert z licznikiem, sprawdza reguły zespołów, powiadamia właściwe osoby kanałem, który te osoby wybrały, i prowadzi operatora przez runbook, czyli instrukcję naprawy. Część kroków runbooka system wykonuje sam, a ryzykowne kroki wykonuje dopiero po zatwierdzeniu przez człowieka.
 
@@ -32,7 +32,7 @@ Liczby to zadania odhaczone w `openspec/changes/alerting-service-mvp/tasks.md`. 
 | P3: runbooki i akcje | Kostek | 10–12 | 12 z 12 |
 | P4: interfejs, dokumentacja, demo | Damian | 13–17 | 7 z 15 |
 | Integracja od początku do końca | wszyscy | 18 | 2 z 6 |
-| Pipeline P1+P2 (dokończenie integracji) | Krzysztof Jet, Krzysztof Wojt | 19 | 9 z 14 |
+| Pipeline P1+P2 (dokończenie integracji) | Krzysztof Jet, Krzysztof Wojt | 19 | 10 z 14 |
 
 Cały kod przepływu jest napisany i działa: od przyjęcia zdarzenia, przez alert, reguły, powiadomienia i runbooki, aż po zmiany na żywo w interfejsie. Brakujące zadania to w większości weryfikacje na czystym klonie, testy odporności i skalowania oraz pomiar wydajności. Szczegóły są w sekcji [12](#12-co-zostało-do-zrobienia).
 
@@ -451,7 +451,7 @@ Kod przepływu jest kompletny. Zostały weryfikacje, pomiary i dwie znane niezgo
 
 **Weryfikacje i pomiary (zadania nieodhaczone):**
 
-1. **Pomiar wydajności** (5.3, 19.E1, 19.H2): przebieg `loadgen`, wyniki p50 i p99 oraz lag konsumentów w `docs/LOADTEST.md`. Tabela wyników jest jeszcze pusta.
+1. **Pomiar końcowy wydajności** (5.3, 19.H2). Pomiar 1 jest w `docs/LOADTEST.md`: 500 zdarzeń na sekundę przez 60 sekund przyjęte bez błędów, deduplikacja poprawna (suma liczników alertów wzrosła dokładnie o liczbę wysłanych zdarzeń), brak zdublowanych dostarczeń. **Wąskim gardłem jest `sender`:** przetwarza zlecenia jedno po drugim, a każdy e-mail otwiera nowe połączenie SMTP, więc wysyła około 200–260 powiadomień na sekundę na instancję. Kolejka przed nim rosła przez cały przebieg, dlatego opóźnienie e-maili wyniosło p50 26 s i p99 40 s. Na pustym systemie (SMS i telefon) cały przepływ trwa około 30 ms. Do zrobienia: decyzja o optymalizacji sendera i pomiar końcowy.
 2. **Odporność** (18.4, 19.F1): wyłączenie Mailpit i symulowanego SMS oraz restart każdej binarki w trakcie ruchu, bez utraconych alertów i bez zdublowanych powiadomień.
 3. **Skalowanie** (18.5, 19.G1): po dwie instancje `lifecycle` i `sender` pod obciążeniem, z poprawną deduplikacją.
 4. **Runbooki i kryteria demo w UI** (18.3, 18.6, 19.H1): skrypty `scripts/e2e/runbooks.sh` i `criteria.sh` istnieją; brakuje przejścia przez interfejs na czystym klonie.
