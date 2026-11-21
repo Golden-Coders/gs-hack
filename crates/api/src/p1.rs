@@ -332,6 +332,7 @@ mod tests {
     struct Server {
         addr: std::net::SocketAddr,
         st: AppState,
+        alerts: std::sync::Mutex<Vec<Uuid>>,
     }
 
     async fn server() -> Server {
@@ -340,11 +341,21 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let app = crate::router(st.clone());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Server { addr, st }
+        Server { addr, st, alerts: Default::default() }
     }
 
     impl Server {
+        /// Domyślnie z `Authorization: Bearer <token z konfiguracji>`.
         async fn http(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<&str>) -> (u16, Value) {
+            let auth = format!("Bearer {}", self.st.config.api_token);
+            let mut all = vec![("Authorization", auth.as_str())];
+            all.extend_from_slice(headers);
+            let (status, _, json) = self.http_raw(method, path, &all, body).await;
+            (status, json)
+        }
+
+        /// Bez dodawania nagłówków; zwraca też nagłówki odpowiedzi.
+        async fn http_raw(&self, method: &str, path: &str, headers: &[(&str, &str)], body: Option<&str>) -> (u16, String, Value) {
             let mut req = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n");
             for (k, v) in headers {
                 req.push_str(&format!("{k}: {v}\r\n"));
@@ -362,7 +373,30 @@ mod tests {
             let (head, body) = text.split_once("\r\n\r\n").unwrap();
             let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
             let json = serde_json::from_str(body.trim()).unwrap_or(Value::Null);
-            (status, json)
+            (status, head.to_lowercase(), json)
+        }
+
+        /// Tylko status i nagłówki (dla strumieni SSE, które się nie kończą).
+        async fn head_only(&self, path: &str) -> (u16, String) {
+            let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            let mut s = TcpStream::connect(self.addr).await.unwrap();
+            s.write_all(req.as_bytes()).await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = tokio::time::timeout(Duration::from_secs(5), s.read(&mut chunk)).await.expect("timeout").unwrap();
+                assert!(n > 0, "połączenie zamknięte przed końcem nagłówków");
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            let head = String::from_utf8_lossy(&buf).to_lowercase();
+            (head.split_whitespace().nth(1).unwrap().parse().unwrap(), head)
+        }
+
+        /// Usuwa alerty wstawione przez `insert_alert` (wołać na końcu testu).
+        async fn cleanup(&self) {
+            let ids = self.alerts.lock().unwrap().clone();
+            sqlx::query("DELETE FROM alert_episodes WHERE alert_id = ANY($1)").bind(&ids).execute(&self.st.db).await.unwrap();
+            sqlx::query("DELETE FROM alerts WHERE id = ANY($1)").bind(&ids).execute(&self.st.db).await.unwrap();
         }
 
         async fn insert_alert(&self, fp: &str, state: &str, age_days: i32) -> Uuid {
@@ -381,6 +415,7 @@ mod tests {
             .execute(&self.st.db)
             .await
             .unwrap();
+            self.alerts.lock().unwrap().push(id);
             id
         }
     }
@@ -418,6 +453,7 @@ mod tests {
 
         let (_, one) = s.http("GET", "/alerts?limit=1", &[], None).await;
         assert_eq!(one.as_array().unwrap().len(), 1);
+        s.cleanup().await;
     }
 
     #[tokio::test]
@@ -436,6 +472,7 @@ mod tests {
         assert_eq!(st, 404);
         let (st, _) = s.http("GET", "/alerts/nie-uuid", &[], None).await;
         assert_eq!(st, 400);
+        s.cleanup().await;
     }
 
     #[tokio::test]
@@ -456,6 +493,7 @@ mod tests {
         let eps: Vec<i64> = v.as_array().unwrap().iter().map(|e| e["episode"].as_i64().unwrap()).collect();
         assert_eq!(eps, vec![2, 1]);
         assert_eq!(v[0]["count"], 20);
+        s.cleanup().await;
     }
 
     async fn find_command(alert_id: Uuid) -> AlertCommand {
@@ -493,6 +531,7 @@ mod tests {
         assert_eq!(cmd.fingerprint, fp);
         assert!(matches!(cmd.kind, AlertCommandKind::Ack));
         assert_eq!(cmd.actor, Actor::User { person_id: "ala".into() });
+        s.cleanup().await;
     }
 
     #[tokio::test]
@@ -503,6 +542,7 @@ mod tests {
         assert_eq!(st, 202);
         let (st, _) = s.http("POST", &format!("/alerts/{id}/resolve"), &[], None).await;
         assert_eq!(st, 400);
+        s.cleanup().await;
     }
 
     #[tokio::test]
@@ -566,6 +606,7 @@ mod tests {
         let row = v.as_array().unwrap().iter().find(|r| r["schema"] == schema.as_str()).expect("brak schematu");
         assert_eq!(row["count"], 3);
         assert_eq!(row["sample"], json!({"n": 2}));
+        sqlx::query("DELETE FROM unmapped_events WHERE schema = $1").bind(&schema).execute(&s.st.db).await.unwrap();
     }
 
     #[tokio::test]
@@ -582,6 +623,7 @@ mod tests {
         let e = v.as_array().unwrap().iter().find(|e| e["source"] == src.as_str()).expect("brak błędu");
         assert_eq!(e["error"], "zly json");
         assert_eq!(e["sample"], "{");
+        sqlx::query("DELETE FROM ingest_errors WHERE source = $1").bind(&src).execute(&s.st.db).await.unwrap();
     }
 
     const WORKFLOW_MAPPING: &str = include_str!("../../contracts/fixtures/config/mapping.workflow.json");
@@ -657,5 +699,37 @@ mod tests {
         let (st, _) = s.http("PUT", &format!("/mappings/{schema}"), &[], Some(&mapping.to_string())).await;
         assert_eq!(st, 400);
         assert_eq!(mapping_rows(&s, &schema).await, 0);
+    }
+
+    #[tokio::test]
+    async fn auth_rules() {
+        let s = server().await;
+        let tok = s.st.config.api_token.clone();
+        let (st, _, _) = s.http_raw("GET", "/health", &[], None).await;
+        assert_eq!(st, 200);
+
+        let (st, _, v) = s.http_raw("GET", "/alerts", &[], None).await;
+        assert_eq!((st, &v), (401, &json!({"error": "unauthorized"})));
+        let (st, _, _) = s.http_raw("GET", "/alerts", &[("Authorization", "Bearer zly")], None).await;
+        assert_eq!(st, 401);
+        let (st, _, _) = s.http_raw("GET", "/alerts?limit=1", &[("Authorization", &format!("Bearer {tok}"))], None).await;
+        assert_eq!(st, 200);
+
+        let (st, _, _) = s.http_raw("GET", &format!("/alerts?limit=1&token={tok}"), &[], None).await;
+        assert_eq!(st, 200);
+        let (st, _, _) = s.http_raw("GET", "/alerts?token=zly", &[], None).await;
+        assert_eq!(st, 401);
+
+        let (st, _) = s.head_only("/stream").await;
+        assert_eq!(st, 401);
+        let (st, head) = s.head_only(&format!("/stream?token={tok}")).await;
+        assert_eq!(st, 200);
+        assert!(head.contains("content-type: text/event-stream"), "{head}");
+
+        let (st, head, _) = s
+            .http_raw("OPTIONS", "/alerts", &[("Origin", "http://localhost:5173"), ("Access-Control-Request-Method", "GET")], None)
+            .await;
+        assert_ne!(st, 401);
+        assert!(head.contains("access-control-allow-origin"), "{head}");
     }
 }
