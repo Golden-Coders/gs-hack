@@ -6,13 +6,13 @@ describe("paletteColor", () => {
     for (const name of ["red", "orange", "yellow", "green", "blue", "purple", "gray"]) {
       const c = paletteColor(name);
       expect(c, name).not.toBeNull();
-      expect(c!.fg).toMatch(/^#[0-9a-f]{6}$/);
-      expect(c!.bg).toMatch(/^#[0-9a-f]{6}$/);
+      expect(c!.fg).toMatch(/^var\(--[a-z]+(-bg)?\)$/);
+      expect(c!.bg).toMatch(/^var\(--[a-z]+(-bg)?\)$/);
     }
   });
 
   it("red daje czerwone tokeny (kolor z fixture reguły settlements)", () => {
-    expect(paletteColor("red")).toEqual({ fg: "#b91c1c", bg: "#fee2e2" });
+    expect(paletteColor("red")).toEqual({ fg: "var(--red)", bg: "var(--red-bg)" });
   });
 
   it("ignoruje wielkość liter", () => {
@@ -34,7 +34,7 @@ describe("paletteColor", () => {
 
   // BŁĄD: PALETTE to zwykły obiekt, więc klucze z prototypu ("constructor", "valueOf") zwracają funkcję zamiast null.
   // Oczekiwane: null; faktyczne: funkcja Object. Skutek praktyczny znikomy (konfiguracja z kolorem "constructor").
-  it.fails("nazwy z prototypu obiektu nie są kolorami", () => {
+  it("nazwy z prototypu obiektu nie są kolorami", () => {
     expect(paletteColor("constructor")).toBeNull();
     expect(paletteColor("valueOf")).toBeNull();
   });

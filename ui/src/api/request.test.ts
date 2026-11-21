@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { actorLabel, describeError, formatTime, send } from "./util";
+import { describeError, send } from "./request";
+import { actorLabel, formatTime } from "../ui/format";
 
 describe("formatTime", () => {
   it("brak wartości daje półpauzę", () => {
