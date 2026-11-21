@@ -1,4 +1,4 @@
-//! Pliki `config/p3` → Postgres → migawka w pamięci (zadania 10.2, 11.1, 11.2, design D5).
+//! Pliki `config/` → Postgres → migawka w pamięci (zadania 10.2, 11.1, 11.2, design D5).
 //!
 //! Co `RELOAD_EVERY`: pliki zmienione od ostatniego razu trafiają do bazy (upsert tylko przy
 //! zmianie treści, `version + 1`), usunięte pliki znikają z bazy, błędne pliki trafiają do
@@ -67,7 +67,7 @@ pub async fn run(pool: PgPool, config_dir: String, snapshot: Arc<ArcSwap<Snapsho
         tokio::time::sleep(RELOAD_EVERY).await;
         match reload_once(&pool, &config_dir, &snapshot).await {
             Ok(true) => {
-                let event = UiEvent { alert_id: None, kind: UiEventKind::ConfigChanged, payload: json!({ "kind": "p3" }), at: chrono::Utc::now() };
+                let event = UiEvent { alert_id: None, kind: UiEventKind::ConfigChanged, payload: json!({ "kind": "runbooks" }), at: chrono::Utc::now() };
                 if let Err(e) = kafka::publish(&producer, topics::UI_EVENTS, "config_changed", &event).await {
                     tracing::warn!(error = %e, "publishing config_changed failed");
                 }
@@ -94,13 +94,13 @@ pub async fn sync_files(pool: &PgPool, config_dir: &Path) -> anyhow::Result<()> 
         .execute(pool)
         .await?;
     }
-    sync_dir(pool, &config_dir.join("p3/actions"), "actions", "name", |file, text| {
+    sync_dir(pool, &config_dir.join("actions"), "actions", "name", |file, text| {
         let def = parse::parse_action(file, text)?;
         registry::validate_action(&def).map_err(|e| format!("{file}: {e}"))?;
         Ok((def.name.clone(), serde_json::to_value(&def).expect("serializable")))
     })
     .await?;
-    sync_dir(pool, &config_dir.join("p3/runbooks"), "runbooks", "id", |file, text| {
+    sync_dir(pool, &config_dir.join("runbooks"), "runbooks", "id", |file, text| {
         let def = parse::parse_runbook(file, text)?;
         Ok((def.id.clone(), serde_json::to_value(&def).expect("serializable")))
     })
@@ -170,9 +170,9 @@ async fn sync_dir(
             Err(error) => {
                 failed.push(file.clone());
                 let changed = sqlx::query(
-                    "INSERT INTO p3_load_errors (source_file, error) VALUES ($1, $2)
+                    "INSERT INTO runbook_load_errors (source_file, error) VALUES ($1, $2)
                      ON CONFLICT (source_file) DO UPDATE SET error = EXCLUDED.error, updated_at = now()
-                     WHERE p3_load_errors.error IS DISTINCT FROM EXCLUDED.error",
+                     WHERE runbook_load_errors.error IS DISTINCT FROM EXCLUDED.error",
                 )
                 .bind(&file)
                 .bind(&error)
@@ -192,7 +192,7 @@ async fn sync_dir(
         .bind(&present)
         .execute(pool)
         .await?;
-    sqlx::query("DELETE FROM p3_load_errors WHERE left(source_file, length($1)) = $1 AND NOT (source_file = ANY($2))")
+    sqlx::query("DELETE FROM runbook_load_errors WHERE left(source_file, length($1)) = $1 AND NOT (source_file = ANY($2))")
         .bind(&prefix)
         .bind(&failed)
         .execute(pool)

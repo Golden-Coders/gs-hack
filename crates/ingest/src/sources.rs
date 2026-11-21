@@ -1,4 +1,4 @@
-//! Źródła Kafki z `$CONFIG_DIR/p1/sources/*.yaml`: skaner plików + konsument na źródło.
+//! Źródła Kafki z `$CONFIG_DIR/sources/*.yaml`: skaner plików + konsument na źródło.
 
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 

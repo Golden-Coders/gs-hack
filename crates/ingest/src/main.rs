@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
     let producer = common::kafka::producer(&config.kafka_brokers)?;
 
     let ctx = Arc::new(sources::Ctx { brokers: config.kafka_brokers.clone(), pool, producer: producer.clone() });
-    let scanner = tokio::spawn(sources::run_scanner(ctx, format!("{}/p1/sources", config.config_dir)));
+    let scanner = tokio::spawn(sources::run_scanner(ctx, format!("{}/sources", config.config_dir)));
 
     let port = common::Config::port("INGEST", 8081);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;

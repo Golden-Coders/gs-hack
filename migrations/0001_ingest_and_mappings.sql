@@ -1,5 +1,14 @@
--- P1: mappingi schematów (źródło prawdy w runtime) i zdarzenia bez mappingu.
--- Zmiana mappingu: UPSERT z version = version + 1, potem NOTIFY config_changed, 'mappings'.
+-- Ingest i normalizacja: błędy ingestu, mappingi schematów oraz zdarzenia UNMAPPED.
+
+CREATE TABLE ingest_errors (
+    id     BIGSERIAL PRIMARY KEY,
+    source TEXT NOT NULL,
+    error  TEXT NOT NULL,
+    sample TEXT,
+    at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ingest_errors_at_idx ON ingest_errors (at DESC);
+
 CREATE TABLE mappings (
     schema     TEXT PRIMARY KEY,
     def        JSONB NOT NULL,          -- contracts::MappingDef
@@ -7,8 +16,6 @@ CREATE TABLE mappings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Jedno zdarzenie = jeden wiersz; GET /unmapped agreguje po schema.
--- Po zapisaniu mappingu wiersze schematu są ponownie publikowane na events.raw i usuwane.
 CREATE TABLE unmapped_events (
     event_id    UUID PRIMARY KEY,
     schema      TEXT NOT NULL,

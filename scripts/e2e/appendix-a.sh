@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 19.D1 / 18.2 — trzy zdarzenia z Appendix A (docs/exercise.md) => alerty i dostarczenia zgodne
-# z regułami z config/p2/rules/ i preferencjami z config/p2/people.yaml.
+# z regułami z config/rules/ i preferencjami z config/people.yaml.
 # 19.D2 — dedup i reopen end-to-end (krok 2 tego skryptu).
 #
-# Oczekiwania (severity alertu z mappingu config/p1/mappings/, severity dostarczenia = severity_override reguły):
+# Oczekiwania (severity alertu z mappingu config/mappings/, severity dostarczenia = severity_override reguły):
 #
 # | Zdarzenie (schema)                       | sev. mappingu | Reguła                 | sev. dostarczenia | Odbiorcy (skąd)                     | Kanał główny (skąd)                                   | Łańcuch (request.chain)        |
 # |------------------------------------------|---------------|------------------------|-------------------|-------------------------------------|-------------------------------------------------------|--------------------------------|

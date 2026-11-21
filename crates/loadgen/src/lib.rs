@@ -276,9 +276,9 @@ mod tests {
     use super::*;
 
     const MAPPINGS: [&str; 3] = [
-        include_str!("../../../config/p1/mappings/workflow.v1.yaml"),
-        include_str!("../../../config/p1/mappings/alertmanager.yaml"),
-        include_str!("../../../config/p1/mappings/trade.rejected.v2.yaml"),
+        include_str!("../../../config/mappings/workflow.v1.yaml"),
+        include_str!("../../../config/mappings/alertmanager.yaml"),
+        include_str!("../../../config/mappings/trade.rejected.v2.yaml"),
     ];
 
     fn has_fingerprint_line(mapping: &str, path: &str) -> bool {
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn unique_events_change_fingerprint_field_per_mapping() {
-        // Pola fingerprintu muszą zgadzać się z mappingami z config/p1.
+        // Pola fingerprintu muszą zgadzać się z mappingami z config/.
         assert!(has_fingerprint_line(MAPPINGS[0], "$.workflowName"));
         assert!(has_fingerprint_line(MAPPINGS[1], "$.alertname"));
         assert!(has_fingerprint_line(MAPPINGS[2], "$.payload.tradeId"));

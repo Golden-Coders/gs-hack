@@ -20,7 +20,7 @@ async fn mapping_changes_are_hot_reloaded() {
     let mut cl = common::Cleanup::new(1);
     cl.schema(&schema);
     let dir = std::env::temp_dir().join(format!("lifecycle-cfg-{}", Uuid::new_v4()));
-    let mdir = dir.join("p1").join("mappings");
+    let mdir = dir.join("mappings");
     std::fs::create_dir_all(&mdir).unwrap();
     let file = mdir.join(format!("{schema}.yaml"));
     std::fs::write(&file, yaml(&schema, "$.a")).unwrap();

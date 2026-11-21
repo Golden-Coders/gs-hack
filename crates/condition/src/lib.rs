@@ -1182,7 +1182,7 @@ value: resolved
         assert!(compiled_am.evaluate(&json!({"raw": {"status": "resolved"}})));
         assert!(!compiled_am.evaluate(&json!({"raw": {"status": "firing"}})));
 
-        // Verify all 4 seed rules in config/p2/rules/ compile and render templates cleanly
+        // Verify all 4 seed rules in config/rules/ compile and render templates cleanly
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
         for rule_file in [
             "rates-big-rejections.yaml",
@@ -1190,7 +1190,7 @@ value: resolved
             "anna-payments-critical.yaml",
             "pricing-warnings.yaml",
         ] {
-            let path = format!("{root}/config/p2/rules/{rule_file}");
+            let path = format!("{root}/config/rules/{rule_file}");
             if let Ok(content) = std::fs::read_to_string(&path) {
                 let rule: contracts::RuleDef = serde_yaml::from_str(&content).unwrap();
                 let _compiled = compile(&rule.condition).unwrap();

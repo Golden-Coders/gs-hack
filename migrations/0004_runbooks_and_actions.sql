@@ -1,7 +1,38 @@
--- P3: wykonanie runbooków (design D9, D10). Jedyny pisarz: binarka `runbooks`.
+-- Runbooki, akcje deklaratywne HTTP, wykonania kroków i dziennik działań (D9, D10, D11).
 
--- Uruchomienie runbooka: raz na (alert, epizod, runbook). Także MANUAL – wtedy bez kroków,
--- tylko z treścią z podstawionymi wartościami, żeby api miało jedno źródło „runbooki alertu”.
+CREATE TABLE IF NOT EXISTS actions (
+    name        text PRIMARY KEY,
+    definition  jsonb NOT NULL,          -- contracts::ActionDef
+    source_file text,                    -- NULL = dodana przez API
+    source_text text,                    -- treść pliku; zmiana => nowa wersja
+    version     bigint NOT NULL DEFAULT 1,
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS runbooks (
+    id          text PRIMARY KEY,
+    definition  jsonb NOT NULL,          -- contracts::RunbookDef tak, jak go napisano
+    resolved    jsonb,                   -- RunbookDef po klasyfikacji kroków wg rejestru
+    def         jsonb GENERATED ALWAYS AS (COALESCE(resolved, definition)) STORED,
+    source_file text,
+    source_text text,
+    version     bigint NOT NULL DEFAULT 1,
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS unhandled_actions (
+    action      text PRIMARY KEY,
+    occurrences int NOT NULL,
+    runbook_ids text[] NOT NULL,
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS runbook_load_errors (
+    source_file text PRIMARY KEY,
+    error       text NOT NULL,
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS runbook_runs (
     run_id          uuid PRIMARY KEY,
     alert_id        uuid NOT NULL,
@@ -12,7 +43,7 @@ CREATE TABLE IF NOT EXISTS runbook_runs (
     title           text NOT NULL,
     body            text,                    -- MANUAL: treść z podstawionymi wartościami
     steps           jsonb NOT NULL,          -- Vec<StepDef> z podstawionymi wartościami (migawka)
-    context         jsonb NOT NULL,          -- kontekst alertu dla szablonów akcji (po restarcie też)
+    context         jsonb NOT NULL,          -- kontekst alertu dla szablonów akcji
     alert_title     text NOT NULL,
     specificity     int NOT NULL,            -- większa = bardziej szczegółowe dopasowanie
     status          text NOT NULL,           -- running | waiting | failed | rejected | completed | manual
@@ -23,7 +54,6 @@ CREATE TABLE IF NOT EXISTS runbook_runs (
 CREATE INDEX IF NOT EXISTS runbook_runs_alert ON runbook_runs (alert_id, episode);
 CREATE INDEX IF NOT EXISTS runbook_runs_active ON runbook_runs (status) WHERE status IN ('running', 'waiting');
 
--- Stan kroku per próba; bieżący stan = najwyższy `attempt`. Klucz = klucz idempotencji kroku.
 CREATE TABLE IF NOT EXISTS step_runs (
     run_id     uuid NOT NULL,
     step_id    text NOT NULL,

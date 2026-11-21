@@ -116,7 +116,7 @@ async fn ensure_rules_seeded(db: &PgPool, config_dir: &str) {
     if count > 0 {
         return;
     }
-    let rules_dir = resolve_config_path(config_dir, "p2/rules");
+    let rules_dir = resolve_config_path(config_dir, "rules");
     let Ok(entries) = std::fs::read_dir(&rules_dir) else {
         return;
     };
@@ -184,7 +184,7 @@ async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
     if people_count > 0 && teams_count > 0 {
         return;
     }
-    let path = resolve_config_path(config_dir, "p2/people.yaml");
+    let path = resolve_config_path(config_dir, "people.yaml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return;
     };
@@ -882,7 +882,7 @@ async fn get_fields(
         }
     }
     if mapping_defs.is_empty() {
-        let mapping_file = resolve_config_path(&st.config.config_dir, &format!("p1/mappings/{schema}.yaml"));
+        let mapping_file = resolve_config_path(&st.config.config_dir, &format!("mappings/{schema}.yaml"));
         if let Ok(text) = std::fs::read_to_string(mapping_file) {
             if let Ok(m) = serde_yaml::from_str::<MappingDef>(&text) {
                 mapping_defs.push(m);
@@ -936,7 +936,7 @@ async fn list_people(State(st): State<AppState>) -> ApiResult<Json<Value>> {
         people.push(p);
     }
     Ok(Json(json!({
-        "source_file": "config/p2/people.yaml",
+        "source_file": "config/people.yaml",
         "people": people,
     })))
 }
@@ -1348,9 +1348,9 @@ presentation:
 
     #[test]
     fn unit_seed_files_are_valid() {
-        let rules_dir = resolve_config_path("config", "p2/rules");
+        let rules_dir = resolve_config_path("config", "rules");
         let entries: Vec<_> = std::fs::read_dir(&rules_dir)
-            .expect("read config/p2/rules")
+            .expect("read config/rules")
             .filter_map(|e| e.ok().map(|x| x.path()))
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("yaml"))
             .collect();
@@ -1361,8 +1361,8 @@ presentation:
             validate_rule(&rule).unwrap_or_else(|e| panic!("invalid rule {}: {:?}", path.display(), e));
         }
 
-        let people_path = resolve_config_path("config", "p2/people.yaml");
-        let text = std::fs::read_to_string(&people_path).expect("read config/p2/people.yaml");
+        let people_path = resolve_config_path("config", "people.yaml");
+        let text = std::fs::read_to_string(&people_path).expect("read config/people.yaml");
         let parsed: PeopleConfigFile = serde_yaml::from_str(&text).expect("valid people.yaml");
         assert_eq!(parsed.people.len(), 6);
         assert_eq!(parsed.teams.len(), 5);

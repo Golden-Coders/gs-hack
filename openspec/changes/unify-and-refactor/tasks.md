@@ -4,10 +4,10 @@ Nowy aktywny change po zarchiwizowaniu `alerting-service-mvp` i `alerting-servic
 
 ## 1. Unifikacja struktury konfiguracji i dokumentacji (usunięcie podziału P1–P4)
 
-- [ ] 1.1 Przenieść konfigurację z `config/p1/`, `config/p2/`, `config/p3/` do płaskiej struktury domenowej `config/{sources,mappings,rules,people.yaml,runbooks,actions,demo}` i usunąć puste katalogi `p1/`, `p2/`, `p3/`; weryfikacja: `find config -maxdepth 2` nie zawiera żadnych katalogów `p1`/`p2`/`p3`
-- [ ] 1.2 Zaktualizować ścieżki ładowania konfiguracji i `source_file` w `crates/ingest`, `crates/lifecycle`, `crates/router`, `crates/runbooks`, `crates/api`, testach jednostkowych oraz `scripts/e2e/` i `scripts/demo/`; weryfikacja: `grep -rn 'config/p[123]' crates/ scripts/` zwraca 0 wyników, `cargo test --workspace` przechodzi
-- [ ] 1.3 Skonsolidować migracje `migrations/` w spójną domenową numerację (usunięcie pustych `1000_p1_init.sql`, `2000_p2_init.sql`, `3000_p3_init.sql` i prefiksów `p1`/`p2`/`p3`); weryfikacja: `docker compose down -v && docker compose up -d --build` nakłada wszystkie migracje bez błędów
-- [ ] 1.4 Zaktualizować `config/README.md`, `CLAUDE.md` i `README.md` pod tryb jednego implementera i nową płaską strukturę katalogów (bez zamrożonych barier P1–P4); weryfikacja: dokumentacja odpowiada rzeczywistym ścieżkom w repozytorium
+- [x] 1.1 Przenieść konfigurację z `config/p1/`, `config/p2/`, `config/p3/` do płaskiej struktury domenowej `config/{sources,mappings,rules,people.yaml,runbooks,actions,demo}` i usunąć puste katalogi `p1/`, `p2/`, `p3/`; weryfikacja: `find config -maxdepth 2` nie zawiera żadnych katalogów `p1`/`p2`/`p3`
+- [x] 1.2 Zaktualizować ścieżki ładowania konfiguracji i `source_file` w `crates/ingest`, `crates/lifecycle`, `crates/router`, `crates/runbooks`, `crates/api`, testach jednostkowych oraz `scripts/e2e/` i `scripts/demo/`; weryfikacja: `grep -rn 'config/p[123]' crates/ scripts/` zwraca 0 wyników, `cargo test --workspace` przechodzi
+- [x] 1.3 Skonsolidować migracje `migrations/` w spójną domenową numerację (usunięcie pustych `1000_p1_init.sql`, `2000_p2_init.sql`, `3000_p3_init.sql` i prefiksów `p1`/`p2`/`p3`); weryfikacja: `docker compose down -v && docker compose up -d --build` nakłada wszystkie migracje bez błędów
+- [x] 1.4 Zaktualizować `config/README.md`, `CLAUDE.md` i `README.md` pod tryb jednego implementera i nową płaską strukturę katalogów (bez zamrożonych barier P1–P4); weryfikacja: dokumentacja odpowiada rzeczywistym ścieżkom w repozytorium
 
 ## 2. Unifikacja i uproszczenie `crates/api`
 

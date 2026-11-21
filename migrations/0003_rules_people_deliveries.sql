@@ -1,5 +1,4 @@
--- P2: tabele reguł, osób, zespołów, preferencji, dostarczeń i symulowanych kanałów (D3, D5, D8, D9).
--- Brak kluczy obcych do tabel innych strumieni (P1/P3).
+-- Reguły, osoby, zespoły, preferencje, dostarczenia i symulowane kanały (D3, D5, D8, D9).
 
 CREATE TABLE rules (
     id         TEXT PRIMARY KEY,
