@@ -17,9 +17,9 @@ Nowy aktywny change po zarchiwizowaniu `alerting-service-mvp` i `alerting-servic
 
 ## 3. Uproszczenie i deduplikacja backendu Rust
 
-- [ ] 3.1 Wydzielić wspólne pomocniki ładowania/hot-reloadu YAML i `UiEventKind::ConfigChanged` do `crates/common/src/reload.rs` i uprościć `crates/lifecycle/src/config.rs`, `crates/router/src/config.rs`, `crates/runbooks/src/store.rs`; weryfikacja: brak zduplikowanej logiki skanowania plików/mtime między crate'ami, testy wszystkich 3 crate'ów zielone
-- [ ] 3.2 Usunąć martwy kod, nieużywane importy, stare zaślepki i przestarzałe komentarze `shortcut:` we wszystkich crate'ach; weryfikacja: `cargo clippy --workspace --all-targets -- -D warnings` przechodzi czysto
-- [ ] 3.3 Przejrzeć zależności w `Cargo.toml` (workspace + wszystkie crate'y) i usunąć nieużywane zależności; weryfikacja: `cargo check --workspace` i `cargo test --workspace` przechodzą
+- [x] 3.1 Wydzielić wspólne pomocniki ładowania/hot-reloadu YAML i `UiEventKind::ConfigChanged` do `crates/common/src/reload.rs` i uprościć `crates/lifecycle/src/config.rs`, `crates/router/src/config.rs`, `crates/runbooks/src/store.rs`; weryfikacja: brak zduplikowanej logiki skanowania plików/mtime między crate'ami, testy wszystkich 3 crate'ów zielone
+- [x] 3.2 Usunąć martwy kod, nieużywane importy, stare zaślepki i przestarzałe komentarze `shortcut:` we wszystkich crate'ach; weryfikacja: `cargo clippy --workspace --all-targets -- -D warnings` przechodzi czysto
+- [x] 3.3 Przejrzeć zależności w `Cargo.toml` (workspace + wszystkie crate'y) i usunąć nieużywane zależności; weryfikacja: `cargo check --workspace` i `cargo test --workspace` przechodzą
 
 ## 4. Domknięcie refaktoru UI (`origin/p4/ui-refactor-1`)
 
@@ -29,9 +29,9 @@ Nowy aktywny change po zarchiwizowaniu `alerting-service-mvp` i `alerting-servic
 
 ## 5. Systematyczny Code Review (wg `specs/code-review/spec.md`)
 
-- [ ] 5.1 Przegląd poprawności i błędów: usunąć wszystkie produkcyjne `.unwrap()`/`.expect()` na danych zewnętrznych (HTTP/Kafka/DB), zweryfikować kolejność commitów offsetów Kafki i idempotencję w `ingest`, `lifecycle`, `router`, `sender`, `runbooks`; weryfikacja: raport przeglądu + testy regresyjne dla znalezionych przypadków
-- [ ] 5.2 Przegląd bezpieczeństwa: zweryfikować uwierzytelnianie Bearer/`?token=`, sandbox `condition` (brak obejść), `ACTION_HOST_ALLOWLIST` + brak redirectów poza allowlistę, wymuszone `approval` dla `risk: high`, brak wycieku `${ENV}` w API i logach; weryfikacja: wszystkie testy bezpieczeństwa zielone
-- [ ] 5.3 Przegląd wydajności i pamięci: sprawdzić zapytania N+1 w `crates/api/src/routes/`, brak blokującego I/O w zadaniach Tokio, limity pamięci map w `lifecycle`/`api`/`sender`; weryfikacja: brak krytycznych znalezisk, poprawki z testami
+- [x] 5.1 Przegląd poprawności i błędów: usunąć wszystkie produkcyjne `.unwrap()`/`.expect()` na danych zewnętrznych (HTTP/Kafka/DB), zweryfikować kolejność commitów offsetów Kafki i idempotencję w `ingest`, `lifecycle`, `router`, `sender`, `runbooks`; weryfikacja: raport przeglądu + testy regresyjne dla znalezionych przypadków
+- [x] 5.2 Przegląd bezpieczeństwa: zweryfikować uwierzytelnianie Bearer/`?token=`, sandbox `condition` (brak obejść), `ACTION_HOST_ALLOWLIST` + brak redirectów poza allowlistę, wymuszone `approval` dla `risk: high`, brak wycieku `${ENV}` w API i logach; weryfikacja: wszystkie testy bezpieczeństwa zielone
+- [x] 5.3 Przegląd wydajności i pamięci: sprawdzić zapytania N+1 w `crates/api/src/routes/`, brak blokującego I/O w zadaniach Tokio, limity pamięci map w `lifecycle`/`api`/`sender`; weryfikacja: brak krytycznych znalezisk, poprawki z testami
 - [ ] 5.4 Pełna regresja E2E po refaktoryzacji i review: `first-flow.sh`, `appendix-a.sh`, `runbooks.sh`, `RUN_RULE_CHANGE=1 criteria.sh`, `resilience.sh` oraz czyste `docker compose down -v && make demo`; weryfikacja: wszystkie skrypty kończą się `PASS`
 
 ## 6. Pozostałe weryfikacje przeniesione z `alerting-service-hardening`

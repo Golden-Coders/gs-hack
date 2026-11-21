@@ -18,4 +18,6 @@ sqlx = { workspace = true }
 rdkafka = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+
+[dev-dependencies]
 futures = { workspace = true }

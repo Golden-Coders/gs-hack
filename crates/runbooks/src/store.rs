@@ -1,28 +1,24 @@
 //! Pliki `config/` → Postgres → migawka w pamięci (zadania 10.2, 11.1, 11.2, design D5).
 //!
-//! Co `RELOAD_EVERY`: pliki zmienione od ostatniego razu trafiają do bazy (upsert tylko przy
+//! Co `POLL_INTERVAL`: pliki zmienione od ostatniego razu trafiają do bazy (upsert tylko przy
 //! zmianie treści, `version + 1`), usunięte pliki znikają z bazy, błędne pliki trafiają do
-//! `p3_load_errors` i NIE nadpisują poprzedniej wersji. Potem migawka jest budowana z bazy
+//! `runbook_load_errors` i NIE nadpisują poprzedniej wersji. Potem migawka jest budowana z bazy
 //! (więc widzi też zmiany z API), kroki są klasyfikowane wg rejestru, a `resolved`
 //! i `unhandled_actions` zapisywane, gdy się zmieniły.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use common::db::sqlx::{self, PgPool};
-use common::kafka::{self, rdkafka::producer::FutureProducer};
-use contracts::{topics, ActionDef, PersonDef, RuleDef, RunbookDef, TeamDef, UiEvent, UiEventKind};
-use serde_json::{json, Value};
+use common::kafka::rdkafka::producer::FutureProducer;
+use common::reload::{notify_config_changed, publish_config_changed, POLL_INTERVAL};
+use contracts::{ActionDef, PersonDef, RuleDef, RunbookDef, TeamDef};
+use serde_json::Value;
 
 use crate::parse;
 use crate::registry::{self, Registry};
-
-/// shortcut: polling zamiast LISTEN/NOTIFY + watchera plików; zmiana widoczna do ~2 s
-/// i działa na wolumenach Dockera na macOS. Przejść na NOTIFY, gdyby zapytania co 2 s przeszkadzały.
-const RELOAD_EVERY: Duration = Duration::from_secs(2);
 
 /// Akcja → (liczba kroków, które jej używają, runbooki).
 pub type Unhandled = BTreeMap<String, (i32, Vec<String>)>;
@@ -50,7 +46,7 @@ pub async fn reload_once(pool: &PgPool, config_dir: &str, snapshot: &ArcSwap<Sna
     }
     if next.runbooks != previous.runbooks {
         // Router (P2) przeładowuje runbooki MANUAL tylko po tym powiadomieniu (design D5).
-        sqlx::query("SELECT pg_notify('config_changed', 'runbooks')").execute(pool).await?;
+        notify_config_changed(pool, "runbooks").await;
     }
     if next.runbooks.len() != previous.runbooks.len() || next.registry.len() != previous.registry.len() {
         tracing::info!(runbooks = next.runbooks.len(), actions = next.registry.len(), unhandled = next.unhandled.len(), "p3 config reloaded");
@@ -64,14 +60,9 @@ pub async fn reload_once(pool: &PgPool, config_dir: &str, snapshot: &ArcSwap<Sna
 /// Zmiana = `ui.events {config_changed}`, żeby ekrany akcji i runbooków się odświeżyły.
 pub async fn run(pool: PgPool, config_dir: String, snapshot: Arc<ArcSwap<Snapshot>>, producer: FutureProducer) {
     loop {
-        tokio::time::sleep(RELOAD_EVERY).await;
+        tokio::time::sleep(POLL_INTERVAL).await;
         match reload_once(&pool, &config_dir, &snapshot).await {
-            Ok(true) => {
-                let event = UiEvent { alert_id: None, kind: UiEventKind::ConfigChanged, payload: json!({ "kind": "runbooks" }), at: chrono::Utc::now() };
-                if let Err(e) = kafka::publish(&producer, topics::UI_EVENTS, "config_changed", &event).await {
-                    tracing::warn!(error = %e, "publishing config_changed failed");
-                }
-            }
+            Ok(true) => publish_config_changed(&producer, "runbooks").await,
             Ok(false) => {}
             Err(e) => tracing::warn!(error = %e, "p3 config reload failed"),
         }
@@ -97,12 +88,14 @@ pub async fn sync_files(pool: &PgPool, config_dir: &Path) -> anyhow::Result<()> 
     sync_dir(pool, &config_dir.join("actions"), "actions", "name", |file, text| {
         let def = parse::parse_action(file, text)?;
         registry::validate_action(&def).map_err(|e| format!("{file}: {e}"))?;
-        Ok((def.name.clone(), serde_json::to_value(&def).expect("serializable")))
+        let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
+        Ok((def.name, val))
     })
     .await?;
     sync_dir(pool, &config_dir.join("runbooks"), "runbooks", "id", |file, text| {
         let def = parse::parse_runbook(file, text)?;
-        Ok((def.id.clone(), serde_json::to_value(&def).expect("serializable")))
+        let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
+        Ok((def.id, val))
     })
     .await
 }
