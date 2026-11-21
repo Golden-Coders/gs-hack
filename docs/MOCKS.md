@@ -61,4 +61,10 @@ Używany tylko w trakcie developmentu UI (`cd ui && npm run mock`, :4010), poza 
 
 ## LLM
 
-W MVP nie ma wywołań modeli. W `crates/runbooks` jest interfejs `RunbookAuthor` z implementacją `none` (`LLM_PROVIDER=none`). Docelowo implementacje `local` (np. Ollama) i `api`. Zasady prywatności dla nich opisuje README, sekcja „Użycie AI”.
+Domyślnie `LLM_PROVIDER=none` — nie ma żadnych wywołań modeli, a runbooki `.md`/`.txt` działają jako `MANUAL`.
+
+W `crates/runbooks/src/author.rs` zaimplementowano wspólnego klienta OpenAI-compatible (`/v1/chat/completions` ze Structured Outputs) dla dwóch trybów:
+- `LLM_PROVIDER=local` — model lokalny (domyślnie Ollama: `LLM_BASE_URL=http://localhost:11434/v1`, `LLM_MODEL=qwen2.5:7b`),
+- `LLM_PROVIDER=api` — zewnętrzny dostawca OpenAI-compatible (domyślnie `LLM_BASE_URL=https://api.openai.com/v1`, `LLM_MODEL=gpt-4o-mini`, wymagane `LLM_API_KEY`).
+
+Wywołania odbywają się wyłącznie na żądanie z ekranu **Runbooki** (`POST /runbooks/draft`), poza ścieżką przetwarzania alertów, po redakcji wrażliwych tokenów i z obowiązkową akceptacją człowieka przed zapisem (`POST /runbooks`). Zasady prywatności opisuje README, sekcja „Użycie AI”.

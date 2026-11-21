@@ -1644,7 +1644,177 @@ export interface paths {
             };
         };
         put?: never;
+        /** Zapisz zaakceptowany runbook AUTOMATIC (np. wyodrębniony przez LLM) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RunbookDef"];
+                };
+            };
+            responses: {
+                /** @description Zapisany i sklasyfikowany runbook */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunbookDef"];
+                    };
+                };
+                /** @description Niepoprawna definicja runbooka */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Runbook o takim id już istnieje */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbooks/author/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stan dostawcy LLM do ekstrakcji kroków runbooka */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Konfiguracja `RunbookAuthor` */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "enabled": false,
+                         *       "provider": "none",
+                         *       "model": null
+                         *     }
+                         */
+                        "application/json": components["schemas"]["RunbookAuthorStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runbooks/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Wyodrębnij szkic runbooka AUTOMATIC z tekstu/Markdownu przez LLM (bez zapisywania) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RunbookDraftRequest"];
+                };
+            };
+            responses: {
+                /** @description Szkic runbooka po redakcji i klasyfikacji wg rejestru akcji */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunbookDraftResponse"];
+                    };
+                };
+                /** @description Niepoprawne żądanie szkicu (np. brak tekstu) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Nie znaleziono wskazanego runbooka */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Ekstrakcja LLM jest wyłączona (`LLM_PROVIDER=none`) */
+                501: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Błąd dostawcy lub niepoprawna odpowiedź modelu LLM */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Przekroczony czas oczekiwania na odpowiedź LLM */
+                504: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2564,6 +2734,29 @@ export interface components {
             name: string;
             runbook_ids: string[];
             manual_executions: number;
+        };
+        RunbookAuthorStatus: {
+            enabled: boolean;
+            /** @enum {string} */
+            provider: "none" | "local" | "api";
+            model?: string | null;
+        };
+        RunbookDraftRequest: {
+            runbook_id?: string | null;
+            id?: string | null;
+            title?: string | null;
+            text?: string | null;
+            matches?: components["schemas"]["Condition"] | null;
+            rule_ids?: string[];
+        };
+        RunbookDraftResponse: {
+            draft: components["schemas"]["RunbookDef"];
+            yaml: string;
+            redacted_count: number;
+            redacted_kinds: {
+                [key: string]: number;
+            };
+            warnings: string[];
         };
         AlertChanged: {
             /** Format: uuid */
