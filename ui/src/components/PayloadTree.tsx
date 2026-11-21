@@ -1,6 +1,8 @@
 // Drzewo przykładowego payloadu z wyborem pól kliknięciem. Wielokrotnego użytku (edytor mappingów, edytor reguł).
 // Klik w liść woła `onSelect(ścieżka, wartość)`; `marks` pozwala oznaczyć pola już użyte (klucz = pathKey).
 import { useState } from "react";
+import Button from "@atlaskit/button/new";
+import { Pressable, Text } from "@atlaskit/primitives/compiled";
 import { pathKey, type PathSeg } from "../lib/paths";
 import "./PayloadTree.css";
 
@@ -52,10 +54,8 @@ function Node(p: NodeProps) {
 
   if (!isContainer) {
     return (
-      <li>
-        <button
-          type="button"
-          className={`ptree-leaf${labels?.length ? " used" : ""}`}
+      <li className={`ptree-leaf${labels?.length ? " used" : ""}`}>
+        <Pressable
           onClick={() => onSelect(path, value)}
           aria-label={`${actionLabel ?? "Wybierz"}: ${path.join(".")}, wartość ${preview(value)}`}
         >
@@ -64,7 +64,7 @@ function Node(p: NodeProps) {
             {preview(value)}
           </span>
           <Marks labels={labels} />
-        </button>
+        </Pressable>
       </li>
     );
   }
@@ -80,16 +80,15 @@ function Node(p: NodeProps) {
           <span className="ptree-key">{display}</span>
           <span className="ptree-meta">{Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}</span>
           {selectContainers && (
-            <button
-              type="button"
-              className="ptree-pick"
+            <Button
+              spacing="compact"
               onClick={(e) => {
                 e.preventDefault();
                 onSelect(path, value);
               }}
             >
               Wybierz
-            </button>
+            </Button>
           )}
           <Marks labels={labels} />
         </summary>
@@ -99,9 +98,9 @@ function Node(p: NodeProps) {
           ))}
           {entries.length > shown.length && (
             <li>
-              <button type="button" className="ptree-more" onClick={() => setLimit(limit + PAGE)}>
+              <Button spacing="compact" appearance="subtle" onClick={() => setLimit(limit + PAGE)}>
                 Pokaż więcej (jeszcze {entries.length - shown.length})
-              </button>
+              </Button>
             </li>
           )}
         </ul>
@@ -112,7 +111,11 @@ function Node(p: NodeProps) {
 
 export default function PayloadTree({ value, onSelect, marks, actionLabel, selectContainers }: PayloadTreeProps) {
   if (value === null || typeof value !== "object") {
-    return <p className="muted">Payload nie jest obiektem ani tablicą – nie ma pól do wyboru.</p>;
+    return (
+      <Text as="p" color="color.text.subtle">
+        Payload nie jest obiektem ani tablicą – nie ma pól do wyboru.
+      </Text>
+    );
   }
   const entries: [PathSeg, unknown][] = Array.isArray(value)
     ? value.map((v, i) => [i, v])

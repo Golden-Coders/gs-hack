@@ -50,8 +50,9 @@ export function useResource<T>(load: () => Promise<FetchResult<T>>, key = ""): R
   useEffect(() => {
     setState({ data: null, error: null, loading: true });
     reload();
+    const s = seq; // ten sam obiekt ref; kopia tylko dla react-hooks/exhaustive-deps
     return () => {
-      seq.current++;
+      s.current++;
     };
   }, [key, reload]);
 

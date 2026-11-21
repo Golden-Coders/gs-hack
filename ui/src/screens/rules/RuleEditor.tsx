@@ -1,11 +1,17 @@
 // Edytor jednej reguły (tasks.md 15.1): zakładki „Kreator” i „YAML” nad jednym stanem formularza,
 // podpowiedzi pól, odbiorcy, prezentacja, nadpisanie severity, test na zdarzeniu, zapis i usuwanie.
 import { useEffect, useMemo, useRef, useState } from "react";
+import Button from "@atlaskit/button/new";
+import Heading from "@atlaskit/heading";
+import { useFlags } from "@atlaskit/flag";
+import { ErrorMessage } from "@atlaskit/form";
+import SectionMessage from "@atlaskit/section-message";
+import { Text } from "@atlaskit/primitives/compiled";
 import { api, type Schemas } from "../../api/client";
-import { Badge } from "../../components/Badges";
+import Lozenge from "@atlaskit/lozenge";
 import { paletteColor } from "../../components/colors";
 import { describeError, send } from "../../api/request";
-import { Card, ConfirmInline, ErrorBox, Field, Tabs } from "../../ui/primitives";
+import { Card, Checkbox, ConfirmInline, ErrorBox, Field, Select, Tabs, TextArea, TextInput } from "../../ui/primitives";
 import ConditionBuilder from "./ConditionBuilder";
 import RuleTester from "./RuleTester";
 import {
@@ -55,18 +61,17 @@ function apiMessage(error: unknown, response: Response): string {
 
 function ColorSelect({ id, value, onChange, label, noneLabel }: { id: string; value: string; onChange: (v: string) => void; label: string; noneLabel: string }) {
   const color = paletteColor(value);
+  const options = [
+    { value: "", label: noneLabel },
+    ...COLORS.map((c) => ({ value: c.value, label: c.label })),
+    ...(value && !COLORS.some((c) => c.value === value) ? [{ value, label: `${value} (nieznany)` }] : []),
+  ];
   return (
     <span className="rules-color">
       <span className="rules-swatch" style={color ? { background: color.bg, borderColor: color.fg } : undefined} aria-hidden="true" />
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} aria-label={label}>
-        <option value="">{noneLabel}</option>
-        {COLORS.map((c) => (
-          <option key={c.value} value={c.value}>
-            {c.label}
-          </option>
-        ))}
-        {value && !COLORS.some((c) => c.value === value) && <option value={value}>{value} (nieznany)</option>}
-      </select>
+      <span className="rules-color-select">
+        <Select id={id} value={value} onChange={onChange} options={options} aria-label={label} />
+      </span>
     </span>
   );
 }
@@ -85,10 +90,9 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedNote, setSavedNote] = useState<string | null>(null);
+  const { showFlag } = useFlags();
   const [schemaInput, setSchemaInput] = useState<string | null>(null);
   const [suggested, setSuggested] = useState<string[]>([]);
-  const tabsRef = useRef<HTMLDivElement>(null);
 
   const rule = useMemo(() => formToRule(form), [form]);
   const snapshot = useMemo(() => JSON.stringify(rule), [rule]);
@@ -151,8 +155,6 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
       brokenYaml.current = { text: yamlText, error: yamlError, snapshot };
     }
     setTab(next);
-    // Fokus zostaje na aktywnej zakładce także po zmianie klawiaturą (strzałki).
-    requestAnimationFrame(() => tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
   }
 
   function onYamlChange(text: string) {
@@ -204,7 +206,6 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
   async function save() {
     setSubmitted(true);
     setSaveError(null);
-    setSavedNote(null);
     if ((tab === "yaml" && yamlError) || errors.count > 0) return;
     setSaving(true);
     try {
@@ -224,7 +225,7 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
       setYamlError(null);
       brokenYaml.current = null;
       setSubmitted(false);
-      setSavedNote(`Zapisano regułę „${saved.name}” (wersja ${saved.version ?? "?"}). Obowiązuje dla kolejnych alertów.`);
+      showFlag({ title: `Zapisano regułę „${saved.name}”`, description: `Wersja ${saved.version ?? "?"}. Obowiązuje dla kolejnych alertów.`, appearance: "success", isAutoDismiss: true });
       onSaved(saved, isNew);
     } catch {
       setSaveError("Nie udało się połączyć z API.");
@@ -259,13 +260,6 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
     tab === "yaml" && yamlError ? "Popraw błąd w YAML, aby przetestować regułę." : errors.count > 0 ? "Popraw błędy w regule (lista nad przyciskiem zapisu), aby ją przetestować." : undefined;
   const showErrorList = submitted && errorList.length > 0;
 
-  function onTabKey(e: React.KeyboardEvent) {
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft" || e.key === "Home" || e.key === "End") {
-      e.preventDefault();
-      switchTab(tab === "wizard" ? "yaml" : "wizard");
-    }
-  }
-
   return (
     <div className="rules-editor">
       <datalist id={FIELD_LIST_ID}>
@@ -280,41 +274,40 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
       </datalist>
 
       <header className="rules-editor-head">
-        <h2>{isNew ? "Nowa reguła" : form.name || initial?.name}</h2>
-        {!isNew && <span className="muted mono">{initial?.id}</span>}
-        {!isNew && <span className="muted">wersja {form.version}</span>}
+        <Heading size="medium" as="h2">
+          {isNew ? "Nowa reguła" : form.name || initial?.name}
+        </Heading>
+        {!isNew && <Text color="color.text.subtle" as="span">{initial?.id}</Text>}
+        {!isNew && <Text color="color.text.subtle" as="span">wersja {form.version}</Text>}
         {dirty && (
           <span role="status">
-            <Badge tone="orange">Niezapisane zmiany</Badge>
+            <Lozenge appearance="moved">Niezapisane zmiany</Lozenge>
           </span>
         )}
       </header>
 
-      <div ref={tabsRef} onKeyDown={onTabKey}>
+      <fieldset className="rules-fieldset" disabled={saving}>
         <Tabs
           label="Sposób edycji reguły"
           value={tab}
           onChange={switchTab}
           tabs={[
             { value: "wizard", label: "Kreator" },
-            { value: "yaml", label: <>YAML <span className="muted">(zaawansowane)</span></> },
+            { value: "yaml", label: "YAML (zaawansowane)" },
           ]}
-        />
-      </div>
-
-      <fieldset className="rules-fieldset" disabled={saving}>
+        >
         {tab === "wizard" ? (
-          <div role="tabpanel" aria-label="Kreator" className="rules-panel">
+          <div className="rules-panel">
             {wizardBanner && (
-              <p className="rules-banner" role="status">
+              <SectionMessage appearance="warning">
                 YAML zawiera błąd, więc kreator pokazuje ostatnią poprawną wersję reguły. Wróć do zakładki YAML, aby go poprawić; zmiana w kreatorze zastąpi niepoprawny YAML.
-              </p>
+              </SectionMessage>
             )}
 
             <Card title="Podstawowe">
               <div className="rules-grid">
                 <Field label="Nazwa reguły" error={submitted ? errors.name : null}>
-                  {(f) => <input {...f} value={form.name} onChange={(e) => onName(e.target.value)} autoComplete="off" />}
+                  {(f) => <TextInput {...f} value={form.name} onChange={(e) => onName(e.currentTarget.value)} autoComplete="off" />}
                 </Field>
                 <Field
                   label="Identyfikator"
@@ -322,14 +315,14 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                   error={submitted ? errors.id : null}
                 >
                   {(f) => (
-                    <input
+                    <TextInput
                       {...f}
-                      className="mono"
+                      isMonospaced
                       value={form.id}
-                      readOnly={!isNew}
+                      isReadOnly={!isNew}
                       onChange={(e) => {
                         setIdTouched(true);
-                        update({ id: e.target.value });
+                        update({ id: e.currentTarget.value });
                       }}
                       autoComplete="off"
                       spellCheck={false}
@@ -338,34 +331,32 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                 </Field>
                 <Field label="Zespół właściciel">
                   {(f) => (
-                    <select {...f} value={form.team} onChange={(e) => update({ team: e.target.value })}>
-                      <option value="">(brak)</option>
-                      {teams.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                      {form.team && !teams.some((t) => t.id === form.team) && <option value={form.team}>{form.team}</option>}
-                    </select>
+                    <Select
+                      {...f}
+                      value={form.team}
+                      onChange={(team) => update({ team })}
+                      options={[
+                        { value: "", label: "(brak)" },
+                        ...teams.map((t) => ({ value: t.id, label: t.name })),
+                        ...(form.team && !teams.some((t) => t.id === form.team) ? [{ value: form.team, label: form.team }] : []),
+                      ]}
+                    />
                   )}
                 </Field>
                 <Field label="Nadpisz severity" hint="Dotyczy powiadomień tej reguły (kanały wg severity odbiorcy).">
                   {(f) => (
-                    <select {...f} value={form.severityOverride} onChange={(e) => update({ severityOverride: e.target.value as RuleForm["severityOverride"] })}>
-                      <option value="">bez zmian (wg mappingu)</option>
-                      {SEVERITIES.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
+                    <Select
+                      {...f}
+                      value={form.severityOverride}
+                      onChange={(v) => update({ severityOverride: v as RuleForm["severityOverride"] })}
+                      options={[{ value: "", label: "bez zmian (wg mappingu)" }, ...SEVERITIES.map((x) => ({ value: x.value, label: x.label }))]}
+                    />
                   )}
                 </Field>
               </div>
-              <label className="rules-check">
-                <input type="checkbox" checked={form.enabled} onChange={(e) => update({ enabled: e.target.checked })} />
-                Reguła włączona
-              </label>
+              <div className="rules-check">
+                <Checkbox isChecked={form.enabled} onChange={(e) => update({ enabled: e.target.checked })} label="Reguła włączona" />
+              </div>
             </Card>
 
             <Card title="Kiedy reguła ma zadziałać">
@@ -380,12 +371,12 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                   }
                 >
                   {(f) => (
-                    <input
+                    <TextInput
                       {...f}
-                      className="mono"
+                      isMonospaced
                       list={SCHEMA_LIST_ID}
                       value={schemaInput ?? guessed}
-                      onChange={(e) => setSchemaInput(e.target.value)}
+                      onChange={(e) => setSchemaInput(e.currentTarget.value)}
                       placeholder="np. trade.rejected.v2"
                       autoComplete="off"
                       spellCheck={false}
@@ -403,49 +394,47 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
             </Card>
 
             <Card title="Kogo powiadomić">
-              <p className="muted rules-lead">Kanały (SMS, e-mail, telefon) wynikają z preferencji wybranych osób; zespół ma preferencje domyślne.</p>
+              <Text as="p" color="color.text.subtle">Kanały (SMS, e-mail, telefon) wynikają z preferencji wybranych osób; zespół ma preferencje domyślne.</Text>
               <div className="rules-recipients">
                 <fieldset className="rules-group">
                   <legend>Osoby</legend>
-                  {people.length === 0 && <span className="muted">brak osób w konfiguracji</span>}
+                  {people.length === 0 && <Text color="color.text.subtle">brak osób w konfiguracji</Text>}
                   {people.map((p) => (
-                    <label key={p.id} className="rules-check">
-                      <input
-                        type="checkbox"
-                        checked={form.recipients.some((r) => r.type === "person" && r.id === p.id)}
-                        onChange={() => toggleRecipient({ type: "person", id: p.id })}
-                      />
-                      {p.name}
-                    </label>
+                    <Checkbox
+                      key={p.id}
+                      isChecked={form.recipients.some((r) => r.type === "person" && r.id === p.id)}
+                      onChange={() => toggleRecipient({ type: "person", id: p.id })}
+                      label={p.name}
+                    />
                   ))}
                 </fieldset>
                 <fieldset className="rules-group">
                   <legend>Zespoły</legend>
-                  {teams.length === 0 && <span className="muted">brak zespołów w konfiguracji</span>}
+                  {teams.length === 0 && <Text color="color.text.subtle">brak zespołów w konfiguracji</Text>}
                   {teams.map((t) => (
-                    <label key={t.id} className="rules-check">
-                      <input
-                        type="checkbox"
-                        checked={form.recipients.some((r) => r.type === "team" && r.id === t.id)}
-                        onChange={() => toggleRecipient({ type: "team", id: t.id })}
-                      />
-                      {t.name}
-                    </label>
+                    <Checkbox
+                      key={t.id}
+                      isChecked={form.recipients.some((r) => r.type === "team" && r.id === t.id)}
+                      onChange={() => toggleRecipient({ type: "team", id: t.id })}
+                      label={t.name}
+                    />
                   ))}
                 </fieldset>
                 {unknownRecipients.length > 0 && (
                   <fieldset className="rules-group">
                     <legend>Nieznani w konfiguracji</legend>
                     {unknownRecipients.map((r) => (
-                      <label key={`${r.type}:${r.id}`} className="rules-check">
-                        <input type="checkbox" checked onChange={() => toggleRecipient(r)} />
-                        {r.type === "team" ? "zespół" : "osoba"} {r.id}
-                      </label>
+                      <Checkbox
+                        key={`${r.type}:${r.id}`}
+                        isChecked
+                        onChange={() => toggleRecipient(r)}
+                        label={`${r.type === "team" ? "zespół" : "osoba"} ${r.id}`}
+                      />
                     ))}
                   </fieldset>
                 )}
               </div>
-              {submitted && errors.recipients && <div className="field-error">{errors.recipients}</div>}
+              {submitted && errors.recipients && <ErrorMessage>{errors.recipients}</ErrorMessage>}
             </Card>
 
             <Card title="Jak pokazać alert">
@@ -457,11 +446,11 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                     error={errors.title}
                   >
                     {(f) => (
-                      <input
+                      <TextInput
                         {...f}
-                        className="mono"
+                        isMonospaced
                         value={form.title}
-                        onChange={(e) => update({ title: e.target.value })}
+                        onChange={(e) => update({ title: e.currentTarget.value })}
                         autoComplete="off"
                         spellCheck={false}
                       />
@@ -471,7 +460,7 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                 <div className="rules-wide">
                   <Field label="Treść (szablon)" error={errors.body}>
                     {(f) => (
-                      <textarea {...f} className="mono" rows={3} value={form.body} onChange={(e) => update({ body: e.target.value })} spellCheck={false} />
+                      <TextArea {...f} isMonospaced minimumRows={3} value={form.body} onChange={(e) => update({ body: e.target.value })} spellCheck={false} />
                     )}
                   </Field>
                 </div>
@@ -480,18 +469,18 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                 </Field>
               </div>
 
-              <h4 className="rules-subhead">Pokazywane pola</h4>
-              {form.rows.length === 0 && <p className="muted rules-lead">Brak dodatkowych pól – alert pokaże tylko tytuł i treść.</p>}
+              <Heading size="xsmall" as="h4">Pokazywane pola</Heading>
+              {form.rows.length === 0 && <Text as="p" color="color.text.subtle">Brak dodatkowych pól – alert pokaże tylko tytuł i treść.</Text>}
               {form.rows.map((row, i) => (
                 <div key={row.uid} className="rules-fieldrow">
                   <Field label={`Pole ${i + 1}`}>
                     {(f) => (
-                      <input
+                      <TextInput
                         {...f}
-                        className="mono"
+                        isMonospaced
                         list={FIELD_LIST_ID}
                         value={row.path}
-                        onChange={(e) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, path: e.target.value } : r)) })}
+                        onChange={(e) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, path: e.currentTarget.value } : r)) })}
                         autoComplete="off"
                         spellCheck={false}
                       />
@@ -508,33 +497,28 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                       />
                     )}
                   </Field>
-                  <button
-                    type="button"
-                    className="cb-remove"
-                    onClick={() => update({ rows: form.rows.filter((r) => r.uid !== row.uid) })}
-                    aria-label={`Usuń pole ${row.path || i + 1}`}
-                  >
-                    Usuń
-                  </button>
+                  <div className="rules-fieldrow-remove">
+                    <Button onClick={() => update({ rows: form.rows.filter((r) => r.uid !== row.uid) })} aria-label={`Usuń pole ${row.path || i + 1}`}>
+                      Usuń
+                    </Button>
+                  </div>
                 </div>
               ))}
               <div className="rules-actions">
-                <button type="button" onClick={() => update({ rows: [...form.rows, { uid: newUid(), path: "", color: "" }] })}>
-                  + Dodaj pole
-                </button>
+                <Button onClick={() => update({ rows: [...form.rows, { uid: newUid(), path: "", color: "" }] })}>Dodaj pole</Button>
               </div>
             </Card>
           </div>
         ) : (
-          <div role="tabpanel" aria-label="YAML" className="rules-panel">
+          <div className="rules-panel">
             <Card title="Reguła w YAML">
-              <p className="muted rules-lead">Zmiany są od razu widoczne w kreatorze. Niepoprawny YAML nie zmienia kreatora ani nie zostanie zapisany.</p>
+              <Text as="p" color="color.text.subtle">Zmiany są od razu widoczne w kreatorze. Niepoprawny YAML nie zmienia kreatora ani nie zostanie zapisany.</Text>
               <Field label="Treść YAML">
                 {(f) => (
-                  <textarea
+                  <TextArea
                     {...f}
-                    className="mono rules-yaml"
-                    rows={24}
+                    isMonospaced
+                    minimumRows={24}
                     value={yamlText}
                     onChange={(e) => onYamlChange(e.target.value)}
                     spellCheck={false}
@@ -553,31 +537,28 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
             </Card>
           </div>
         )}
+        </Tabs>
 
         {showErrorList && (
-          <div className="error-box rules-errorlist" role="alert">
-            <strong>Popraw przed zapisem ({errorList.length}):</strong>
-            <ul>
-              {errorList.map((m, i) => (
-                <li key={i}>{m}</li>
-              ))}
-            </ul>
+          <div role="alert">
+            <SectionMessage appearance="error" headingLevel="h3" title={`Popraw przed zapisem (${errorList.length})`}>
+              <ul className="rules-errorlist">
+                {errorList.map((m, i) => (
+                  <li key={i}>{m}</li>
+                ))}
+              </ul>
+            </SectionMessage>
           </div>
         )}
         {saveError && <ErrorBox message={saveError} />}
-        {savedNote && !dirty && (
-          <p className="rules-saved" role="status">
-            {savedNote}
-          </p>
-        )}
 
         <div className="rules-savebar">
-          <button type="button" className="primary" onClick={save} disabled={saving || (!dirty && !isNew)}>
-            {saving ? "Zapisywanie…" : isNew ? "Utwórz regułę" : "Zapisz zmiany"}
-          </button>
-          <button type="button" onClick={discard} disabled={saving || !dirty}>
+          <Button appearance="primary" onClick={save} isDisabled={saving || (!dirty && !isNew)} isLoading={saving}>
+            {isNew ? "Utwórz regułę" : "Zapisz zmiany"}
+          </Button>
+          <Button onClick={discard} isDisabled={saving || !dirty}>
             Odrzuć zmiany
-          </button>
+          </Button>
           {!isNew && (
             <ConfirmInline
               label="Usuń regułę"

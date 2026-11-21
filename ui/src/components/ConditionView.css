@@ -1,10 +1,5 @@
-.condition { font-size: 13px; }
+/* Tylko układ drzewa warunków (tokeny ADS); typografia i kody z komponentów ADS. */
 .condition ul { list-style: none; margin: 0; padding: 0; }
-.condition ul ul { margin-left: var(--space-2); padding-left: var(--space-3); border-left: 2px solid var(--border); }
-.condition li { margin: var(--space-1) 0; }
-.condition-op { display: inline-block; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
-.condition-op.not { color: var(--red); }
-.condition-leaf { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
-.condition-field, .condition-value { font-family: var(--font-mono); font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--surface-muted); border: 1px solid var(--border); word-break: break-all; }
-.condition-cmp { color: var(--text-muted); }
-.condition-empty { color: var(--text-muted); font-style: italic; }
+.condition ul ul { margin-left: var(--ds-space-100); padding-left: var(--ds-space-150); border-left: var(--ds-border-width-selected) solid var(--ds-border); }
+.condition li { margin: var(--ds-space-050) 0; }
+.condition-leaf { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ds-space-075); word-break: break-all; }

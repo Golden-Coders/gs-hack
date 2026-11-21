@@ -1,4 +1,5 @@
 // Feed alertów na żywo (tasks.md 14.1): filtr „mój zespół / wszystkie”, stan, severity, licznik, ostatnie wystąpienie.
+import { Text } from "@atlaskit/primitives/compiled";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { usePersonId } from "../api/session";
@@ -7,7 +8,11 @@ import { useAlertFeed, useTeamsOf } from "../api/useAlertFeed";
 import { SeverityBadge, StateBadge } from "../components/Badges";
 import { paletteColor } from "../components/colors";
 import { ago } from "../ui/format";
-import { Segmented } from "../ui/primitives";
+import Button from "@atlaskit/button/new";
+import DynamicTable from "@atlaskit/dynamic-table";
+import SectionMessage from "@atlaskit/section-message";
+import { useListKeyboard } from "../ui/keyboard";
+import { EmptyList, ErrorBox, ListSkeleton, PageHeader, Segmented } from "../ui/primitives";
 import "./AlertFeed.css";
 
 type Filter = "mine" | "all";
@@ -37,7 +42,7 @@ function useNow(intervalMs: number) {
 export default function AlertFeed() {
   const personId = usePersonId();
   const myTeams = useTeamsOf(personId);
-  const { alerts, touched, loading, error } = useAlertFeed();
+  const { alerts, touched, loading, error, retry } = useAlertFeed();
   const status = useStreamStatus();
   const navigate = useNavigate();
   const now = useNow(5_000);
@@ -58,85 +63,95 @@ export default function AlertFeed() {
     filter === "all" || !myTeams ? alerts : alerts.filter((a) => a.teams.some((t) => myTeams.includes(t)));
   const lastChange = touched.size ? Math.max(...touched.values()) : null;
 
+  const { index: current } = useListKeyboard({
+    keys: visible.map((a) => a.id),
+    enabled: true,
+    onOpen: (id) => navigate(`/alerts/${id}`),
+  });
+
+  const rows = visible.map((a, i) => {
+    const t = touched.get(a.id);
+    const flash = t !== undefined && Date.now() - t < FLASH_MS;
+    const color = paletteColor(a.color);
+    return {
+      // nowy klucz po zmianie na żywo restartuje animację wyróżnienia
+      key: flash ? `${a.id}:${t}` : a.id,
+      className: [flash && "flash", i === current && "kb-current"].filter(Boolean).join(" ") || undefined,
+      style: color ? { boxShadow: `inset 4px 0 0 ${color.fg}` } : undefined,
+      onClick: () => navigate(`/alerts/${a.id}`),
+      cells: [
+        { key: "severity", content: <SeverityBadge severity={a.severity} /> },
+        { key: "state", content: <StateBadge state={a.state} /> },
+        {
+          key: "title",
+          content: (
+            <span className="feed-title">
+              <Link to={`/alerts/${a.id}`} onClick={(e) => e.stopPropagation()}>{a.title}</Link>
+              <span className="muted">{a.schema}{a.episode > 1 ? ` · epizod ${a.episode}` : ""}</span>
+            </span>
+          ),
+        },
+        { key: "teams", content: a.teams.length ? a.teams.join(", ") : <Text color="color.text.subtle">—</Text> },
+        { key: "count", content: <span className="num">×{a.count}</span> },
+        { key: "last", content: <span title={new Date(a.last_seen).toLocaleString()}>{ago(a.last_seen, now)}</span> },
+      ],
+    };
+  });
+
   return (
     <section className="feed">
-      <header className="feed-header">
-        <div>
-          <h1>Alerty</h1>
-          <p className="muted feed-live" aria-live="polite">
+      <PageHeader
+        actions={
+          <Segmented
+            label="Filtr alertów"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: "mine", label: `Mój zespół${myTeams?.length ? ` (${myTeams.join(", ")})` : ""}` },
+              { value: "all", label: "Wszystkie" },
+            ]}
+          />
+        }
+        bottomBar={
+          <Text as="p" color="color.text.subtle" aria-live="polite">
             {status === "live" ? "Na żywo" : status === "unavailable" ? "Bez aktualizacji na żywo (mock)" : "Łączenie…"}
             {lastChange && ` · ostatnia zmiana ${new Date(lastChange).toLocaleTimeString()}`}
-          </p>
-        </div>
-        <Segmented
-          label="Filtr alertów"
-          value={filter}
-          onChange={setFilter}
-          options={[
-            { value: "mine", label: `Mój zespół${myTeams?.length ? ` (${myTeams.join(", ")})` : ""}` },
-            { value: "all", label: "Wszystkie" },
-          ]}
-        />
-      </header>
+          </Text>
+        }
+      >
+        Alerty
+      </PageHeader>
 
-      {error && <p className="error-box">{error}</p>}
+      {error && <ErrorBox message={error} onRetry={retry} disabled={loading} />}
       {filter === "mine" && myTeams && myTeams.length === 0 && (
-        <p className="feed-hint">
-          {personId ? `„${personId}” nie należy do żadnego zespołu.` : "Nie wybrano tożsamości."}{" "}
-          <button onClick={() => setFilter("all")}>Pokaż wszystkie</button>
-        </p>
+        <SectionMessage appearance="information">
+          <Text as="p">
+            {personId ? `„${personId}” nie należy do żadnego zespołu.` : "Nie wybrano tożsamości."}{" "}
+            <Button onClick={() => setFilter("all")}>Pokaż wszystkie</Button>
+          </Text>
+        </SectionMessage>
       )}
 
-      <div className="feed-table-wrap">
-        <table className="feed-table">
-          <thead>
-            <tr>
-              <th scope="col">Severity</th>
-              <th scope="col">Stan</th>
-              <th scope="col">Alert</th>
-              <th scope="col">Zespoły</th>
-              <th scope="col" className="num">Licznik</th>
-              <th scope="col">Ostatnio</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td colSpan={6} className="muted">Ładowanie…</td>
-              </tr>
-            )}
-            {!loading && !visible.length && (
-              <tr>
-                <td colSpan={6} className="muted">Brak alertów.</td>
-              </tr>
-            )}
-            {visible.map((a) => {
-              const t = touched.get(a.id);
-              const flash = t !== undefined && Date.now() - t < FLASH_MS;
-              const color = paletteColor(a.color);
-              return (
-                <tr
-                  // nowy klucz po zmianie na żywo restartuje animację wyróżnienia
-                  key={flash ? `${a.id}:${t}` : a.id}
-                  className={flash ? "flash" : undefined}
-                  style={color ? { boxShadow: `inset 4px 0 0 ${color.fg}` } : undefined}
-                  onClick={() => navigate(`/alerts/${a.id}`)}
-                >
-                  <td><SeverityBadge severity={a.severity} /></td>
-                  <td><StateBadge state={a.state} /></td>
-                  <td className="feed-title">
-                    <Link to={`/alerts/${a.id}`} onClick={(e) => e.stopPropagation()}>{a.title}</Link>
-                    <span className="muted">{a.schema}{a.episode > 1 ? ` · epizod ${a.episode}` : ""}</span>
-                  </td>
-                  <td>{a.teams.length ? a.teams.join(", ") : <span className="muted">—</span>}</td>
-                  <td className="num">×{a.count}</td>
-                  <td title={new Date(a.last_seen).toLocaleString()}>{ago(a.last_seen, now)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {loading && alerts.length === 0 ? (
+        <ListSkeleton label="Ładowanie alertów…" />
+      ) : (
+        <DynamicTable
+          label="Alerty"
+          highlightedRowIndex={current >= 0 ? current : undefined}
+          emptyView={<EmptyList header="Brak alertów" description="Nowe alerty pojawią się tu na żywo." />}
+          head={{
+            cells: [
+              { key: "severity", content: "Severity" },
+              { key: "state", content: "Stan" },
+              { key: "title", content: "Alert" },
+              { key: "teams", content: "Zespoły" },
+              { key: "count", content: "Licznik" },
+              { key: "last", content: "Ostatnio" },
+            ],
+          }}
+          rows={rows}
+        />
+      )}
     </section>
   );
 }

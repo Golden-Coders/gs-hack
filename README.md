@@ -158,6 +158,23 @@ Plik w `config/runbooks/`:
 - `*.yaml` to runbook **automatyczny**: kroki wykonywane po kolei, start raz na epizod alertu. Krok z `approval: required` albo akcja `risk: high` czeka na zatwierdzenie w **Zatwierdzeniach**. Błąd zatrzymuje runbook, a w UI można kliknąć „ponów”, „pomiń” albo „tryb ręczny”. Nieznana akcja staje się krokiem ręcznym i pojawia się na liście brakujących akcji.
 - `*.md` albo `*.txt` to runbook **ręczny**: Markdown lub wolny tekst dołączany do powiadomień (pełna treść w UI i e-mailu, link w SMS).
 
+## UI: skróty klawiszowe
+
+Jednoklawiszowe skróty działają w feedzie alertów i w kolejce zatwierdzeń, ale nie w polach tekstowych, listach wyboru ani oknach dialogowych (litera trafia do pola).
+
+| Skrót | Gdzie | Działanie |
+|---|---|---|
+| `j` / `↓` | feed alertów, kolejka zatwierdzeń | następny wiersz |
+| `k` / `↑` | feed alertów, kolejka zatwierdzeń | poprzedni wiersz |
+| `Enter` | feed alertów, kolejka zatwierdzeń | otwórz alert bieżącego wiersza (gdy fokus nie jest na linku ani przycisku) |
+| `Escape` | feed alertów, kolejka zatwierdzeń | wyczyść bieżący wiersz i zaznaczenie |
+| `x` | kolejka zatwierdzeń | zaznacz / odznacz bieżący krok do akcji zbiorczej |
+| `a` | kolejka zatwierdzeń | zatwierdź bieżący krok (wymaga wybranej tożsamości „działam jako”) |
+| `r` | kolejka zatwierdzeń | odrzuć bieżący krok — najpierw okno potwierdzenia |
+| `⌘K` / `Ctrl+K` | każdy ekran | paleta komend: przejście do ekranu lub alertu po tytule; `Escape` zamyka |
+
+Akcje zbiorcze (pasek nad listą po zaznaczeniu kroków) wysyłają komendy po kolei, a wynik raportują per krok; odrzucenie zbiorcze pyta o potwierdzenie z liczbą kroków. Zatwierdzenia nie da się cofnąć, a powód odrzucenia nie jest zapisywany (API tego nie wspiera).
+
 ## Struktura repo
 
 | Ścieżka | Co |

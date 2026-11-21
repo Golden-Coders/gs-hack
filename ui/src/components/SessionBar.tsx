@@ -1,8 +1,15 @@
 // Przełącznik backendu (mock / prawdziwy) i uwierzytelniona sesja operatora („działam jako”).
 import { useEffect, useState } from "react";
 import { api, type Schemas } from "../api/client";
+import { Stack, Text } from "@atlaskit/primitives/compiled";
 import StreamIndicator from "./StreamIndicator";
+import { Field, Select } from "../ui/primitives";
 import { API_URL, backend, loginAs, logout, switchBackend, usePersonId, type Backend } from "../api/session";
+
+const BACKENDS: { value: Backend; label: string }[] = [
+  { value: "mock", label: "mock (Prism)" },
+  { value: "api", label: "prawdziwy (api)" },
+];
 
 export default function SessionBar() {
   const personId = usePersonId();
@@ -25,7 +32,13 @@ export default function SessionBar() {
       },
       () => setError(`Brak połączenia z ${API_URL}`),
     );
-  }, []); // lista osób pobierana raz na start
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lista osób pobierana raz na start
+  }, []);
+
+  const personOptions = [
+    ...(!personId ? [{ value: "", label: "— nie zalogowano —" }] : []),
+    ...people.map((p) => ({ value: p.id, label: p.name })),
+  ];
 
   async function handleSelect(nextId: string) {
     setError(null);
@@ -41,33 +54,36 @@ export default function SessionBar() {
   }
 
   return (
-    <div className="session">
-      <label>
-        Działam jako
-        <select value={personId ?? ""} onChange={(e) => void handleSelect(e.target.value)} disabled={!people.length}>
-          {!personId && <option value="">— nie zalogowano —</option>}
-          {people.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
+    <Stack space="space.100">
+      <Field label="Działam jako">
+        {(f) => (
+          <Select
+            {...f}
+            value={personId ?? ""}
+            options={personOptions}
+            onChange={(v) => void handleSelect(v)}
+          />
+        )}
+      </Field>
       {personId && (
         <button type="button" onClick={() => void logout()}>
           Wyloguj
         </button>
       )}
-      <label>
-        Backend
-        <select value={backend} onChange={(e) => switchBackend(e.target.value as Backend)}>
-          <option value="mock">mock (Prism)</option>
-          <option value="api">prawdziwy (api)</option>
-        </select>
-      </label>
+      <Field label="Backend">
+        {(f) => <Select {...f} value={backend} options={BACKENDS} onChange={(v) => switchBackend(v as Backend)} />}
+      </Field>
       <StreamIndicator />
-      <div className="api-url" title="Adres backendu">{API_URL}</div>
-      {error && <div className="session-error">{error}</div>}
-    </div>
+      <span style={{ wordBreak: "break-all" }}>
+        <Text size="small" color="color.text.subtlest">
+          Adres backendu: {API_URL}
+        </Text>
+      </span>
+      {error && (
+        <Text size="small" color="color.text.danger">
+          {error}
+        </Text>
+      )}
+    </Stack>
   );
 }

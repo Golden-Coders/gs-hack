@@ -1,7 +1,8 @@
-.runbook-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.runbook { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.runbook > summary { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-3) var(--space-4); cursor: pointer; }
-.runbook > summary::before { content: "▸"; color: var(--text-muted); width: 1ch; }
+/* Układ listy runbooków; badge'e, bloki kodu i komunikaty dają komponenty ADS. */
+.runbook-list { display: flex; flex-direction: column; gap: var(--ds-space-100); }
+.runbook { background: var(--ds-surface); border: var(--ds-border-width) solid var(--ds-border); border-radius: var(--ds-radius-medium); }
+.runbook > summary { display: flex; align-items: center; gap: var(--ds-space-150); flex-wrap: wrap; padding: var(--ds-space-150) var(--ds-space-200); cursor: pointer; }
+.runbook > summary::before { content: "▸"; color: var(--ds-text-subtle); width: 1ch; }
 .runbook[open] > summary::before { content: "▾"; }
 .runbook > summary:hover { background: var(--surface-muted); }
 .runbook-title { font-weight: 600; }
