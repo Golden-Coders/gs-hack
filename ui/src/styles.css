@@ -31,14 +31,15 @@ nav a { color: inherit; text-decoration: none; padding: 6px 8px; border-radius: 
 nav a.active, nav a:hover { background: #2e3646; color: #fff; }
 nav .session { margin-top: auto; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
 nav .session label { display: flex; flex-direction: column; gap: 2px; opacity: .8; }
-nav .session select { background: #2e3646; color: #fff; border: 1px solid #3d4759; border-radius: 6px; padding: 4px 6px; font: inherit; }
+nav .session select, nav .session input { background: #2e3646; color: #fff; border: 1px solid #3d4759; border-radius: 6px; padding: 4px 6px; font: inherit; }
 nav .session-error { color: #fca5a5; }
+nav .session-hint { font-size: 11px; opacity: .7; }
 nav .stream-status { font-size: 12px; }
 nav .stream-live { color: #86efac; }
 nav .stream-connecting, nav .stream-reconnecting { color: #fcd34d; }
 nav .stream-idle, nav .stream-unavailable { opacity: .6; }
 nav .api-url { font-size: 11px; opacity: .5; word-break: break-all; }
-main { padding: 24px 32px; }
+main { padding: 24px 32px; min-width: 0; }
 .todo { color: #6b7280; font-style: italic; }
 
 /* wspólne komponenty (13.3) */
@@ -63,3 +64,15 @@ main { padding: 24px 32px; }
 .loading { color: var(--text-muted); }
 .empty { color: var(--text-muted); padding: var(--space-4); border: 1px dashed var(--border); border-radius: var(--radius); }
 .mono { font-family: var(--font-mono); font-size: 13px; }
+
+/* wąski ekran: menu jako pasek nad treścią */
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); }
+  nav .brand { margin: 0 var(--space-2) 0 0; }
+  nav .nav-group { flex-direction: row; flex-wrap: wrap; margin: 0; }
+  nav .nav-title { display: none; }
+  nav .session { margin-top: 0; flex-direction: row; flex-wrap: wrap; align-items: flex-end; width: 100%; }
+  main { padding: var(--space-4); }
+  main table { display: block; overflow-x: auto; max-width: 100%; position: relative; }
+}

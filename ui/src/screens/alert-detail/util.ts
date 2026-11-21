@@ -23,7 +23,14 @@ export async function send(request: () => Promise<{ error?: unknown; response: R
   }
 }
 
-export type Resource<T> = { data: T | null; error: string | null; loading: boolean; reload: () => void };
+export type Resource<T> = {
+  data: T | null;
+  error: string | null;
+  loading: boolean;
+  reload: () => void;
+  /** Ciche odświeżenie (dociąganie w tle): bez wskaźnika ładowania. */
+  refresh: () => void;
+};
 
 /**
  * Ładuje jedną sekcję ekranu. `key` zmienia się wraz z alertem (reset danych);
@@ -39,9 +46,9 @@ export function useResource<T>(load: () => Promise<FetchResult<T>>, key: string)
   loadRef.current = load;
   const seq = useRef(0);
 
-  const reload = useCallback(() => {
+  const fetchData = useCallback((silent: boolean) => {
     const n = ++seq.current;
-    setState((s) => ({ ...s, loading: true }));
+    if (!silent) setState((s) => ({ ...s, loading: true }));
     loadRef.current().then(
       ({ data, error, response }) => {
         if (n !== seq.current) return; // starsza odpowiedź wyprzedzona nowszym żądaniem
@@ -56,6 +63,8 @@ export function useResource<T>(load: () => Promise<FetchResult<T>>, key: string)
       },
     );
   }, []);
+  const reload = useCallback(() => fetchData(false), [fetchData]);
+  const refresh = useCallback(() => fetchData(true), [fetchData]);
 
   useEffect(() => {
     setState({ data: null, error: null, loading: true });
@@ -65,7 +74,7 @@ export function useResource<T>(load: () => Promise<FetchResult<T>>, key: string)
     };
   }, [key, reload]);
 
-  return { ...state, reload };
+  return { ...state, reload, refresh };
 }
 
 export function formatTime(iso: string | null | undefined): string {

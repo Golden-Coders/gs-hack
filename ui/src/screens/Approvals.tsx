@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
-import { useStream } from "../api/stream";
+import { usePollWhenQuiet, useStream } from "../api/stream";
 import "./Approvals.css";
 
 type Pending = Schemas["PendingApproval"];
@@ -77,6 +77,8 @@ export default function Approvals() {
   useStream((msg) => {
     if (msg.type === "ui_event" && msg.data.kind === "step_status") void load();
   });
+
+  usePollWhenQuiet(() => void load());
 
   async function decide(a: Pending, command: Decision) {
     const key = keyOf(a);

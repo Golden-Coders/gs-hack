@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
-import { useStream } from "../api/stream";
+import { usePollWhenQuiet, useStream } from "../api/stream";
 import Presentation from "../components/Presentation";
 import Audit from "./alert-detail/Audit";
 import Deliveries from "./alert-detail/Deliveries";
@@ -62,6 +62,9 @@ export default function AlertDetail() {
       deliveries.reload();
     }
   });
+
+  // Bez zdarzeń na żywo dociągamy całość w tle (bez wskaźników ładowania).
+  usePollWhenQuiet(() => [alert, episodes, runbooks, deliveries, audit].forEach((r) => r.refresh()));
 
   // Odświeżenie po komendzie użytkownika; kolejne wywołanie zastępuje oczekujące.
   const followUp = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -12,11 +12,13 @@ type Filter = "mine" | "all";
 const FILTER_KEY = "alerting.feedFilter";
 const FLASH_MS = 3_000;
 
-function readFilter(): Filter {
+// Wybór zapamiętany w przeglądarce; `null` = jeszcze nie wybierano.
+function readFilter(): Filter | null {
   try {
-    return localStorage.getItem(FILTER_KEY) === "all" ? "all" : "mine";
+    const v = localStorage.getItem(FILTER_KEY);
+    return v === "all" || v === "mine" ? v : null;
   } catch {
-    return "mine";
+    return null;
   }
 }
 
@@ -45,7 +47,9 @@ export default function AlertFeed() {
   const status = useStreamStatus();
   const navigate = useNavigate();
   const now = useNow(5_000);
-  const [filter, setFilterState] = useState<Filter>(readFilter);
+  const [chosen, setFilterState] = useState<Filter | null>(readFilter);
+  // Bez własnego wyboru: „mój zespół” tylko dla osoby, która ma zespół – inaczej feed byłby pusty.
+  const filter: Filter = chosen ?? (myTeams?.length ? "mine" : "all");
 
   const setFilter = (f: Filter) => {
     setFilterState(f);

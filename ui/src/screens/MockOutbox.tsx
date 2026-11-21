@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
-import { useStream } from "../api/stream";
+import { usePollWhenQuiet, useStream } from "../api/stream";
 import "./MockOutbox.css";
 
 type Message = Schemas["MockMessage"];
@@ -94,6 +94,8 @@ export default function MockOutbox() {
     if (msg.data.kind === "mock_outbox") void loadMessages();
     if (msg.data.kind === "delivery_status") void loadMessages();
   });
+
+  usePollWhenQuiet(refresh);
 
   async function toggle(state: ChannelState) {
     const channel = state.channel;
