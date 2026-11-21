@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
+import { useResource } from "../api/useResource";
+import { Badge } from "../components/Badges";
+import { Empty, ErrorBox, Loading } from "../ui/primitives";
 import RuleEditor from "./rules/RuleEditor";
 import type { Rule } from "./rules/model";
 import "./Rules.css";
@@ -21,31 +24,31 @@ export default function Rules() {
   const selectedId = params.get("rule");
   const creating = params.get("new") === "1";
 
+  // Lista reguł żyje lokalnie (zapis i usunięcie aktualizują ją od razu); useResource dostarcza pierwsze ładowanie.
+  const resource = useResource(async () => {
+    const [r, p, t, m] = await Promise.all([api.GET("/rules"), api.GET("/people"), api.GET("/teams"), api.GET("/mappings")]);
+    if (r.data === undefined) return { error: r.error, response: r.response };
+    return {
+      data: {
+        rules: r.data,
+        people: p.data?.people ?? [],
+        teams: t.data ?? [],
+        schemas: m.data?.map((x) => x.schema) ?? [],
+      },
+      response: r.response,
+    };
+  });
   const [rules, setRules] = useState<Rule[] | null>(null);
-  const [people, setPeople] = useState<Person[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [schemas, setSchemas] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const [r, p, t, m] = await Promise.all([api.GET("/rules"), api.GET("/people"), api.GET("/teams"), api.GET("/mappings")]);
-      if (r.error || !r.data) throw new Error("rules");
-      setRules(r.data);
-      setPeople(p.data?.people ?? []);
-      setTeams(t.data ?? []);
-      setSchemas(m.data?.map((x) => x.schema) ?? []);
-      setLoadError(null);
-    } catch {
-      setLoadError("Nie udało się pobrać reguł.");
-    }
-  }, []);
-
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (resource.data) setRules(resource.data.rules);
+  }, [resource.data]);
+
+  const people = resource.data?.people ?? [];
+  const teams = resource.data?.teams ?? [];
+  const schemas = resource.data?.schemas ?? [];
 
   const select = useCallback(
     (next: { rule?: string; creating?: boolean }) => {
@@ -89,14 +92,7 @@ export default function Rules() {
       <p className="muted rules-lead">
         Reguła mówi, które alerty kogo dotyczą i jak mają wyglądać. Zmiany obowiązują od razu, bez restartu.
       </p>
-      {loadError && (
-        <p className="error-box" role="alert">
-          {loadError}{" "}
-          <button type="button" onClick={() => void load()}>
-            Spróbuj ponownie
-          </button>
-        </p>
-      )}
+      {resource.error && <ErrorBox message={resource.error} onRetry={resource.reload} disabled={resource.loading} />}
       {notice && (
         <p className="rules-saved" role="status">
           {notice}
@@ -105,8 +101,8 @@ export default function Rules() {
 
       <div className="rules-layout">
         <div className="rules-list" role="region" aria-label="Lista reguł">
-          {rules === null && !loadError && <p className="loading">Ładowanie…</p>}
-          {rules?.length === 0 && <p className="empty">Brak reguł. Utwórz pierwszą przyciskiem „Nowa reguła”.</p>}
+          {rules === null && !resource.error && <Loading />}
+          {rules?.length === 0 && <Empty>Brak reguł. Utwórz pierwszą przyciskiem „Nowa reguła”.</Empty>}
           <ul>
             {rules?.map((r) => (
               <li key={r.id}>
@@ -119,7 +115,7 @@ export default function Rules() {
                   <span className="rules-item-name">{r.name}</span>
                   <span className="rules-item-meta">
                     <span className="mono">{r.id}</span>
-                    {r.enabled === false ? <span className="rules-off">wyłączona</span> : <span className="rules-on">włączona</span>}
+                    {r.enabled === false ? <Badge tone="gray">wyłączona</Badge> : <Badge tone="green">włączona</Badge>}
                   </span>
                   <span className="rules-item-rec muted">→ {recipientsLabel(r, people, teams) || "brak odbiorców"}</span>
                 </button>
@@ -134,9 +130,9 @@ export default function Rules() {
             <RuleEditor key={selected.id} initial={selected} people={people} teams={teams} schemas={schemas} onSaved={onSaved} onDeleted={onDeleted} onDirtyChange={setDirty} />
           )}
           {!creating && !selected && rules !== null && (
-            <p className="empty">
+            <Empty>
               {selectedId ? `Nie znaleziono reguły „${selectedId}”. ` : ""}Wybierz regułę z listy albo utwórz nową.
-            </p>
+            </Empty>
           )}
         </div>
       </div>

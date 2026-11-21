@@ -5,12 +5,15 @@ import { Link, useParams } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
 import { usePollWhenQuiet, useStream } from "../api/stream";
+import { ErrorBox, Loading } from "../ui/primitives";
 import Presentation from "../components/Presentation";
 import Audit from "./alert-detail/Audit";
 import Deliveries from "./alert-detail/Deliveries";
 import Episodes from "./alert-detail/Episodes";
 import Runbooks from "./alert-detail/Runbooks";
-import { actorLabel, formatTime, send, useResource } from "./alert-detail/util";
+import { send } from "../api/request";
+import { useResource } from "../api/useResource";
+import { actorLabel, formatTime } from "../ui/format";
 import "./AlertDetail.css";
 
 // Komendy trafiają do Kafki asynchronicznie – po przyjęciu odświeżamy od razu i jeszcze raz chwilę później
@@ -86,14 +89,9 @@ export default function AlertDetail() {
       </p>
 
       {alert.error && (
-        <div className="error-box" role="alert">
-          Nie udało się pobrać alertu: {alert.error}{" "}
-          <button type="button" onClick={alert.reload} disabled={alert.loading}>
-            Spróbuj ponownie
-          </button>
-        </div>
+        <ErrorBox message={`Nie udało się pobrać alertu: ${alert.error}`} onRetry={alert.reload} disabled={alert.loading} />
       )}
-      {!a && alert.loading && <p className="muted">Ładowanie alertu…</p>}
+      {!a && alert.loading && <Loading>Ładowanie alertu…</Loading>}
 
       {a && (
         <>
@@ -161,11 +159,7 @@ function AlertMeta({
         </button>
         {noPerson && <span className="muted">Wybierz osobę w polu „Działam jako”, aby działać na alercie.</span>}
       </div>
-      {error && (
-        <div className="error-box" role="alert">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBox message={error} />}
       <dl className="ad-facts">
         <div>
           <dt>Licznik zdarzeń</dt>

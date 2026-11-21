@@ -23,9 +23,9 @@ Nowy aktywny change po zarchiwizowaniu `alerting-service-mvp` i `alerting-servic
 
 ## 4. Domknięcie refaktoru UI (`origin/p4/ui-refactor-1`)
 
-- [ ] 4.1 Zintegrować `origin/p4/ui-refactor-1` z aktualnym `main`, zachowując wszystkie poprawki z `main` (PR #13 `ui-fixes`, PR #26 `?token=` w SSE `/stream`, PR #29 łańcuch fallbacku w `Deliveries.tsx`); weryfikacja: brak regresji w SSE i widoku dostarczeń
-- [ ] 4.2 Zaktualizować ewentualne ścieżki `config/p*` wyświetlane w UI (`People`, `Runbooks`, testy) na nową strukturę `config/`; weryfikacja: `npm run typecheck`, `npm test` (vitest) i `npm run build` w kontenerze `ui` kończą się kodem 0
-- [ ] 4.3 Zmergować zrefaktorowane UI do `main` i zweryfikować na żywym stacku (`http://localhost:5173`); weryfikacja: UI ładuje się bez błędów konsoli i przechodzi pełny scenariusz `make demo`
+- [x] 4.1 Zintegrować `origin/p4/ui-refactor-1` z aktualnym `main`, zachowując wszystkie poprawki z `main` (PR #13 `ui-fixes`, PR #26 `?token=` w SSE `/stream`, PR #29 łańcuch fallbacku w `Deliveries.tsx`); weryfikacja: brak regresji w SSE i widoku dostarczeń
+- [x] 4.2 Zaktualizować ewentualne ścieżki `config/p*` wyświetlane w UI (`People`, `Runbooks`, testy) na nową strukturę `config/`; weryfikacja: `npm run typecheck`, `npm test` (vitest) i `npm run build` w kontenerze `ui` kończą się kodem 0
+- [x] 4.3 Zmergować zrefaktorowane UI do `main` i zweryfikować na żywym stacku (`http://localhost:5173`); weryfikacja: UI ładuje się bez błędów konsoli i przechodzi pełny scenariusz `make demo`
 
 ## 5. Systematyczny Code Review (wg `specs/code-review/spec.md`)
 

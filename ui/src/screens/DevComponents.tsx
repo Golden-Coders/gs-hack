@@ -1,8 +1,10 @@
 // Przegląd wspólnych komponentów (tasks.md 13.3) na danych z API – na mocku to przykłady z fixtures OpenAPI.
 // Dostępne pod /dev/components, poza menu.
 import { useEffect, useState } from "react";
+
 import { api, type Schemas } from "../api/client";
-import { DeliveryStatusBadge, SeverityBadge, StateBadge, StepStatusBadge } from "../components/Badges";
+import { DeliveryStatusBadge, RiskBadge, SeverityBadge, StateBadge, StepStatusBadge } from "../components/Badges";
+import { Card, ConfirmInline, CopyButton, Empty, ErrorBox, Field, Loading, Segmented, Tabs } from "../ui/primitives";
 import Markdown from "../components/Markdown";
 import Presentation from "../components/Presentation";
 
@@ -43,6 +45,12 @@ export default function DevComponents() {
       <h3>Status kroku</h3>
       <div className="row">{STEPS.map((s) => <StepStatusBadge key={s} status={s} />)}</div>
 
+      <h3>Ryzyko akcji</h3>
+      <div className="row"><RiskBadge risk="high" /><RiskBadge risk="low" /></div>
+
+      <h3>Prymitywy</h3>
+      <Primitives />
+
       <h3>Prezentacja reguły</h3>
       {alerts.map((a) => <Presentation key={a.id} alert={a} />)}
 
@@ -50,5 +58,26 @@ export default function DevComponents() {
       {runbooks.filter((r) => r.body).map((r) => <Markdown key={r.id} source={r.body!} />)}
       <Markdown source={UNSAFE_MD} />
     </section>
+  );
+}
+
+function Primitives() {
+  const [seg, setSeg] = useState<"mine" | "all">("mine");
+  const [tab, setTab] = useState<"all" | "failed">("all");
+  return (
+    <Card title="Card z akcjami" actions={<button>Odśwież</button>}>
+      <div className="row">
+        <Segmented label="Przykład" value={seg} onChange={setSeg} options={[{ value: "mine", label: "Mój zespół" }, { value: "all", label: "Wszystkie" }]} />
+        <ConfirmInline label="Usuń" question="Usunąć?" confirmLabel="Tak, usuń" onConfirm={() => {}} />
+        <CopyButton text="config/people.yaml" />
+      </div>
+      <Tabs label="Przykład" value={tab} onChange={setTab} tabs={[{ value: "all", label: "Wszystkie (2)" }, { value: "failed", label: "Nieudane (0)" }]} />
+      <Field label="URL" hint="Host musi być na ACTION_HOST_ALLOWLIST" error="Podaj adres URL">
+        {(p) => <input {...p} />}
+      </Field>
+      <Loading />
+      <Empty>Brak kroków do zatwierdzenia.</Empty>
+      <ErrorBox message="HTTP 404" onRetry={() => {}} />
+    </Card>
   );
 }

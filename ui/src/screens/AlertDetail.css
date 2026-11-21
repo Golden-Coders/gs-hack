@@ -10,25 +10,8 @@
 .ad-facts dt { font-size: 12px; color: var(--text-muted); }
 .ad-facts dd { margin: 0; word-break: break-word; }
 
-.ad-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4); }
-.ad-section-head { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-2); }
-.ad-section-head h2 { font-size: 16px; margin: 0; }
-.ad-section .error-box { margin-bottom: var(--space-2); }
-.ad-section .error-box button { margin-left: var(--space-2); }
-
-.ad-table-wrap { overflow-x: auto; }
-.ad-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.ad-table th { text-align: left; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); padding: var(--space-1) var(--space-2); white-space: nowrap; }
-.ad-table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
-.ad-table tr:last-child td { border-bottom: 0; }
-.ad-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-.ad-table .nowrap, .nowrap { white-space: nowrap; }
-.ad-table code, .ad-step code { font-family: var(--font-mono); font-size: 12px; }
+.ad-step code { font-family: var(--font-mono); font-size: 12px; }
 .ad-error-text { color: var(--red); }
-
-.ad-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-2); }
-.ad-tabs button[role="tab"] { border-radius: 6px; }
-.ad-tabs button[aria-selected="true"] { background: var(--blue-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
 .ad-runbook { border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-3); }
 .ad-runbook:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }

@@ -1,10 +1,14 @@
 // Kolejka zatwierdzeń — tasks.md 14.3.
 // Zatwierdzać i odrzucać można tylko tutaj (z UI); autorem jest wybrana tożsamość („działam jako”).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
 import { usePollWhenQuiet, useStream } from "../api/stream";
+import { useResource } from "../api/useResource";
+import { RiskBadge } from "../components/Badges";
+import { formatTime } from "../ui/format";
+import { ConfirmInline, Empty, ErrorBox, Loading } from "../ui/primitives";
 import "./Approvals.css";
 
 type Pending = Schemas["PendingApproval"];
@@ -15,8 +19,6 @@ type Decision = "approve" | "reject";
 const DECIDED_HIDE_MS = 15_000;
 
 const keyOf = (a: Pending) => `${a.run_id}:${a.step_id}`;
-
-const dateFmt = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "medium" });
 
 function formatSince(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
@@ -30,7 +32,7 @@ function formatSince(iso: string): string {
         : min < 48 * 60
           ? `${Math.floor(min / 60)} h ${min % 60} min temu`
           : `${Math.floor(min / (24 * 60))} dni temu`;
-  return `${ago} (${dateFmt.format(new Date(iso))})`;
+  return `${ago} (${formatTime(iso)})`;
 }
 
 function Params({ params }: { params: Pending["params"] }) {
@@ -50,35 +52,21 @@ function Params({ params }: { params: Pending["params"] }) {
 
 export default function Approvals() {
   const personId = usePersonId();
-  const [items, setItems] = useState<Pending[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const list = useResource(() => api.GET("/approvals"));
+  const [decidedAt, setDecidedAt] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [confirmReject, setConfirmReject] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
-  const decided = useRef(new Map<string, number>());
 
-  const load = useCallback(async () => {
-    try {
-      const { data, error } = await api.GET("/approvals");
-      if (error || !data) throw new Error("approvals");
-      setLoadError(null);
-      const now = Date.now();
-      setItems(data.filter((a) => now - (decided.current.get(keyOf(a)) ?? -Infinity) > DECIDED_HIDE_MS));
-    } catch {
-      setLoadError("Nie udało się pobrać kolejki zatwierdzeń.");
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Optymistycznie ukrywamy krok, który właśnie zatwierdziliśmy; odświeżenie potwierdzi stan z serwera.
+  const now = Date.now();
+  const items = list.data?.filter((a) => now - (decidedAt[keyOf(a)] ?? -Infinity) > DECIDED_HIDE_MS) ?? null;
 
   // Na żywo: zmiana statusu kroku (np. zatwierdzenie z innej karty) odświeża kolejkę.
   useStream((msg) => {
-    if (msg.type === "ui_event" && msg.data.kind === "step_status") void load();
+    if (msg.type === "ui_event" && msg.data.kind === "step_status") list.refresh();
   });
 
-  usePollWhenQuiet(() => void load());
+  usePollWhenQuiet(list.refresh);
 
   async function decide(a: Pending, command: Decision) {
     const key = keyOf(a);
@@ -93,10 +81,7 @@ export default function Approvals() {
         params: { path: { run_id: a.run_id, step_id: a.step_id, command }, header: asPerson() },
       });
       if (response.ok) {
-        // Optymistycznie zdejmujemy krok z kolejki; odświeżenie potwierdzi stan z serwera.
-        decided.current.set(key, Date.now());
-        setItems((cur) => cur?.filter((x) => keyOf(x) !== key) ?? cur);
-        setConfirmReject(null);
+        setDecidedAt((cur) => ({ ...cur, [key]: Date.now() }));
       } else {
         const msg =
           response.status === 409
@@ -105,7 +90,7 @@ export default function Approvals() {
               ? "Nie znaleziono kroku — mógł zostać zamknięty."
               : `Błąd ${response.status} przy wysyłaniu decyzji.`;
         setRowErrors((e) => ({ ...e, [key]: msg }));
-        if (response.status === 409 || response.status === 404) void load();
+        if (response.status === 409 || response.status === 404) list.refresh();
       }
     } catch {
       setRowErrors((e) => ({ ...e, [key]: "Brak połączenia z API — decyzja nie została wysłana." }));
@@ -122,7 +107,7 @@ export default function Approvals() {
     <section className="approvals">
       <header className="approvals-head">
         <h1>Kolejka zatwierdzeń</h1>
-        <button type="button" onClick={() => void load()}>
+        <button type="button" onClick={list.reload}>
           Odśwież
         </button>
       </header>
@@ -139,31 +124,25 @@ export default function Approvals() {
       </p>
 
       {!personId && (
-        <p className="error-box" role="alert">
-          Wybierz tożsamość („działam jako” w panelu bocznym), aby zatwierdzać i odrzucać kroki.
-        </p>
+        <ErrorBox message="Wybierz tożsamość („działam jako” w panelu bocznym), aby zatwierdzać i odrzucać kroki." />
       )}
-      {loadError && (
-        <p className="error-box" role="alert">
-          {loadError}
-        </p>
+      {list.error && (
+        <ErrorBox message={`Nie udało się pobrać kolejki zatwierdzeń: ${list.error}`} onRetry={list.reload} disabled={list.loading} />
       )}
 
-      {items === null && !loadError && <p className="muted">Ładowanie…</p>}
-      {items?.length === 0 && <p className="muted approvals-empty">Brak kroków do zatwierdzenia</p>}
+      {items === null && !list.error && <Loading />}
+      {items?.length === 0 && <Empty>Brak kroków do zatwierdzenia</Empty>}
 
       {items && items.length > 0 && (
         <ul className="approvals-list" aria-label="Kroki oczekujące na zatwierdzenie">
           {items.map((a) => {
             const key = keyOf(a);
             const isBusy = busy.has(key);
-            const confirming = confirmReject === key;
-            const high = a.risk === "high";
             return (
-              <li key={key} className={`approval${high ? " approval-high" : ""}`}>
+              <li key={key} className={`approval${a.risk === "high" ? " approval-high" : ""}`}>
                 <div className="approval-main">
                   <div className="approval-title">
-                    <span className={`risk risk-${a.risk}`}>{high ? "Ryzyko: WYSOKIE" : "Ryzyko: niskie"}</span>
+                    <RiskBadge risk={a.risk} />
                     <strong>{a.text}</strong>
                   </div>
                   <dl className="approval-meta">
@@ -192,48 +171,25 @@ export default function Approvals() {
                       </dd>
                     </div>
                   </dl>
-                  {rowErrors[key] && (
-                    <p className="error-box" role="alert">
-                      {rowErrors[key]}
-                    </p>
-                  )}
+                  {rowErrors[key] && <ErrorBox message={rowErrors[key]} />}
                 </div>
                 <div className="approval-actions">
-                  {confirming ? (
-                    <>
-                      <span className="approval-confirm-text">Odrzucić ten krok?</span>
-                      <button
-                        type="button"
-                        className="danger"
-                        disabled={isBusy || !personId}
-                        onClick={() => void decide(a, "reject")}
-                      >
-                        {isBusy ? "Wysyłanie…" : "Tak, odrzuć"}
-                      </button>
-                      <button type="button" disabled={isBusy} onClick={() => setConfirmReject(null)}>
-                        Anuluj
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="primary"
-                        disabled={isBusy || !personId}
-                        onClick={() => void decide(a, "approve")}
-                      >
-                        {isBusy ? "Wysyłanie…" : "Zatwierdź"}
-                      </button>
-                      <button
-                        type="button"
-                        className="danger"
-                        disabled={isBusy || !personId}
-                        onClick={() => setConfirmReject(key)}
-                      >
-                        Odrzuć
-                      </button>
-                    </>
-                  )}
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={isBusy || !personId}
+                    onClick={() => void decide(a, "approve")}
+                  >
+                    {isBusy ? "Wysyłanie…" : "Zatwierdź"}
+                  </button>
+                  <ConfirmInline
+                    label="Odrzuć"
+                    question="Odrzucić ten krok?"
+                    confirmLabel="Tak, odrzuć"
+                    busy={isBusy}
+                    disabled={!personId}
+                    onConfirm={() => void decide(a, "reject")}
+                  />
                 </div>
               </li>
             );

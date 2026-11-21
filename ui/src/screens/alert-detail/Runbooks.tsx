@@ -4,10 +4,12 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../../api/client";
 import { usePersonId } from "../../api/session";
-import { StepStatusBadge } from "../../components/Badges";
+import { Badge, StepStatusBadge } from "../../components/Badges";
 import Markdown from "../../components/Markdown";
-import Section from "./Section";
-import { formatTime, send, type Resource } from "./util";
+import { Card, ErrorBox } from "../../ui/primitives";
+import { send } from "../../api/request";
+import type { Resource } from "../../api/useResource";
+import { formatTime } from "../../ui/format";
 
 type Command = "done" | "retry" | "skip" | "manual_mode";
 
@@ -52,12 +54,8 @@ export default function Runbooks({
   const hint = personId ? undefined : "Wybierz osobę w polu „Działam jako”";
 
   return (
-    <Section title="Runbooki" resource={resource}>
-      {error && (
-        <div className="error-box" role="alert">
-          {error}
-        </div>
-      )}
+    <Card title="Runbooki" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
+      {error && <ErrorBox message={error} />}
       {!resource.loading && !resource.error && runbooks.length === 0 && (
         <p className="muted">Żaden runbook nie pasuje do tego alertu.</p>
       )}
@@ -65,7 +63,7 @@ export default function Runbooks({
         <article key={rb.runbook_id} className="ad-runbook">
           <header>
             <h3>{rb.title}</h3>
-            <span className="badge badge-gray">{rb.kind === "automatic" ? "automatyczny" : "ręczny"}</span>
+            <Badge tone="gray">{rb.kind === "automatic" ? "automatyczny" : "ręczny"}</Badge>
             {rb.episode != null && <span className="muted">epizod #{rb.episode}</span>}
           </header>
           {rb.kind === "manual" && rb.body && <Markdown source={rb.body} />}
@@ -151,6 +149,6 @@ export default function Runbooks({
           )}
         </article>
       ))}
-    </Section>
+    </Card>
   );
 }

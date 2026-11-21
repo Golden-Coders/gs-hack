@@ -3,8 +3,10 @@ import { useState } from "react";
 import { api, asPerson, type Schemas } from "../../api/client";
 import { usePersonId } from "../../api/session";
 import { DeliveryStatusBadge } from "../../components/Badges";
-import Section from "./Section";
-import { formatTime, send, type Resource } from "./util";
+import { Card, ErrorBox, Tabs } from "../../ui/primitives";
+import { send } from "../../api/request";
+import type { Resource } from "../../api/useResource";
+import { formatTime } from "../../ui/format";
 
 const CHANNEL: Record<Schemas["Channel"], string> = { ui: "UI", email: "e-mail", sms: "SMS", phone: "telefon" };
 const isFailed = (d: Schemas["Delivery"]) => d.status === "failed" || d.status === "dlq";
@@ -74,26 +76,23 @@ export default function Deliveries({
   }
 
   return (
-    <Section title="Dostarczenia" resource={resource}>
-      <div role="tablist" aria-label="Filtr dostarczeń" className="ad-tabs">
-        <button type="button" role="tab" aria-selected={tab === "all"} onClick={() => setTab("all")}>
-          Wszystkie ({all.length})
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "failed"} onClick={() => setTab("failed")}>
-          Nieudane ({failed.length})
-        </button>
-      </div>
-      {error && (
-        <div className="error-box" role="alert">
-          {error}
-        </div>
-      )}
+    <Card title="Dostarczenia" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
+      <Tabs
+        label="Filtr dostarczeń"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: "all", label: `Wszystkie (${all.length})` },
+          { value: "failed", label: `Nieudane (${failed.length})` },
+        ]}
+      />
+      {error && <ErrorBox message={error} />}
       {!resource.loading && !resource.error && rows.length === 0 && (
         <p className="muted">{tab === "failed" ? "Brak nieudanych dostarczeń." : "Brak dostarczeń."}</p>
       )}
       {rows.length > 0 && (
-        <div className="ad-table-wrap" role="tabpanel">
-          <table className="ad-table">
+        <div className="table-wrap" role="tabpanel">
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Osoba</th>
@@ -143,6 +142,6 @@ export default function Deliveries({
           </table>
         </div>
       )}
-    </Section>
+    </Card>
   );
 }

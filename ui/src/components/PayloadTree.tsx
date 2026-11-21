@@ -1,7 +1,7 @@
 // Drzewo przykładowego payloadu z wyborem pól kliknięciem. Wielokrotnego użytku (edytor mappingów, edytor reguł).
 // Klik w liść woła `onSelect(ścieżka, wartość)`; `marks` pozwala oznaczyć pola już użyte (klucz = pathKey).
 import { useState } from "react";
-import { pathKey, type PathSeg } from "./mappings/paths";
+import { pathKey, type PathSeg } from "../lib/paths";
 import "./PayloadTree.css";
 
 export type PayloadTreeProps = {
