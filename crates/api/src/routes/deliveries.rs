@@ -148,7 +148,7 @@ async fn resend_delivery(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "serialize delivery request", e))?;
 
     sqlx::query(
-        "UPDATE deliveries SET status = 'pending', request = $2, updated_at = now() WHERE id = $1",
+        "UPDATE deliveries SET status = 'pending', attempts = 0, last_error = NULL, request = $2, updated_at = now() WHERE id = $1",
     )
     .bind(delivery_id)
     .bind(SqlJson(req_json))
