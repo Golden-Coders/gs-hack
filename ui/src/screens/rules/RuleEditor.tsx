@@ -2,7 +2,10 @@
 // podpowiedzi pól, odbiorcy, prezentacja, nadpisanie severity, test na zdarzeniu, zapis i usuwanie.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Schemas } from "../../api/client";
+import { Badge } from "../../components/Badges";
 import { paletteColor } from "../../components/colors";
+import { describeError, send } from "../../api/request";
+import { Card, ConfirmInline, ErrorBox, Field, Tabs } from "../../ui/primitives";
 import ConditionBuilder from "./ConditionBuilder";
 import RuleTester from "./RuleTester";
 import {
@@ -44,20 +47,17 @@ interface Props {
   onDirtyChange: (dirty: boolean) => void;
 }
 
-function apiMessage(error: unknown): string {
-  const e = error as { error?: string; detail?: string | null; line?: number | null } | undefined;
-  if (!e?.error) return "Nie udało się zapisać reguły.";
-  return `${e.error}${e.detail ? `: ${e.detail}` : ""}${e.line ? ` (linia ${e.line})` : ""}`;
+/** Błąd zapisu z backendu; walidacja YAML po stronie serwera podaje też numer linii. */
+function apiMessage(error: unknown, response: Response): string {
+  const line = (error as { line?: number | null } | undefined)?.line;
+  return `${describeError(error, response)}${line ? ` (linia ${line})` : ""}`;
 }
 
 function ColorSelect({ id, value, onChange, label, noneLabel }: { id: string; value: string; onChange: (v: string) => void; label: string; noneLabel: string }) {
+  const color = paletteColor(value);
   return (
     <span className="rules-color">
-      <span
-        className="rules-swatch"
-        style={paletteColor(value) ? { background: paletteColor(value)!.bg, borderColor: paletteColor(value)!.fg } : undefined}
-        aria-hidden="true"
-      />
+      <span className="rules-swatch" style={color ? { background: color.bg, borderColor: color.fg } : undefined} aria-hidden="true" />
       <select id={id} value={value} onChange={(e) => onChange(e.target.value)} aria-label={label}>
         <option value="">{noneLabel}</option>
         {COLORS.map((c) => (
@@ -86,11 +86,9 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const [schemaInput, setSchemaInput] = useState<string | null>(null);
   const [suggested, setSuggested] = useState<string[]>([]);
-  const wizardTab = useRef<HTMLButtonElement>(null);
-  const yamlTab = useRef<HTMLButtonElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
 
   const rule = useMemo(() => formToRule(form), [form]);
   const snapshot = useMemo(() => JSON.stringify(rule), [rule]);
@@ -153,7 +151,8 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
       brokenYaml.current = { text: yamlText, error: yamlError, snapshot };
     }
     setTab(next);
-    (next === "yaml" ? yamlTab : wizardTab).current?.focus();
+    // Fokus zostaje na aktywnej zakładce także po zmianie klawiaturą (strzałki).
+    requestAnimationFrame(() => tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
   }
 
   function onYamlChange(text: string) {
@@ -214,7 +213,7 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
         ? await api.POST("/rules", { body })
         : await api.PUT("/rules/{rule_id}", { params: { path: { rule_id: rule.id } }, body });
       if (res.error || !res.data) {
-        setSaveError(apiMessage(res.error));
+        setSaveError(apiMessage(res.error, res.response));
         return;
       }
       // Lokalny stan zostaje źródłem prawdy (serwer dopisuje tylko wersję).
@@ -250,19 +249,10 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
     if (!initial) return;
     setSaving(true);
     setSaveError(null);
-    try {
-      const res = await api.DELETE("/rules/{rule_id}", { params: { path: { rule_id: initial.id } } });
-      if (!res.response.ok) {
-        setSaveError(`Nie udało się usunąć reguły (HTTP ${res.response.status}).`);
-        setConfirmDelete(false);
-        return;
-      }
-      onDeleted(initial.id);
-    } catch {
-      setSaveError("Nie udało się połączyć z API.");
-    } finally {
-      setSaving(false);
-    }
+    const err = await send(() => api.DELETE("/rules/{rule_id}", { params: { path: { rule_id: initial.id } } }));
+    if (err) setSaveError(`Nie udało się usunąć reguły (${err}).`);
+    else onDeleted(initial.id);
+    setSaving(false);
   }
 
   const testBlocked =
@@ -294,141 +284,114 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
         {!isNew && <span className="muted mono">{initial?.id}</span>}
         {!isNew && <span className="muted">wersja {form.version}</span>}
         {dirty && (
-          <span className="rules-dirty" role="status">
-            Niezapisane zmiany
+          <span role="status">
+            <Badge tone="orange">Niezapisane zmiany</Badge>
           </span>
         )}
       </header>
 
-      <div className="rules-tabs" role="tablist" aria-label="Sposób edycji reguły" onKeyDown={onTabKey}>
-        <button
-          ref={wizardTab}
-          type="button"
-          role="tab"
-          id="rules-tab-wizard"
-          aria-selected={tab === "wizard"}
-          aria-controls="rules-panel-wizard"
-          tabIndex={tab === "wizard" ? 0 : -1}
-          onClick={() => switchTab("wizard")}
-        >
-          Kreator
-        </button>
-        <button
-          ref={yamlTab}
-          type="button"
-          role="tab"
-          id="rules-tab-yaml"
-          aria-selected={tab === "yaml"}
-          aria-controls="rules-panel-yaml"
-          tabIndex={tab === "yaml" ? 0 : -1}
-          onClick={() => switchTab("yaml")}
-        >
-          YAML <span className="muted">(zaawansowane)</span>
-        </button>
+      <div ref={tabsRef} onKeyDown={onTabKey}>
+        <Tabs
+          label="Sposób edycji reguły"
+          value={tab}
+          onChange={switchTab}
+          tabs={[
+            { value: "wizard", label: "Kreator" },
+            { value: "yaml", label: <>YAML <span className="muted">(zaawansowane)</span></> },
+          ]}
+        />
       </div>
 
       <fieldset className="rules-fieldset" disabled={saving}>
         {tab === "wizard" ? (
-          <div role="tabpanel" id="rules-panel-wizard" aria-labelledby="rules-tab-wizard" className="rules-panel">
+          <div role="tabpanel" aria-label="Kreator" className="rules-panel">
             {wizardBanner && (
               <p className="rules-banner" role="status">
                 YAML zawiera błąd, więc kreator pokazuje ostatnią poprawną wersję reguły. Wróć do zakładki YAML, aby go poprawić; zmiana w kreatorze zastąpi niepoprawny YAML.
               </p>
             )}
 
-            <section className="rules-card" aria-labelledby="rc-basic">
-              <h3 id="rc-basic">Podstawowe</h3>
+            <Card title="Podstawowe">
               <div className="rules-grid">
-                <div className="rules-row">
-                  <label htmlFor="rule-name">Nazwa reguły</label>
-                  <input
-                    id="rule-name"
-                    value={form.name}
-                    onChange={(e) => onName(e.target.value)}
-                    aria-invalid={submitted && errors.name ? true : undefined}
-                    aria-describedby={submitted && errors.name ? "rule-name-err" : undefined}
-                    autoComplete="off"
-                  />
-                  {submitted && errors.name && (
-                    <span id="rule-name-err" className="rules-field-error">
-                      {errors.name}
-                    </span>
+                <Field label="Nazwa reguły" error={submitted ? errors.name : null}>
+                  {(f) => <input {...f} value={form.name} onChange={(e) => onName(e.target.value)} autoComplete="off" />}
+                </Field>
+                <Field
+                  label="Identyfikator"
+                  hint={submitted && errors.id ? undefined : isNew ? "Uzupełnia się z nazwy; po zapisie nie można go zmienić." : "Nie można zmienić."}
+                  error={submitted ? errors.id : null}
+                >
+                  {(f) => (
+                    <input
+                      {...f}
+                      className="mono"
+                      value={form.id}
+                      readOnly={!isNew}
+                      onChange={(e) => {
+                        setIdTouched(true);
+                        update({ id: e.target.value });
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
                   )}
-                </div>
-                <div className="rules-row">
-                  <label htmlFor="rule-id">Identyfikator</label>
-                  <input
-                    id="rule-id"
-                    className="mono"
-                    value={form.id}
-                    readOnly={!isNew}
-                    onChange={(e) => {
-                      setIdTouched(true);
-                      update({ id: e.target.value });
-                    }}
-                    aria-invalid={submitted && errors.id ? true : undefined}
-                    aria-describedby="rule-id-hint"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <span id="rule-id-hint" className={submitted && errors.id ? "rules-field-error" : "rules-field-hint"}>
-                    {submitted && errors.id ? errors.id : isNew ? "Uzupełnia się z nazwy; po zapisie nie można go zmienić." : "Nie można zmienić."}
-                  </span>
-                </div>
-                <div className="rules-row">
-                  <label htmlFor="rule-team">Zespół właściciel</label>
-                  <select id="rule-team" value={form.team} onChange={(e) => update({ team: e.target.value })}>
-                    <option value="">(brak)</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                    {form.team && !teams.some((t) => t.id === form.team) && <option value={form.team}>{form.team}</option>}
-                  </select>
-                </div>
-                <div className="rules-row">
-                  <label htmlFor="rule-sev">Nadpisz severity</label>
-                  <select
-                    id="rule-sev"
-                    value={form.severityOverride}
-                    onChange={(e) => update({ severityOverride: e.target.value as RuleForm["severityOverride"] })}
-                  >
-                    <option value="">bez zmian (wg mappingu)</option>
-                    {SEVERITIES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="rules-field-hint">Dotyczy powiadomień tej reguły (kanały wg severity odbiorcy).</span>
-                </div>
+                </Field>
+                <Field label="Zespół właściciel">
+                  {(f) => (
+                    <select {...f} value={form.team} onChange={(e) => update({ team: e.target.value })}>
+                      <option value="">(brak)</option>
+                      {teams.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                      {form.team && !teams.some((t) => t.id === form.team) && <option value={form.team}>{form.team}</option>}
+                    </select>
+                  )}
+                </Field>
+                <Field label="Nadpisz severity" hint="Dotyczy powiadomień tej reguły (kanały wg severity odbiorcy).">
+                  {(f) => (
+                    <select {...f} value={form.severityOverride} onChange={(e) => update({ severityOverride: e.target.value as RuleForm["severityOverride"] })}>
+                      <option value="">bez zmian (wg mappingu)</option>
+                      {SEVERITIES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
               </div>
               <label className="rules-check">
                 <input type="checkbox" checked={form.enabled} onChange={(e) => update({ enabled: e.target.checked })} />
                 Reguła włączona
               </label>
-            </section>
+            </Card>
 
-            <section className="rules-card" aria-labelledby="rc-cond">
-              <h3 id="rc-cond">Kiedy reguła ma zadziałać</h3>
-              <div className="rules-row rules-schema">
-                <label htmlFor="rule-schema">Schemat zdarzeń (tylko do podpowiedzi pól)</label>
-                <input
-                  id="rule-schema"
-                  className="mono"
-                  list={SCHEMA_LIST_ID}
-                  value={schemaInput ?? guessed}
-                  onChange={(e) => setSchemaInput(e.target.value)}
-                  placeholder="np. trade.rejected.v2"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-describedby="rule-schema-hint"
-                />
-                <span id="rule-schema-hint" className="rules-field-hint">
-                  Pola z ostatnich zdarzeń tego schematu podpowiadają się w polu „Pole”.
-                  {suggested.length > 0 && ` Znaleziono ${suggested.length}.`}
-                </span>
+            <Card title="Kiedy reguła ma zadziałać">
+              <div className="rules-schema">
+                <Field
+                  label="Schemat zdarzeń (tylko do podpowiedzi pól)"
+                  hint={
+                    <>
+                      Pola z ostatnich zdarzeń tego schematu podpowiadają się w polu „Pole”.
+                      {suggested.length > 0 && ` Znaleziono ${suggested.length}.`}
+                    </>
+                  }
+                >
+                  {(f) => (
+                    <input
+                      {...f}
+                      className="mono"
+                      list={SCHEMA_LIST_ID}
+                      value={schemaInput ?? guessed}
+                      onChange={(e) => setSchemaInput(e.target.value)}
+                      placeholder="np. trade.rejected.v2"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  )}
+                </Field>
               </div>
               <ConditionBuilder
                 root={form.root}
@@ -437,10 +400,9 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                 showRequired={submitted}
                 fieldListId={FIELD_LIST_ID}
               />
-            </section>
+            </Card>
 
-            <section className="rules-card" aria-labelledby="rc-rec">
-              <h3 id="rc-rec">Kogo powiadomić</h3>
+            <Card title="Kogo powiadomić">
               <p className="muted rules-lead">Kanały (SMS, e-mail, telefon) wynikają z preferencji wybranych osób; zespół ma preferencje domyślne.</p>
               <div className="rules-recipients">
                 <fieldset className="rules-group">
@@ -483,79 +445,69 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                   </fieldset>
                 )}
               </div>
-              {submitted && errors.recipients && <span className="rules-field-error">{errors.recipients}</span>}
-            </section>
+              {submitted && errors.recipients && <div className="field-error">{errors.recipients}</div>}
+            </Card>
 
-            <section className="rules-card" aria-labelledby="rc-pres">
-              <h3 id="rc-pres">Jak pokazać alert</h3>
+            <Card title="Jak pokazać alert">
               <div className="rules-grid">
-                <div className="rules-row rules-wide">
-                  <label htmlFor="rule-title">Tytuł (szablon)</label>
-                  <input
-                    id="rule-title"
-                    className="mono"
-                    value={form.title}
-                    onChange={(e) => update({ title: e.target.value })}
-                    aria-invalid={errors.title ? true : undefined}
-                    aria-describedby="rule-title-hint"
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <span id="rule-title-hint" className={errors.title ? "rules-field-error" : "rules-field-hint"}>
-                    {errors.title ?? "Pola wstawiaj jako {{raw.payload.desk}}; brakujące pole zostaje puste."}
-                  </span>
+                <div className="rules-wide">
+                  <Field
+                    label="Tytuł (szablon)"
+                    hint={errors.title ? undefined : "Pola wstawiaj jako {{raw.payload.desk}}; brakujące pole zostaje puste."}
+                    error={errors.title}
+                  >
+                    {(f) => (
+                      <input
+                        {...f}
+                        className="mono"
+                        value={form.title}
+                        onChange={(e) => update({ title: e.target.value })}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    )}
+                  </Field>
                 </div>
-                <div className="rules-row rules-wide">
-                  <label htmlFor="rule-body">Treść (szablon)</label>
-                  <textarea
-                    id="rule-body"
-                    className="mono"
-                    rows={3}
-                    value={form.body}
-                    onChange={(e) => update({ body: e.target.value })}
-                    aria-invalid={errors.body ? true : undefined}
-                    aria-describedby={errors.body ? "rule-body-err" : undefined}
-                    spellCheck={false}
-                  />
-                  {errors.body && (
-                    <span id="rule-body-err" className="rules-field-error">
-                      {errors.body}
-                    </span>
-                  )}
+                <div className="rules-wide">
+                  <Field label="Treść (szablon)" error={errors.body}>
+                    {(f) => (
+                      <textarea {...f} className="mono" rows={3} value={form.body} onChange={(e) => update({ body: e.target.value })} spellCheck={false} />
+                    )}
+                  </Field>
                 </div>
-                <div className="rules-row">
-                  <label htmlFor="rule-color">Kolor reguły</label>
-                  <ColorSelect id="rule-color" value={form.color} onChange={(color) => update({ color })} label="Kolor reguły" noneLabel="bez koloru" />
-                </div>
+                <Field label="Kolor reguły">
+                  {(f) => <ColorSelect id={f.id} value={form.color} onChange={(color) => update({ color })} label="Kolor reguły" noneLabel="bez koloru" />}
+                </Field>
               </div>
 
               <h4 className="rules-subhead">Pokazywane pola</h4>
               {form.rows.length === 0 && <p className="muted rules-lead">Brak dodatkowych pól – alert pokaże tylko tytuł i treść.</p>}
               {form.rows.map((row, i) => (
                 <div key={row.uid} className="rules-fieldrow">
-                  <div className="rules-row">
-                    <label htmlFor={`${row.uid}-path`}>Pole {i + 1}</label>
-                    <input
-                      id={`${row.uid}-path`}
-                      data-focus={row.uid}
-                      className="mono"
-                      list={FIELD_LIST_ID}
-                      value={row.path}
-                      onChange={(e) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, path: e.target.value } : r)) })}
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  </div>
-                  <div className="rules-row">
-                    <label htmlFor={`${row.uid}-color`}>Wyróżnienie</label>
-                    <ColorSelect
-                      id={`${row.uid}-color`}
-                      value={row.color}
-                      onChange={(color) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, color } : r)) })}
-                      label={`Kolor wyróżnienia pola ${row.path || i + 1}`}
-                      noneLabel="bez wyróżnienia"
-                    />
-                  </div>
+                  <Field label={`Pole ${i + 1}`}>
+                    {(f) => (
+                      <input
+                        {...f}
+                        className="mono"
+                        list={FIELD_LIST_ID}
+                        value={row.path}
+                        onChange={(e) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, path: e.target.value } : r)) })}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    )}
+                  </Field>
+                  <Field label="Wyróżnienie">
+                    {(f) => (
+                      <ColorSelect
+                        id={f.id}
+                        value={row.color}
+                        onChange={(color) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, color } : r)) })}
+                        label={`Kolor wyróżnienia pola ${row.path || i + 1}`}
+                        noneLabel="bez wyróżnienia"
+                      />
+                    )}
+                  </Field>
                   <button
                     type="button"
                     className="cb-remove"
@@ -571,33 +523,34 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
                   + Dodaj pole
                 </button>
               </div>
-            </section>
+            </Card>
           </div>
         ) : (
-          <div role="tabpanel" id="rules-panel-yaml" aria-labelledby="rules-tab-yaml" className="rules-panel">
-            <section className="rules-card" aria-labelledby="rc-yaml">
-              <h3 id="rc-yaml">Reguła w YAML</h3>
+          <div role="tabpanel" aria-label="YAML" className="rules-panel">
+            <Card title="Reguła w YAML">
               <p className="muted rules-lead">Zmiany są od razu widoczne w kreatorze. Niepoprawny YAML nie zmienia kreatora ani nie zostanie zapisany.</p>
-              <div className="rules-row">
-                <label htmlFor="rule-yaml">Treść YAML</label>
-                <textarea
-                  id="rule-yaml"
-                  className="mono rules-yaml"
-                  rows={24}
-                  value={yamlText}
-                  onChange={(e) => onYamlChange(e.target.value)}
-                  spellCheck={false}
-                  aria-invalid={yamlError ? true : undefined}
-                  aria-describedby={yamlError ? "rule-yaml-err" : undefined}
-                />
-              </div>
+              <Field label="Treść YAML">
+                {(f) => (
+                  <textarea
+                    {...f}
+                    className="mono rules-yaml"
+                    rows={24}
+                    value={yamlText}
+                    onChange={(e) => onYamlChange(e.target.value)}
+                    spellCheck={false}
+                    aria-invalid={yamlError ? true : undefined}
+                    aria-describedby={yamlError ? "rule-yaml-err" : undefined}
+                  />
+                )}
+              </Field>
               {yamlError && (
-                <p id="rule-yaml-err" className="error-box" role="alert">
-                  {yamlError.line ? `Linia ${yamlError.line}${yamlError.col ? `, kolumna ${yamlError.col}` : ""}: ` : ""}
-                  {yamlError.message}
-                </p>
+                <div id="rule-yaml-err">
+                  <ErrorBox
+                    message={`${yamlError.line ? `Linia ${yamlError.line}${yamlError.col ? `, kolumna ${yamlError.col}` : ""}: ` : ""}${yamlError.message}`}
+                  />
+                </div>
               )}
-            </section>
+            </Card>
           </div>
         )}
 
@@ -611,11 +564,7 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
             </ul>
           </div>
         )}
-        {saveError && (
-          <p className="error-box" role="alert">
-            {saveError}
-          </p>
-        )}
+        {saveError && <ErrorBox message={saveError} />}
         {savedNote && !dirty && (
           <p className="rules-saved" role="status">
             {savedNote}
@@ -629,22 +578,15 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
           <button type="button" onClick={discard} disabled={saving || !dirty}>
             Odrzuć zmiany
           </button>
-          {!isNew &&
-            (confirmDelete ? (
-              <span className="rules-confirm" role="alertdialog" aria-label="Potwierdzenie usunięcia">
-                <span>Usunąć regułę „{initial?.name}”? Tego nie da się cofnąć.</span>
-                <button type="button" className="danger" onClick={remove} disabled={saving}>
-                  Tak, usuń
-                </button>
-                <button type="button" onClick={() => setConfirmDelete(false)}>
-                  Anuluj
-                </button>
-              </span>
-            ) : (
-              <button type="button" className="danger" onClick={() => setConfirmDelete(true)}>
-                Usuń regułę
-              </button>
-            ))}
+          {!isNew && (
+            <ConfirmInline
+              label="Usuń regułę"
+              question={`Usunąć regułę „${initial?.name}”? Tego nie da się cofnąć.`}
+              confirmLabel="Tak, usuń"
+              onConfirm={() => void remove()}
+              busy={saving}
+            />
+          )}
         </div>
       </fieldset>
 

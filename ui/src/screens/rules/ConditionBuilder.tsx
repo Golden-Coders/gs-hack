@@ -1,6 +1,7 @@
 // Kreator drzewa warunków (tasks.md 15.1): grupy „wszystkie / dowolny / nie” i liście „pole – operator – wartość”.
 // Edytowalny odpowiednik ConditionView; stan trzyma właściciel (RuleEditor), tu tylko edycja drzewa.
 import { useEffect, useRef } from "react";
+import { Field } from "../../ui/primitives";
 import {
   OPS,
   mapTree,
@@ -30,61 +31,38 @@ function Leaf({ node, ctx, onRemove }: { node: LeafNode; ctx: Ctx; onRemove: () 
   const valueErr = err?.value && (ctx.showRequired || err.kind === "format") ? err.value : undefined;
   const opMeta = OPS.find((o) => o.op === node.op);
   const set = (patch: Partial<LeafNode>) => ctx.change(node.uid, (n) => ({ ...(n as LeafNode), ...patch }));
-  const fid = `${node.uid}-field`;
-  const vid = `${node.uid}-value`;
   return (
     <div className="cb-leaf">
-      <div className="cb-cell cb-cell-field">
-        <label htmlFor={fid}>Pole</label>
-        <input
-          id={fid}
-          data-focus={node.uid}
-          className="mono"
-          list={ctx.fieldListId}
-          value={node.field}
-          onChange={(e) => set({ field: e.target.value })}
-          placeholder="np. raw.payload.desk"
-          autoComplete="off"
-          spellCheck={false}
-          aria-invalid={fieldErr ? true : undefined}
-          aria-describedby={fieldErr ? `${fid}-err` : undefined}
-        />
-        {fieldErr && (
-          <span id={`${fid}-err`} className="rules-field-error">
-            {fieldErr}
-          </span>
-        )}
-      </div>
-      <div className="cb-cell cb-cell-op">
-        <label htmlFor={`${node.uid}-op`}>Warunek</label>
-        <select
-          id={`${node.uid}-op`}
-          value={node.op}
-          onChange={(e) => set({ op: e.target.value as Op })}
-        >
-          {OPS.map((o) => (
-            <option key={o.op} value={o.op}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
-      {node.op !== "exists" && (
-        <div className="cb-cell cb-cell-value">
-          <label htmlFor={vid}>Wartość</label>
+      <Field label="Pole" error={fieldErr}>
+        {(f) => (
           <input
-            id={vid}
-            value={node.value}
-            onChange={(e) => set({ value: e.target.value })}
+            {...f}
+            data-focus={node.uid}
+            className="mono"
+            list={ctx.fieldListId}
+            value={node.field}
+            onChange={(e) => set({ field: e.target.value })}
+            placeholder="np. raw.payload.desk"
             autoComplete="off"
             spellCheck={false}
-            aria-invalid={valueErr ? true : undefined}
-            aria-describedby={`${vid}-hint`}
           />
-          <span id={`${vid}-hint`} className={valueErr ? "rules-field-error" : "rules-field-hint"}>
-            {valueErr ?? opMeta?.hint ?? ""}
-          </span>
-        </div>
+        )}
+      </Field>
+      <Field label="Warunek">
+        {(f) => (
+          <select {...f} value={node.op} onChange={(e) => set({ op: e.target.value as Op })}>
+            {OPS.map((o) => (
+              <option key={o.op} value={o.op}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
+      {node.op !== "exists" && (
+        <Field label="Wartość" hint={valueErr ? undefined : opMeta?.hint} error={valueErr}>
+          {(f) => <input {...f} value={node.value} onChange={(e) => set({ value: e.target.value })} autoComplete="off" spellCheck={false} />}
+        </Field>
       )}
       <button
         type="button"
@@ -145,7 +123,7 @@ function Group({ node, ctx, isRoot, onRemove }: { node: GroupNode; ctx: Ctx; isR
           </button>
         )}
       </div>
-      {warn && <p className="rules-field-hint">{warn}</p>}
+      {warn && <p className="field-hint">{warn}</p>}
       <ul className="cb-children">
         {node.children.map((c) => (
           <li key={c.uid}>
@@ -173,7 +151,7 @@ function Not({ node, ctx, onRemove }: { node: NotNode; ctx: Ctx; onRemove: () =>
           Usuń „nie”
         </button>
       </div>
-      {err && <p className="rules-field-error">{err}</p>}
+      {err && <p className="field-error">{err}</p>}
       {node.child ? (
         <Node
           node={node.child}

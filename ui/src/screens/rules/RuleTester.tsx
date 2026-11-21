@@ -2,7 +2,9 @@
 // Pokazuje wynik każdego warunku z osobna (który liść pasował) i wyrenderowaną prezentację.
 import { useState } from "react";
 import { api, type Schemas } from "../../api/client";
+import { describeError } from "../../api/request";
 import { formatValue } from "../../components/Presentation";
+import { Card, ErrorBox, Field, Segmented } from "../../ui/primitives";
 import { OP_LABEL, skeletonFromFields, type Rule } from "./model";
 
 type Explanation = Schemas["Explanation"];
@@ -120,10 +122,10 @@ export default function RuleTester({ rule, blockedReason, suggestedFields }: Pro
     }
     setBusy(true);
     try {
-      const { data, error: apiError } = await api.POST("/rules/test", { body });
+      const { data, error: apiError, response } = await api.POST("/rules/test", { body });
       if (apiError || !data) {
         setResult(null);
-        setError(apiError ? `${apiError.error}${apiError.detail ? `: ${apiError.detail}` : ""}` : "Test nie powiódł się.");
+        setError(apiError ? describeError(apiError, response) : "Test nie powiódł się.");
       } else {
         setResult(data);
       }
@@ -141,62 +143,47 @@ export default function RuleTester({ rule, blockedReason, suggestedFields }: Pro
   }
 
   return (
-    <section className="rules-card" aria-labelledby="rt-title">
-      <h2 id="rt-title">Testuj na zdarzeniu</h2>
+    <Card title="Testuj na zdarzeniu" className="rules-tester">
       <p className="muted rules-lead">
         Sprawdź, czy reguła (także jeszcze niezapisana) pasuje do zdarzenia, i zobacz, który warunek zadziałał.
       </p>
-      <div className="rules-seg" role="group" aria-label="Źródło zdarzenia">
-        <button type="button" aria-pressed={mode === "paste"} onClick={() => setMode("paste")}>
-          Wklej zdarzenie
-        </button>
-        <button type="button" aria-pressed={mode === "id"} onClick={() => setMode("id")}>
-          Ostatnie zdarzenie (event_id)
-        </button>
-      </div>
+      <Segmented
+        label="Źródło zdarzenia"
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "paste", label: "Wklej zdarzenie" },
+          { value: "id", label: "Ostatnie zdarzenie (event_id)" },
+        ]}
+      />
       {mode === "paste" ? (
-        <div className="rules-row">
-          <label htmlFor="rt-event">Zdarzenie (JSON)</label>
-          <textarea
-            id="rt-event"
-            className="mono"
-            rows={8}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            spellCheck={false}
-            aria-describedby="rt-event-hint"
-          />
-          <div id="rt-event-hint" className="rules-field-hint">
-            Wklej zdarzenie kanoniczne (z polem <code>raw</code>) albo sam payload – trafi do <code>raw</code>.{" "}
-            <button type="button" className="rules-linkish" onClick={insertSkeleton}>
-              Wstaw szkielet z podpowiedzi pól
-            </button>
-          </div>
-        </div>
+        <Field
+          label="Zdarzenie (JSON)"
+          hint={
+            <>
+              Wklej zdarzenie kanoniczne (z polem <code>raw</code>) albo sam payload – trafi do <code>raw</code>.{" "}
+              <button type="button" className="rules-linkish" onClick={insertSkeleton}>
+                Wstaw szkielet z podpowiedzi pól
+              </button>
+            </>
+          }
+        >
+          {(f) => <textarea {...f} className="mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />}
+        </Field>
       ) : (
-        <div className="rules-row">
-          <label htmlFor="rt-event-id">event_id (UUID)</label>
-          <input
-            id="rt-event-id"
-            className="mono"
-            value={eventId}
-            onChange={(e) => setEventId(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-        </div>
+        <Field label="event_id (UUID)">
+          {(f) => (
+            <input {...f} className="mono" value={eventId} onChange={(e) => setEventId(e.target.value)} spellCheck={false} autoComplete="off" />
+          )}
+        </Field>
       )}
       <div className="rules-actions">
         <button type="button" className="primary" onClick={run} disabled={busy || !rule}>
           {busy ? "Testuję…" : "Uruchom test"}
         </button>
-        {!rule && blockedReason && <span className="rules-field-hint">{blockedReason}</span>}
+        {!rule && blockedReason && <span className="field-hint">{blockedReason}</span>}
       </div>
-      {error && (
-        <p className="error-box" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <ErrorBox message={error} />}
       {result && (
         <div className="rt-result" aria-live="polite">
           <p className={`rt-banner ${result.matched ? "rt-banner-pass" : "rt-banner-miss"}`}>
@@ -217,6 +204,6 @@ export default function RuleTester({ rule, blockedReason, suggestedFields }: Pro
           </div>
         </div>
       )}
-    </section>
+    </Card>
   );
 }
