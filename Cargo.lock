@@ -260,6 +260,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "contracts",
+ "futures",
  "rdkafka",
  "serde",
  "serde_json",

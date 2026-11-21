@@ -10,13 +10,17 @@
 //!   `hash(partycja)`). Hash nie zależy od topiku, więc wiadomości o tym samym kluczu z różnych topików
 //!   jednej subskrypcji (np. `events.normalized` i `alerts.commands` kluczowane fingerprintem) trafiają
 //!   do tego samego pasa i są przetwarzane w kolejności odbioru. Przypisanie partycji jest wspólne dla
-//!   topików subskrypcji (strategia `range`, patrz [`concurrent_consumer`]).
+//!   topików subskrypcji (strategia `range`, patrz [`concurrent_consumer`]). **Warunek:** kolejność per
+//!   klucz między topikami wymaga równej liczby partycji tych topików (tu oba 12 =
+//!   `contracts::topics::PARTITIONS`) i tego samego partitionera producentów – inaczej ten sam klucz
+//!   może leżeć na partycjach o różnych numerach i trafić do różnych członków grupy.
 //! - **At-least-once:** offset jest „gotowy” dopiero po `Ok` z [`LaneHandler::handle`] (skutki zapisane).
 //!   Commit `offset+1` następuje ściśle w kolejności per (topik, partycja) przez [`OffsetTracker`] –
 //!   wolna wiadomość o niższym offsecie blokuje commit wyższych. Commity w pracy są asynchroniczne,
 //!   przy rewokacji i shutdownie – synchroniczne. Skutki uboczne handlera muszą być idempotentne
 //!   (po awarii/rebalansie wiadomości mogą się powtórzyć).
-//! - **Błąd handlera = ponowienie TEJ SAMEJ wiadomości** w tym samym pasie po `retry_backoff`; kolejne
+//! - **Błąd (lub panika) handlera = ponowienie TEJ SAMEJ wiadomości** w tym samym pasie po backoffie
+//!   (wykładniczo od `retry_backoff` do `retry_backoff_max`, reset po sukcesie); kolejne
 //!   wiadomości pasa czekają (kolejność zachowana, brak przeskakiwania). Wiadomość „trucizna” to sprawa
 //!   handlera (ma zwrócić `Ok(())` i zalogować) – moduł nie interpretuje payloadu.
 //! - **Backpressure:** semafor `max_in_flight` (pobrany PRZED `recv`) + ograniczone kolejki pasów.
@@ -54,15 +58,17 @@
 //! # Zmienne środowiskowe ([`ConcurrentConfig::from_env`], prefiks np. `NORMALIZER`)
 //!
 //! `{PREFIX}_LANES`, `{PREFIX}_MAX_IN_FLIGHT`, `{PREFIX}_RETRY_BACKOFF_MS`,
-//! `{PREFIX}_REVOKE_TIMEOUT_MS`, `{PREFIX}_DRAIN_TIMEOUT_MS`.
+//! `{PREFIX}_RETRY_BACKOFF_MAX_MS`, `{PREFIX}_REVOKE_TIMEOUT_MS`, `{PREFIX}_DRAIN_TIMEOUT_MS`.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use futures::FutureExt;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::message::{Message, OwnedMessage};
@@ -99,8 +105,10 @@ pub struct ConcurrentConfig {
     pub max_in_flight: usize,
     /// Okres `LaneHandler::on_tick` (`None` = wyłączone).
     pub tick: Option<Duration>,
-    /// Odstęp między ponowieniami wiadomości, której handler zwrócił `Err`.
+    /// Początkowy odstęp między ponowieniami wiadomości, której handler zwrócił `Err` (rośnie wykładniczo).
     pub retry_backoff: Duration,
+    /// Górna granica backoffu ponowień.
+    pub retry_backoff_max: Duration,
     /// Limit czekania bariery rewokacji na zakończenie pracy pasów.
     pub revoke_timeout: Duration,
     /// Limit drenowania pasów przy shutdownie.
@@ -109,7 +117,7 @@ pub struct ConcurrentConfig {
 
 impl ConcurrentConfig {
     /// Wartości z env: `{prefix}_LANES`, `{prefix}_MAX_IN_FLIGHT`, `{prefix}_RETRY_BACKOFF_MS`,
-    /// `{prefix}_REVOKE_TIMEOUT_MS`, `{prefix}_DRAIN_TIMEOUT_MS`. Domyślnie `max_in_flight = max(64, 8 * lanes)`.
+    /// `{prefix}_RETRY_BACKOFF_MAX_MS`, `{prefix}_REVOKE_TIMEOUT_MS`, `{prefix}_DRAIN_TIMEOUT_MS`. Domyślnie `max_in_flight = max(64, 8 * lanes)`.
     pub fn from_env(prefix: &str, default_lanes: usize) -> Self {
         let get = |suffix: &str| -> Option<usize> {
             std::env::var(format!("{prefix}_{suffix}")).ok().and_then(|v| v.parse::<usize>().ok()).filter(|&v| v >= 1)
@@ -121,6 +129,7 @@ impl ConcurrentConfig {
             max_in_flight: get("MAX_IN_FLIGHT").unwrap_or_else(|| (8 * lanes).max(64)),
             tick: None,
             retry_backoff: ms("RETRY_BACKOFF_MS", 200),
+            retry_backoff_max: ms("RETRY_BACKOFF_MAX_MS", 5_000),
             revoke_timeout: ms("REVOKE_TIMEOUT_MS", 10_000),
             drain_timeout: ms("DRAIN_TIMEOUT_MS", 5_000),
         }
@@ -135,6 +144,7 @@ impl ConcurrentConfig {
     fn normalized(mut self) -> Self {
         self.lanes = self.lanes.max(1);
         self.max_in_flight = self.max_in_flight.max(1);
+        self.retry_backoff_max = self.retry_backoff_max.max(self.retry_backoff);
         self
     }
 }
@@ -285,33 +295,59 @@ fn lane_for(msg: &OwnedMessage, lanes: usize) -> usize {
     (h.finish() % lanes as u64) as usize
 }
 
-/// Przetwarza wiadomość z ponowieniami; `false` = przerwane (abort) bez sukcesu.
+/// Przetwarza wiadomość z ponowieniami (backoff wykładniczy `backoff`..`backoff_max`, per wiadomość,
+/// więc po sukcesie zaczyna od nowa); `false` = przerwane (abort) bez sukcesu.
+/// Panika handlera jest łapana i traktowana jak `Err`.
 async fn process<H: LaneHandler>(
     handler: &mut H,
     job: &Job,
     backoff: Duration,
+    backoff_max: Duration,
     abort: &mut watch::Receiver<bool>,
 ) -> bool {
+    let mut delay = backoff;
     loop {
         if *abort.borrow() {
             return false;
         }
-        match handler.handle(&job.msg).await {
-            Ok(()) => return true,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
+        let outcome = AssertUnwindSafe(handler.handle(&job.msg)).catch_unwind().await;
+        let error = match outcome {
+            Ok(Ok(())) => return true,
+            Ok(Err(e)) => e,
+            Err(panic) => {
+                let what = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_owned())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_owned());
+                tracing::error!(
+                    panic = %what,
                     topic = job.msg.topic(),
                     partition = job.msg.partition(),
                     offset = job.msg.offset(),
-                    "handler failed; retrying the same message in its lane"
+                    "handler panicked; treating as failure"
                 );
-                tokio::select! {
-                    _ = tokio::time::sleep(backoff) => {}
-                    _ = abort.changed() => {}
+                anyhow::anyhow!("handler panicked: {what}")
+            }
+        };
+        tracing::warn!(
+            error = %error,
+            topic = job.msg.topic(),
+            partition = job.msg.partition(),
+            offset = job.msg.offset(),
+            ?delay,
+            "handler failed; retrying the same message in its lane"
+        );
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            // `Err` = nadawca porzucony (dispatcher zniknął) – to też abort, inaczej pętla kręciłaby się bez backoffu.
+            r = abort.changed() => {
+                if r.is_err() {
+                    return false;
                 }
             }
         }
+        delay = (delay * 2).min(backoff_max);
     }
 }
 
@@ -321,6 +357,7 @@ async fn lane_loop<H: LaneHandler>(
     shared: Arc<Shared>,
     tick: Option<Duration>,
     backoff: Duration,
+    backoff_max: Duration,
     mut abort: watch::Receiver<bool>,
 ) {
     let mut ticker = tick.map(|d| {
@@ -348,7 +385,7 @@ async fn lane_loop<H: LaneHandler>(
                 let _ = ack.send(());
             }
             Some(LaneMsg::Job(job)) => {
-                if !process(&mut handler, &job, backoff, &mut abort).await {
+                if !process(&mut handler, &job, backoff, backoff_max, &mut abort).await {
                     break;
                 }
                 shared.complete(job.msg.topic(), job.msg.partition(), job.msg.offset(), job.gen);
@@ -385,6 +422,7 @@ impl Dispatcher {
                 shared.clone(),
                 config.tick,
                 config.retry_backoff,
+                config.retry_backoff_max,
                 abort_rx.clone(),
             )));
         }
@@ -456,6 +494,16 @@ impl Dispatcher {
     }
 }
 
+impl Drop for Dispatcher {
+    /// Porzucenie dispatchera (np. `JoinHandle::abort()` na `run_concurrent`) nie może zostawiać żywych pasów.
+    fn drop(&mut self) {
+        let _ = self.abort.send(true);
+        for h in &self._handles {
+            h.abort();
+        }
+    }
+}
+
 /// Uchwyt, przez który kontekst rebalansu widzi dispatcher działającej pętli.
 #[derive(Default)]
 struct RevokeHook {
@@ -475,13 +523,17 @@ impl RevokeHook {
         let work = || dispatcher.barrier(Some(&parts), timeout, &committer);
         // Callback jest wołany z zadania tokio: w runtime multi-thread oddajemy wątek robocy,
         // żeby pasy mogły pracować; w current_thread bariera zadziała tylko do timeoutu.
-        match tokio::runtime::Handle::try_current() {
+        // Panika nie może przejść przez callback C rdkafka (abort procesu) – łapiemy i logujemy.
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| match tokio::runtime::Handle::try_current() {
             Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
                 tokio::task::block_in_place(work);
             }
             _ => {
                 work();
             }
+        }));
+        if result.is_err() {
+            tracing::error!("panic in revoke barrier; continuing (at-least-once, effects are idempotent)");
         }
     }
 }
@@ -516,6 +568,9 @@ impl Drop for HookGuard {
 /// `partition.assignment.strategy=range` jawnie: partycja N wszystkich topików subskrypcji trafia do
 /// tego samego członka grupy, więc wiadomości o tym samym kluczu (np. fingerprint w `events.normalized`
 /// i `alerts.commands`) są przetwarzane w jednym procesie – warunek kolejności per klucz między topikami.
+/// Dodatkowy warunek: topiki subskrypcji muszą mieć równą liczbę partycji (oba 12 =
+/// `contracts::topics::PARTITIONS`) i być pisane tym samym partitionerem producentów; przy różnej liczbie
+/// partycji ten sam klucz leży na partycjach o różnych numerach i `range` nie zgra ich w jednym członku.
 pub fn concurrent_consumer(
     brokers: &str,
     group: &str,
@@ -655,6 +710,8 @@ mod tests {
         attempts: Arc<Mutex<HashMap<i64, usize>>>,
         revoked: Arc<AtomicUsize>,
         ticks: Arc<AtomicUsize>,
+        panics: Arc<Mutex<HashMap<i64, usize>>>,
+        always_err: Arc<AtomicUsize>,
     }
 
     impl TestHandler {
@@ -666,6 +723,8 @@ mod tests {
                 attempts: Default::default(),
                 revoked: Default::default(),
                 ticks: Default::default(),
+                panics: Default::default(),
+                always_err: Default::default(),
             }
         }
         fn handled(&self) -> Vec<(String, i64)> {
@@ -678,6 +737,22 @@ mod tests {
             let off = msg.offset();
             *self.attempts.lock().unwrap().entry(off).or_default() += 1;
             tokio::time::sleep((self.delay)(msg)).await;
+            if self.always_err.load(Ordering::SeqCst) == 1 {
+                anyhow::bail!("always failing");
+            }
+            let should_panic = {
+                let mut p = self.panics.lock().unwrap();
+                match p.get_mut(&off) {
+                    Some(n) if *n > 0 => {
+                        *n -= 1;
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if should_panic {
+                panic!("handler panic");
+            }
             {
                 let mut f = self.failures.lock().unwrap();
                 if let Some(n) = f.get_mut(&off) {
@@ -705,6 +780,7 @@ mod tests {
             max_in_flight: 256,
             tick: None,
             retry_backoff: Duration::from_millis(50),
+            retry_backoff_max: Duration::from_millis(400),
             revoke_timeout: Duration::from_secs(5),
             drain_timeout: Duration::from_secs(5),
         }
@@ -903,10 +979,85 @@ mod tests {
         wait_until("ticks", || h.ticks.load(Ordering::SeqCst) >= 9).await;
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handler_panic_is_retried_like_error_and_lane_survives() {
+        let mut cfg = config(2);
+        cfg.retry_backoff = Duration::from_millis(10);
+        let h = TestHandler::new(|_| Duration::ZERO);
+        h.panics.lock().unwrap().insert(0, 2);
+        let (d, committer) = start(&cfg, &h);
+        for (off, k) in [(0, "a"), (1, "a"), (2, "a")] {
+            d.dispatch(msg(T, 0, off, k), None).await.unwrap();
+        }
+        wait_until("all handled", || h.handled().len() == 3).await;
+        assert_eq!(*h.attempts.lock().unwrap().get(&0).unwrap(), 3);
+        let order: Vec<i64> = h.handled().into_iter().map(|e| e.1).collect();
+        assert_eq!(order, vec![0, 1, 2]);
+        wait_until("commit all", || committer.max_next(0) == Some(3)).await;
+        // Pas żyje: kolejna wiadomość jest przyjmowana.
+        d.dispatch(msg(T, 0, 3, "a"), None).await.unwrap();
+        wait_until("next handled", || h.handled().len() == 4).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_dispatcher_stops_retrying_lane_without_hot_loop() {
+        let mut cfg = config(1);
+        cfg.retry_backoff = Duration::from_millis(20);
+        cfg.retry_backoff_max = Duration::from_millis(20);
+        let h = TestHandler::new(|_| Duration::ZERO);
+        h.always_err.store(1, Ordering::SeqCst);
+        let (d, _c) = start(&cfg, &h);
+        d.dispatch(msg(T, 0, 0, "a"), None).await.unwrap();
+        wait_until("first attempt", || h.attempts.lock().unwrap().contains_key(&0)).await;
+        drop(d);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let calls = *h.attempts.lock().unwrap().get(&0).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(calls, *h.attempts.lock().unwrap().get(&0).unwrap(), "lane must stop after drop");
+        assert!(calls < 10, "no hot loop expected, got {calls} calls");
+    }
+
+    #[tokio::test]
+    async fn process_returns_false_when_abort_sender_dropped() {
+        let mut handler = TestHandler::new(|_| Duration::ZERO);
+        handler.always_err.store(1, Ordering::SeqCst);
+        let attempts = handler.attempts.clone();
+        let (tx, mut rx) = watch::channel(false);
+        drop(tx);
+        let job = Job { msg: msg(T, 0, 0, "a"), gen: 1, _permit: None };
+        let ok = tokio::time::timeout(
+            Duration::from_secs(2),
+            process(&mut handler, &job, Duration::from_millis(10), Duration::from_millis(10), &mut rx),
+        )
+        .await
+        .expect("process must not spin forever");
+        assert!(!ok);
+        assert!(*attempts.lock().unwrap().get(&0).unwrap() <= 2);
+    }
+
+    #[tokio::test]
+    async fn retry_backoff_grows_exponentially_up_to_max() {
+        let mut handler = TestHandler::new(|_| Duration::ZERO);
+        handler.always_err.store(1, Ordering::SeqCst);
+        let attempts = handler.attempts.clone();
+        let (tx, mut rx) = watch::channel(false);
+        let job = Job { msg: msg(T, 0, 0, "a"), gen: 1, _permit: None };
+        let stopper = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+            let _ = tx.send(true);
+        });
+        // 20, 40, 80, 80, ... => w 700 ms ok. 9 prób (stałe 20 ms dałoby ~35).
+        process(&mut handler, &job, Duration::from_millis(20), Duration::from_millis(80), &mut rx).await;
+        stopper.await.unwrap();
+        let n = *attempts.lock().unwrap().get(&0).unwrap();
+        assert!((6..=12).contains(&n), "unexpected attempts count {n}");
+    }
+
     #[test]
     fn from_env_defaults_and_overrides() {
         let c = ConcurrentConfig::from_env("CONC_TEST_NONE", 4);
         assert_eq!((c.lanes, c.max_in_flight), (4, 64));
+        assert_eq!((c.retry_backoff, c.retry_backoff_max), (Duration::from_millis(200), Duration::from_secs(5)));
         std::env::set_var("CONC_TEST_X_LANES", "16");
         std::env::set_var("CONC_TEST_X_MAX_IN_FLIGHT", "500");
         let c = ConcurrentConfig::from_env("CONC_TEST_X", 4);

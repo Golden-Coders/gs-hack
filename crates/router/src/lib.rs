@@ -119,9 +119,10 @@ impl LaneHandler for RouterHandler {
         let key = alert.alert_id.to_string();
 
         // Wsadowa publikacja: wszystkie zlecenia jednej wiadomości lecą współbieżnie (jedno RTT zamiast N).
-        // `try_join_all` odpytuje futures po kolei, więc enqueue następuje w kolejności zleceń (ten sam klucz
-        // = ta sama partycja). `Ok` (warunek commitu offsetu) dopiero, gdy WSZYSTKIE potwierdzone; błąd
-        // = ponowienie całości, duplikaty zlecień odfiltruje sender (atomowy `claim_delivery`).
+        // `try_join_all` odpytuje futures po kolei, ale `FutureProducer::send` przy `QueueFull` ponawia ze
+        // sleepem, więc kolejność enqueue w paczce NIE jest gwarantowana. To nieszkodliwe: zlecenia są
+        // niezależne, a `claim_delivery` w senderze jest idempotentny. `Ok` (warunek commitu offsetu) dopiero,
+        // gdy WSZYSTKIE potwierdzone; błąd = ponowienie całości, duplikaty zleceń odfiltruje sender.
         futures::future::try_join_all(requests.iter().map(|req| {
             common::kafka::publish(&self.producer, &self.output_topic, &key, req)
         }))

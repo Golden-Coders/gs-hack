@@ -118,7 +118,13 @@ pub async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef, shutdown: w
         Ok(c) => c,
         Err(e) => return tracing::error!(source = %name, error = %e, "creating source consumer failed"),
     };
-    let config = ConcurrentConfig::from_env("INGEST_SOURCE", DEFAULT_LANES);
+    let mut config = ConcurrentConfig::from_env("INGEST_SOURCE", DEFAULT_LANES);
+    // Drenowanie musi się zmieścić w `STOP_TIMEOUT` (po nim `stop_source` robi twardy `abort`).
+    let max_drain = STOP_TIMEOUT.saturating_sub(Duration::from_secs(5));
+    if config.drain_timeout > max_drain {
+        tracing::warn!(source = %name, requested = ?config.drain_timeout, ?max_drain, "drain timeout exceeds stop budget; clamping");
+        config.drain_timeout = max_drain;
+    }
     let handler = SourceHandler { ctx, def };
     if let Err(e) = run_concurrent(consumer, config, shutdown, move |_| handler.clone()).await {
         tracing::error!(source = %name, error = %e, "source consumer stopped with error");
