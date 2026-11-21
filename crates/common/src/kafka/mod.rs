@@ -14,6 +14,14 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub use rdkafka;
 
+pub mod concurrent;
+pub mod offsets;
+
+pub use concurrent::{
+    concurrent_consumer, run_concurrent, ConcurrentConfig, LaneHandler, OffsetCommitter, RevokeBarrierContext,
+};
+pub use offsets::OffsetTracker;
+
 /// Producent o niskiej latencji (ścieżka alertu). `acks=all` – brak utraty po 202.
 pub fn producer(brokers: &str) -> anyhow::Result<FutureProducer> {
     ClientConfig::new()
