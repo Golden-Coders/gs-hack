@@ -189,3 +189,20 @@ Gdy budżet 100 nie wystarcza, można postawić PgBouncera przed Postgresem w tr
   `crates/router/src/config.rs` oraz test w `crates/api/src/routes/mappings.rs`. Te połączenia muszą iść bezpośrednio
   do Postgresa (osobny `DATABASE_URL` dla listenera) albo przez pulę w trybie `session`.
 - Migracje (advisory lock sqlx) również wymagają sesji – uruchamiaj je bezpośrednio.
+
+## Partycje topiku źródłowego
+
+Źródła Kafki (`config/sources/*.yaml`, np. `trades`) konsumuje `ingest` współbieżnie (pasy per klucz wiadomości,
+`INGEST_SOURCE_LANES`, domyślnie 32), ale **skalowanie między instancjami ogranicza liczba partycji topiku**:
+partycja to jednostka podziału grupy konsumenckiej `ingest-source-<nazwa>`. Topik z 1 partycją obsłuży jedna instancja
+i jedno zadanie niezależnie od liczby replik.
+
+- W compose `trades` zakłada `topics-init` (12 partycji). Gdyby producent (np. `loadgen`) zapisał do `trades` wcześniej,
+  broker mógłby go utworzyć automatycznie z domyślną 1 partycją – dlatego topik jest w `topics-init`.
+- `ensure_topic` w `ingest` zakłada brakujący topik (12 partycji, `contracts::topics::PARTITIONS`). Gdy topik już istnieje
+  i ma mniej partycji, loguje **warn** (liczba partycji + wskazówka), ale **nie** zwiększa ich automatycznie:
+  zmiana liczby partycji zmienia mapowanie klucz -> partycja i może zaburzyć kolejność per klucz.
+- Ręczne zwiększenie: `rpk topic add-partitions trades -n <ile_dodać>` (zrób to świadomie, najlepiej przy pustym lagu).
+- W produkcji topik źródłowy zakłada jego właściciel; ingest tylko ostrzega.
+- Zmiana pliku źródła zatrzymuje konsumenta łagodnie (sygnał stop, drenowanie pasów i commit offsetów, limit 15 s,
+  potem `abort`) i dopiero wtedy startuje nowego; niezcommitowane wiadomości wrócą (at-least-once).
