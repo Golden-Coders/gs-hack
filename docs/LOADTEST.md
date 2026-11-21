@@ -74,5 +74,10 @@ Lag zapisujemy w trakcie przebiegu (największa wartość na grupę) i po nim (m
 | Pomiar 1 (po 18.1) | | | | | | | |
 | Pomiar końcowy | | | | | | | |
 
+<!-- P2 6.4 Benchmark ewaluacji warunków (crates/condition, 100 reguł × zdarzenie, 1000 zdarzeń = 100 000 ewaluacji):
+     Release: 10.76 ms łącznie | 10.76 µs / zdarzenie (100 reguł) | 107.6 ns / reguła (~92 900 zdarzeń/s przy 100 regułach)
+     Debug (opt-level=1): 13.03 ms łącznie | 13.03 µs / zdarzenie (100 reguł) | 130.3 ns / reguła (~76 700 zdarzeń/s przy 100 regułach)
+     Komenda: cargo test -p condition benchmark_100_rules_evaluation -- --nocapture -->
+
 Kolumny: msg/s z wyjścia `loadgen` (`osiągnięte msg/s`), p50/p99 z `latency.sql`, lag z `lag.sh`.
 W „Konfiguracja” wpisz wartości `RATE`, `DURATION_SECS`, `DUP_RATIO`, `MODE` oraz wersję commita.

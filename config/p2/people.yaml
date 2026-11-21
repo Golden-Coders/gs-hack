@@ -1,0 +1,190 @@
+people:
+  - id: anna
+    name: Anna
+    timezone: Europe/Warsaw
+    contacts:
+      email: anna@example.com
+      sms: "+48500100300"
+      phone: "+48500100300"
+    preferences:
+      - severity: critical
+        channels:
+          - sms
+        hours: "08:00-20:00"
+      - severity: critical
+        channels:
+          - email
+        hours: "20:00-08:00"
+    fallback:
+      - email
+
+  - id: jan
+    name: Jan
+    timezone: Europe/Warsaw
+    contacts:
+      email: jan@example.com
+      sms: "+48500100200"
+      phone: "+48500100200"
+    preferences: []
+    fallback:
+      - email
+
+  - id: ola
+    name: Ola
+    timezone: Europe/Warsaw
+    contacts:
+      email: ola@example.com
+      sms: "+48500100201"
+      phone: "+48500100201"
+    preferences: []
+    fallback:
+      - email
+
+  - id: piotr
+    name: Piotr
+    timezone: Europe/Warsaw
+    contacts:
+      email: piotr@example.com
+      sms: "+48500100400"
+      phone: "+48500100400"
+    preferences:
+      - severity: critical
+        channels:
+          - email
+      - severity: warning
+        channels:
+          - email
+    fallback:
+      - ui
+
+  - id: tomek
+    name: Tomek
+    timezone: Europe/Warsaw
+    contacts:
+      email: tomek@example.com
+      sms: "+48500100500"
+    preferences:
+      - severity: critical
+        channels:
+          - ui
+      - severity: error
+        channels:
+          - ui
+      - severity: warning
+        channels:
+          - ui
+    fallback:
+      - ui
+
+  - id: kasia
+    name: Kasia
+    timezone: Europe/Warsaw
+    contacts:
+      email: kasia@example.com
+      sms: "+48500100600"
+      phone: "+48500100600"
+    preferences: []
+    fallback:
+      - email
+
+teams:
+  - id: settlements
+    name: Team Settlements
+    members:
+      - jan
+      - ola
+    preferences:
+      - severity: critical
+        channels:
+          - phone
+          - sms
+        hours: null
+      - severity: warning
+        channels:
+          - email
+        hours: null
+      - severity: info
+        channels:
+          - ui
+        hours: null
+
+  - id: rates
+    name: Team Rates
+    members:
+      - piotr
+      - anna
+    preferences:
+      - severity: critical
+        channels:
+          - email
+          - ui
+        hours: null
+      - severity: error
+        channels:
+          - email
+          - ui
+        hours: null
+      - severity: warning
+        channels:
+          - email
+        hours: null
+      - severity: info
+        channels:
+          - ui
+        hours: null
+
+  - id: pricing
+    name: Team Pricing
+    members:
+      - tomek
+    preferences:
+      - severity: critical
+        channels:
+          - ui
+        hours: null
+      - severity: error
+        channels:
+          - ui
+        hours: null
+      - severity: warning
+        channels:
+          - ui
+        hours: null
+      - severity: info
+        channels:
+          - ui
+        hours: null
+
+  - id: payments
+    name: Team Payments
+    members:
+      - anna
+    preferences:
+      - severity: critical
+        channels:
+          - sms
+          - email
+        hours: null
+      - severity: warning
+        channels:
+          - email
+        hours: null
+
+  - id: counterparty-support
+    name: Counterparty Support
+    members:
+      - kasia
+    preferences:
+      - severity: critical
+        channels:
+          - sms
+          - email
+        hours: null
+      - severity: error
+        channels:
+          - email
+        hours: null
+      - severity: warning
+        channels:
+          - email
+        hours: null
