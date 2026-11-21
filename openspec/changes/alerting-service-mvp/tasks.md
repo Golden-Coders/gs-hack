@@ -45,29 +45,29 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 ## 6. Ewaluator warunków i szablony (P2, priorytet — blokuje P1 3.1 i P3 10.2)
 
-- [ ] 6.1 Parsowanie i kompilacja warunków (`all/any/not`, operatory z D6, ścieżki kanoniczne i `raw.*`, prekompilowane regex/glob); weryfikacja: testy jednostkowe każdego operatora i braku pola
-- [ ] 6.2 `explain` z wynikiem per liść; weryfikacja: test na regule Rates z niespełnionym progiem
-- [ ] 6.3 Render szablonów w sandboxie (brak dostępu do plików/env, limit rozmiaru, brakująca zmienna → pusty tekst, odrzucenie niebezpiecznych szablonów przy zapisie); weryfikacja: testy scenariuszy „Szablon tytułu”, „Brakująca zmienna”, „Szablon nie wykonuje kodu”
-- [ ] 6.4 Benchmark ewaluacji (np. 100 reguł × zdarzenie); weryfikacja: wynik zapisany w komentarzu do `docs/LOADTEST.md`
+- [x] 6.1 Parsowanie i kompilacja warunków (`all/any/not`, operatory z D6, ścieżki kanoniczne i `raw.*`, prekompilowane regex/glob); weryfikacja: testy jednostkowe każdego operatora i braku pola
+- [x] 6.2 `explain` z wynikiem per liść; weryfikacja: test na regule Rates z niespełnionym progiem
+- [x] 6.3 Render szablonów w sandboxie (brak dostępu do plików/env, limit rozmiaru, brakująca zmienna → pusty tekst, odrzucenie niebezpiecznych szablonów przy zapisie); weryfikacja: testy scenariuszy „Szablon tytułu”, „Brakująca zmienna”, „Szablon nie wykonuje kodu”
+- [x] 6.4 Benchmark ewaluacji (np. 100 reguł × zdarzenie); weryfikacja: wynik zapisany w komentarzu do `docs/LOADTEST.md`
 
 ## 7. Reguły (P2)
 
-- [ ] 7.1 Tabela `rules` (warunek, odbiorcy, nadpisanie severity, prezentacja, wersja) + seed `config/p2/rules/` z czterema regułami z zadania; hot reload; weryfikacja: zmiana pliku reguły działa bez restartu
-- [ ] 7.2 CRUD reguł w `api/p2.rs` z walidacją YAML i błędami z lokalizacją; `POST /rules/test` (reguła + zdarzenie → `explain` + wyrenderowana prezentacja); weryfikacja: testy HTTP
-- [ ] 7.3 Endpoint podpowiedzi pól z ostatnich zdarzeń danego schematu; weryfikacja: dla `trade.rejected.v2` zwraca `raw.payload.notional`
+- [x] 7.1 Tabela `rules` (warunek, odbiorcy, nadpisanie severity, prezentacja, wersja) + seed `config/p2/rules/` z czterema regułami z zadania; hot reload; weryfikacja: zmiana pliku reguły działa bez restartu
+- [x] 7.2 CRUD reguł w `api/p2.rs` z walidacją YAML i błędami z lokalizacją; `POST /rules/test` (reguła + zdarzenie → `explain` + wyrenderowana prezentacja); weryfikacja: testy HTTP
+- [x] 7.3 Endpoint podpowiedzi pól z ostatnich zdarzeń danego schematu; weryfikacja: dla `trade.rejected.v2` zwraca `raw.payload.notional`
 
 ## 8. Routing (P2)
 
-- [ ] 8.1 Tabele `people`, `teams`, `team_members`, `preferences` + seed `config/p2/people.yaml` (zespoły z zadania, Anna); hot reload; endpoint tylko do odczytu w `api/p2.rs`; weryfikacja: dodanie osoby w pliku działa bez restartu
-- [ ] 8.2 Rola router: `alerts.changed {opened|reopened}` → dopasowane reguły → rozwinięcie zespołów → kanały wg severity i godzin (strefa osoby) → łańcuch fallbacku → `deliveries.requested` z treścią per kanał; weryfikacja: testy scenariuszy `recipient-routing` (w tym Anna o 22:00)
-- [ ] 8.3 Deduplikacja odbiorców między regułami i dołączanie runbooków MANUAL (ewaluacja `matches` z tabeli `runbooks` tylko do odczytu; link w SMS, pełna treść w email/UI); weryfikacja: test „Osoba w dwóch regułach” i „SMS z linkiem”
+- [x] 8.1 Tabele `people`, `teams`, `team_members`, `preferences` + seed `config/p2/people.yaml` (zespoły z zadania, Anna); hot reload; endpoint tylko do odczytu w `api/p2.rs`; weryfikacja: dodanie osoby w pliku działa bez restartu
+- [x] 8.2 Rola router: `alerts.changed {opened|reopened}` → dopasowane reguły → rozwinięcie zespołów → kanały wg severity i godzin (strefa osoby) → łańcuch fallbacku → `deliveries.requested` z treścią per kanał; weryfikacja: testy scenariuszy `recipient-routing` (w tym Anna o 22:00)
+- [x] 8.3 Deduplikacja odbiorców między regułami i dołączanie runbooków MANUAL (ewaluacja `matches` z tabeli `runbooks` tylko do odczytu; link w SMS, pełna treść w email/UI); weryfikacja: test „Osoba w dwóch regułach” i „SMS z linkiem”
 
 ## 9. Dostarczanie (P2)
 
-- [ ] 9.1 Interfejs adaptera kanału i adaptery `ui`, `email` (SMTP → Mailpit), `sms_mock`, `phone_mock` (tabela `mock_outbox` + `ui.events`, przełącznik dostępności); weryfikacja: email widoczny w Mailpit, SMS w `GET /mock/outbox`
-- [ ] 9.2 Rola sender z tabelą `deliveries` (klucz idempotencji z D9, statusy) i commitem offsetu po zapisie; weryfikacja: ponowne przetworzenie tego samego zlecenia nie wysyła drugi raz
-- [ ] 9.3 Retry z backoffem przez `deliveries.retry`, fallback po łańcuchu, DLQ i `POST /deliveries/{id}/resend`; weryfikacja: test z wyłączonym SMS daje fallback na email; test z wyłączonymi wszystkimi kanałami daje wpis DLQ
-- [ ] 9.4 Endpointy dostarczeń per alert i przełącznika symulowanych kanałów w `api/p2.rs`; weryfikacja: testy HTTP
+- [x] 9.1 Interfejs adaptera kanału i adaptery `ui`, `email` (SMTP → Mailpit), `sms_mock`, `phone_mock` (tabela `mock_outbox` + `ui.events`, przełącznik dostępności); weryfikacja: email widoczny w Mailpit, SMS w `GET /mock/outbox`
+- [x] 9.2 Rola sender z tabelą `deliveries` (klucz idempotencji z D9, statusy) i commitem offsetu po zapisie; weryfikacja: ponowne przetworzenie tego samego zlecenia nie wysyła drugi raz
+- [x] 9.3 Retry z backoffem przez `deliveries.retry`, fallback po łańcuchu, DLQ i `POST /deliveries/{id}/resend`; weryfikacja: test z wyłączonym SMS daje fallback na email; test z wyłączonymi wszystkimi kanałami daje wpis DLQ
+- [x] 9.4 Endpointy dostarczeń per alert i przełącznika symulowanych kanałów w `api/p2.rs`; weryfikacja: testy HTTP
 
 ## 10. Rejestr akcji i usługi docelowe (P3)
 

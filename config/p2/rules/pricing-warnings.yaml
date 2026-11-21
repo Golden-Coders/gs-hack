@@ -1,0 +1,35 @@
+id: pricing-warnings
+name: "Pricing: warnings and above from pricing-engine"
+team: pricing
+condition:
+  all:
+    - field: severity
+      op: gte
+      value: warning
+    - any:
+        - field: service
+          op: glob
+          value: "pricing-engine-*"
+        - field: source
+          op: glob
+          value: "*pricing-engine-*"
+        - field: raw.service.name
+          op: glob
+          value: "pricing-engine-*"
+        - field: raw.service
+          op: glob
+          value: "pricing-engine-*"
+recipients:
+  - type: team
+    id: pricing
+severity_override: null
+presentation:
+  title: "Pricing warning: {{title}}"
+  body: null
+  fields:
+    - source
+    - severity
+  highlight: {}
+  color: null
+enabled: true
+version: 1
