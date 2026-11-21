@@ -10,10 +10,10 @@ Wymagania: Docker z Compose v2 (~4 GB RAM dla kontenerów). Nic więcej nie trze
 
 ```bash
 git clone https://github.com/Golden-Coders/gs-hack && cd gs-hack
-docker compose up --build
+docker compose up --build      # albo: make demo (to samo + dane demo, patrz niżej)
 ```
 
-Pierwsze budowanie backendu w Rust trwa kilka minut, kolejne starty kilkanaście sekund. Potem:
+To wszystko: dwie komendy (`git clone` + `docker compose up --build` lub `make demo`). Pierwsze budowanie backendu w Rust trwa kilka minut, kolejne starty kilkanaście sekund. Potem:
 
 | Co | Adres |
 |---|---|
@@ -23,7 +23,9 @@ Pierwsze budowanie backendu w Rust trwa kilka minut, kolejne starty kilkanaście
 | Mailpit (podgląd wysłanych e-maili) | http://localhost:8025 |
 | Kafka API (Redpanda) z hosta | `localhost:19092` |
 
-Dane i ruch do scenariusza demo: `make demo` (patrz [`docs/DEMO.md`](docs/DEMO.md)). Port 8080 zajęty? `API_PORT=8088 docker compose up --build`.
+**Demo.** `make demo` = `docker compose up -d --build` + generator scenariusza `scripts/demo/run.sh` (wysyła zdarzenia pokazujące deduplikację, routing, fallback i runbooki). `make down` zatrzymuje stack. Scenariusz nagrania: [`docs/DEMO.md`](docs/DEMO.md). Pomiar obciążenia: [`docs/LOADTEST.md`](docs/LOADTEST.md).
+
+**Tokeny i porty.** API wymaga nagłówka `Authorization: Bearer dev-token` (dla SSE `/stream` także `?token=dev-token`, bo `EventSource` nie ustawia nagłówków); zmiany stanu wymagają ponadto `X-Person-Id`. Ingest (`:8081`) jest bez tokenu. Port 8080 zajęty? `API_PORT=8088 docker compose up --build` (albo `API_PORT=8088 make demo`).
 
 Pierwsze zdarzenie:
 
@@ -131,7 +133,6 @@ Operatory: `eq, ne, in, gt, gte, lt, lte, contains, regex, exists, glob`.
 
 ### Nowy kanał
 
-<!-- do potwierdzenia przez P2 po implementacji sendera -->
 Jeden adapter w `crates/sender` implementujący `ChannelAdapter` (`kind()`, `send(&Rendered) -> Result<ProviderRef, SendError>`). Błąd `Transient` uruchamia ponawianie (1 s, 5 s, 30 s), a `Permanent` od razu przechodzi do następnego kanału. Retry, fallback, DLQ, idempotencja i statusy działają w senderze wspólnie dla wszystkich kanałów, więc adapter tylko wysyła. Wymianę mocków na prawdziwych dostawców opisuje [`docs/MOCKS.md`](docs/MOCKS.md).
 
 ### Nowa akcja runbooka
@@ -153,7 +154,6 @@ Akcje wymagające kodu (np. `escalate`, `notify`) to jedna implementacja `Action
 
 ### Nowy runbook
 
-<!-- do potwierdzenia przez P3 po implementacji runbooks -->
 Plik w `config/p3/runbooks/`:
 - `*.yaml` to runbook **automatyczny**: kroki wykonywane po kolei, start raz na epizod alertu. Krok z `approval: required` albo akcja `risk: high` czeka na zatwierdzenie w **Zatwierdzeniach**. Błąd zatrzymuje runbook, a w UI można kliknąć „ponów”, „pomiń” albo „tryb ręczny”. Nieznana akcja staje się krokiem ręcznym i pojawia się na liście brakujących akcji.
 - `*.md` albo `*.txt` to runbook **ręczny**: Markdown lub wolny tekst dołączany do powiadomień (pełna treść w UI i e-mailu, link w SMS).
@@ -189,7 +189,7 @@ SMS i telefon, serwer SMTP (Mailpit), usługi, na których działają akcje runb
 
 ## Użycie AI
 
-<!-- do uzupełnienia przez zespół: narzędzia każdej osoby -->
+- **Narzędzia:** zespół użył agentów Claude Code z workflow OpenSpec (propose, apply, każdy strumień w osobnym worktree) do planowania i implementacji.
 - **Planowanie:** wymagania, decyzje techniczne i zadania powstały jako change [OpenSpec](openspec/changes/alerting-service-mvp/) z pomocą Claude Code. Każde wymaganie ma scenariusze, które służą jako przypadki testowe, a każde zadanie ma kryterium weryfikacji.
 - **Implementacja:** Claude Code pracował w strumieniach z jawną własnością katalogów ([`CLAUDE.md`](CLAUDE.md)). Agent edytuje tylko katalogi swojego strumienia, a kontrakty (`crates/contracts`, `contracts/openapi.yaml`) są zamrożone i zmieniane wyłącznie addytywnie po uzgodnieniu z zespołem. Część ekranów UI zbudowali równolegle subagenci w osobnych worktree. Każdą zmianę przeglądał człowiek przed merge'em, a typecheck i testy crate'ów musiały przechodzić.
 - **Bezpieczeństwo i prywatność:** do narzędzi AI trafiały wyłącznie kod tego repozytorium i syntetyczne dane z `crates/contracts/fixtures/`, bez danych produkcyjnych, klientów ani prawdziwych sekretów (jedyny token to `dev-token`). Kod wygenerowany przez AI przechodził te same reguły co ręczny: allowlista hostów, approval dla `risk: high`, brak sekretów w plikach.
