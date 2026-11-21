@@ -9,6 +9,8 @@ Kontekst: `proposal.md` (co i dlaczego), `design.md` (jak), `specs/` (zachowanie
 | **P3** Runbooki i akcje | Kostek | Rust | 10, 11, 12 | `runbooks`, `action-registry`, `runbook-execution` |
 | **P4** UI, dokumentacja, demo | Damian | TypeScript | 13, 14, 15, 16, 17 | `operator-console` |
 
+**Aktualizacja 2026-11-21:** P1 i P2 mają zrobione rdzenie (sekcje 2, 4, 6–9), więc pozostała praca obu strumieni idzie **jednym pipeline'em P1+P2** (`tasks.md`, sekcja 19) z etapami A–H i bramkami testowymi. Pipeline może pisać w katalogach P1 i P2 oraz w `crates/api/src/stream.rs` (SSE, wcześniej „domyślnie P1”) i `scripts/e2e/`. Tabele, topiki i zasada single writer bez zmian — `lifecycle` nadal jedynym pisarzem stanu alertu.
+
 Damian nie zna Rusta, więc dostaje strumień w całości po stronie TypeScript (UI + dokumentacja + demo) i nie dotyka crate'ów. Przydział P1–P3 między osoby znające Rusta jest umowny — zamieńcie się, jeśli ktoś woli inny obszar.
 
 Sekcja 1 (Faza 0) robią wszyscy razem, sekcja 18 (integracja) wszyscy razem.

@@ -240,13 +240,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "czeka na condition (P2, tasks 6.1)"]
     fn trade_fixture_severity_rules() {
         assert_eq!(run("trade.rejected.v2", "trade_rejected").severity, Severity::Critical);
     }
 
     #[test]
-    #[ignore = "czeka na condition (P2, tasks 6.1)"]
     fn alertmanager_resolved_condition() {
         let m = CompiledMapping::compile(seed_def("alertmanager"), 1).unwrap();
         let mut i = fixture("alertmanager_high_error_rate");

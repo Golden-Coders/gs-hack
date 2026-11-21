@@ -1,6 +1,6 @@
 # Tasks
 
-Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma jednego właściciela (w nawiasie); wykonuje się ją przez `/openspec-apply-change alerting-service-mvp`, wskazując agentowi numer sekcji. Sekcja 1 jest wspólna i blokuje resztę; sekcje 2–17 idą równolegle w ramach strumieni; sekcja 18 to integracja.
+Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma jednego właściciela (w nawiasie); wykonuje się ją przez `/openspec-apply-change alerting-service-mvp`, wskazując agentowi numer sekcji. Sekcja 1 jest wspólna i blokuje resztę; sekcje 2–17 idą równolegle w ramach strumieni; sekcja 18 to integracja. **Od 2026-11-21 pozostała praca P1 i P2 (otwarte zadania z sekcji 3, 5 i ich część sekcji 18) idzie jednym pipeline'em w sekcji 19** — sekcje 2–9 zostają jako historia i źródło weryfikacji.
 
 ## 1. Faza 0 — kontrakty i szkielet (wszyscy, ~1 h)
 
@@ -24,10 +24,10 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 
 ## 3. Normalizacja i UNMAPPED (P1)
 
-- [ ] 3.1 Model i tabela `mappings` (pola-ścieżki, severity: ścieżka|stała|warunek, fingerprint, resolved) + seed `config/p1/mappings/` dla trzech schematów z Appendix A; weryfikacja: testy jednostkowe mapowania każdego fixture'a na oczekiwane zdarzenie kanoniczne
-- [ ] 3.2 Rola normalizer: `events.raw` → `events.normalized` (klucz = fingerprint), normalizacja skali severity, domyślny fingerprint; weryfikacja: scenariusze z `event-normalization` jako testy
+- [x] 3.1 Model i tabela `mappings` (pola-ścieżki, severity: ścieżka|stała|warunek, fingerprint, resolved) + seed `config/p1/mappings/` dla trzech schematów z Appendix A; weryfikacja: testy jednostkowe mapowania każdego fixture'a na oczekiwane zdarzenie kanoniczne
+- [x] 3.2 Rola normalizer: `events.raw` → `events.normalized` (klucz = fingerprint), normalizacja skali severity, domyślny fingerprint; weryfikacja: scenariusze z `event-normalization` jako testy
 - [x] 3.3 Zdarzenia bez mappingu → `events.unmapped` + tabela `unmapped_events` (liczba, przykład); weryfikacja: zdarzenie nieznanego schematu jest widoczne w `GET /unmapped`
-- [ ] 3.4 Hot reload mappingów (pliki → upsert → `NOTIFY` → `ArcSwap`) i CRUD mappingów w `api/p1.rs` z podglądem wyniku na przykładowym payloadzie; weryfikacja: zmiana mappingu działa bez restartu
+- [x] 3.4 Hot reload mappingów (pliki → upsert → `NOTIFY` → `ArcSwap`) i CRUD mappingów w `api/p1.rs` z podglądem wyniku na przykładowym payloadzie; weryfikacja: zmiana mappingu działa bez restartu
 - [x] 3.5 Ponowne przetworzenie UNMAPPED po zapisaniu mappingu; weryfikacja: scenariusz „Utworzenie mappingu z UI” jako test integracyjny
 
 ## 4. Cykl życia alertu (P1)
@@ -128,6 +128,55 @@ Podział na osoby, katalogi i punkty synchronizacji: `team.md`. Każda sekcja ma
 - [ ] 18.4 Odporność: wyłączenie Mailpit i symulowanego SMS, restart każdej binarki w trakcie ruchu; weryfikacja: brak utraconych alertów i zdublowanych powiadomień
 - [ ] 18.5 Skalowanie: 2 instancje `lifecycle` i `sender` pod obciążeniem; weryfikacja: poprawny dedup i pomiar w `docs/LOADTEST.md`
 - [ ] 18.6 Kryteria demo: nowy schemat w < 2 min z UI, nowa akcja HTTP w < 1 min, zmiana reguły bez restartu, runbook z poleceniem shell niczego nie wykonuje; weryfikacja: każdy punkt przećwiczony na czystym klonie
+
+## 19. Pipeline P1+P2 — agentic workflow (P1+P2, Krzysztof Jet i Krzysztof Wojt)
+
+Jedna kolejka zamiast dwóch strumieni: domyka otwarte zadania P1 (3.4, 5.2, 5.3), brakujący backend SSE i część P1/P2 sekcji 18. Uruchamianie: `/openspec-apply-change alerting-service-mvp` z poleceniem „realizuj sekcję 19, etap X”.
+
+**Zasady dla agenta:**
+- Etapy idą po kolei; etap startuje dopiero, gdy bramka poprzedniego jest zielona. Wyjątek: etapy oznaczone `∥` mogą iść równolegle (osobny worktree/gałąź), bo nie dzielą plików.
+- Wolno pisać w katalogach P1 i P2 (CLAUDE.md) oraz w `crates/api/src/stream.rs` i `scripts/e2e/`. Kod P3/P4 i pliki zamrożone tylko czytasz; brak w kontrakcie → stop i opis zmiany.
+- Jeden etap = jedna gałąź `p12/<etap>` = jeden PR do `main`; w PR wynik bramki (komendy + wyjście).
+- Po zielonej bramce odhacz zadanie tutaj **i** odpowiadające mu zadanie źródłowe (np. 19.A1 ⇒ 3.4).
+- Bramka bazowa każdego etapu: `cargo test -p condition -p lifecycle -p ingest -p router -p sender -p api` + `cargo check --workspace`.
+
+**Stan na start (2026-11-21):** sekcje 2, 4, 6–9 zrobione; 3.1–3.2 zweryfikowane (testy `lifecycle` zielone, w tym 2 testy `#[ignore]` czekające na już gotowe `condition`); 3.4 zmergowane (PR #14); `/stream` w `api` to nadal szkielet z Fazy 0 (tylko `hello`), więc feed UI nie dostaje zdarzeń na żywo; `lifecycle` w compose był zatrzymany; PR #17 (P3, runbooki ↔ router) zmergowany — 19.A3 to przegląd po fakcie na `main`.
+
+### Etap A — domknięcie i merge (start od razu)
+- [x] 19.A1 Merge `p1/mapping-preview` (`POST /mappings/preview`, walidacja kompilacji w `PUT`) do `main`; bramka: bazowa ⇒ odhaczyć 3.4
+- [x] 19.A2 Usunąć `#[ignore]` z `trade_fixture_severity_rules` i `alertmanager_resolved_condition` w `crates/lifecycle/src/mapping.rs`; bramka: `cargo test -p lifecycle --lib` bez ignorowanych
+- [ ] 19.A3 Przegląd PR #17 (P3) pod kątem routera i `rule_ids` (otwarta kwestia D10): router/sender nie zmieniają kontraktu, `deliveries.requested` z `escalate`/`notify` przechodzi przez sender; bramka: komentarz w PR + zielona bramka bazowa na gałęzi PR
+
+### Etap B ∥ — SSE `/stream` (design D13; równolegle z A i C)
+- [ ] 19.B1 `crates/api/src/stream.rs`: konsument `alerts.changed` i `ui.events` (grupa `api-sse-<instancja>`, start od końca topiku), `tokio::sync::broadcast` do klientów, `event: alert_changed` / `event: ui_event` wg `openapi.yaml`, heartbeat; wolny klient nie blokuje innych (lagged ⇒ pominięcie); bramka: `curl -N :8080/stream` pokazuje `alert_changed` po `rpk topic produce alerts.changed < crates/contracts/fixtures/topics/alerts.changed.json` + test jednostkowy formatu zdarzeń
+- [ ] 19.B2 Filtrowanie po zespole (parametr `team` zgodnie z `openapi.yaml`, bez parametru = wszystkie); bramka: test HTTP ⇒ odblokowuje weryfikację 13.2 i 14.1 na prawdziwym backendzie
+
+### Etap C — pierwszy przepływ end-to-end (po A)
+- [ ] 19.C1 Skrypt `scripts/e2e/first-flow.sh`: `docker compose up -d --build`, `POST /ingest` z fixture WORKFLOW_FAILED, czekanie (z limitem) na alert w `GET /alerts`, dostarczenie SMS w `GET /mock/outbox` i wpis w `GET /alerts/{id}/deliveries` z `received_at`/`delivered_at`; bramka: skrypt kończy się kodem 0 na czystym `docker compose down -v` ⇒ odhaczyć 18.1
+- [ ] 19.C2 Dopasować `crates/loadgen/latency.sql` do faktycznych kolumn `deliveries` (P2) i uruchomić go oraz `lag.sh` po C1; bramka: raport p50/p99 i lag na pustym systemie ⇒ odhaczyć 5.2
+
+### Etap D — wszystkie schematy i reguły (po C)
+- [ ] 19.D1 `scripts/e2e/appendix-a.sh`: trzy zdarzenia z Appendix A ⇒ alerty i dostarczenia zgodne z czterema regułami (odbiorcy, kanały wg preferencji, Anna o 22:00, fallback na UI); bramka: skrypt zielony ⇒ odhaczyć 18.2
+- [ ] 19.D2 Dedup i reopen end-to-end: 500 duplikatów ⇒ 1 alert z licznikiem 500 i jedno powiadomienie na odbiorcę; resolve + nowe zdarzenie ⇒ reopen tego samego alertu i ponowne powiadomienie; bramka: krok w `appendix-a.sh`
+
+### Etap E ∥ — pomiar wydajności #1 (po C; równolegle z D)
+- [ ] 19.E1 `loadgen` (np. `RATE=500 DURATION_SECS=60 DUP_RATIO=0.5 MODE=both`) + `latency.sql` + `lag.sh`; wpis „Pomiar 1” w `docs/LOADTEST.md`; decyzja, co optymalizować (wąskie gardło = grupa z największym lagiem); bramka: wiersz w tabeli wyników z komendą do powtórzenia
+
+### Etap F — odporność (po D)
+- [ ] 19.F1 `scripts/e2e/resilience.sh`: ruch z `loadgen`, w trakcie `docker compose stop mailpit`, wyłączenie SMS przez `PUT /mock/channels/sms`, restart kolejno `ingest`, `lifecycle`, `router`, `sender`; bramka: liczba alertów = liczba unikalnych fingerprintów, brak duplikatów kluczy idempotencji w `deliveries`, fallback i DLQ widoczne w API ⇒ odhaczyć część P1/P2 z 18.4
+
+### Etap G — skalowanie (po F)
+- [ ] 19.G1 `docker compose up -d --scale lifecycle=2 --scale sender=2` pod obciążeniem (bez zmian w `docker-compose.yml` — serwisy nie mają stałych portów); bramka: dedup poprawny (jak w F1), pomiar dopisany do `docs/LOADTEST.md` ⇒ odhaczyć 18.5
+
+### Etap H — kryteria demo P1/P2 i pomiar końcowy (po G, przed zamrożeniem)
+- [ ] 19.H1 Przećwiczyć na czystym klonie: nowy schemat z UI (UNMAPPED ⇒ mapping ⇒ alert w feedzie) w < 2 min; zmiana reguły bez restartu; bramka: opis przebiegu w PR ⇒ część P1/P2 z 18.6
+- [ ] 19.H2 Pomiar końcowy w `docs/LOADTEST.md`; bramka: wiersz „Pomiar końcowy” wypełniony ⇒ odhaczyć 5.3
+
+```
+A1 ─ A2 ─ A3 ──┬─ C1 ─ C2 ─┬─ D1 ─ D2 ─ F1 ─ G1 ─ H1 ─ H2
+               │           └─ E1 ∥ ───────────┘
+B1 ─ B2 ∥ ─────┴──────────── (wymagane przed H1: feed na żywo)
+```
 
 ## Workflow follow-up
 
