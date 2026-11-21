@@ -569,3 +569,64 @@ async fn ui_as_primary_channel_delivers_and_emits_ui_event() {
         .iter()
         .any(|e| e.kind == UiEventKind::DeliveryStatus && e.alert_id == Some(req.alert_id)));
 }
+
+#[tokio::test]
+async fn smtp_pool_reuses_connections_across_emails() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingDuplexSmtp {
+        inner: Arc<DuplexSmtpServer>,
+        connects: Arc<AtomicUsize>,
+    }
+
+    impl SmtpConnector for CountingDuplexSmtp {
+        fn connect(&self) -> BoxFuture<'_, Result<(BoxedAsyncRead, BoxedAsyncWrite), SendError>> {
+            self.connects.fetch_add(1, Ordering::SeqCst);
+            self.inner.connect()
+        }
+    }
+
+    let backend = Arc::new(InMemoryBackend::new());
+    let (inner, captured) = DuplexSmtpServer::new();
+    let connects = Arc::new(AtomicUsize::new(0));
+    let connector = Arc::new(CountingDuplexSmtp {
+        inner,
+        connects: connects.clone(),
+    });
+    let engine = build_test_engine(backend.clone(), connector, SenderConfig::default());
+
+    for ep in 1..=5 {
+        let mut req = fixture_delivery_request();
+        req.episode = ep;
+        req.chain = vec![Channel::Email, Channel::Ui];
+        req.chain_index = 0;
+        let out = engine.process_request(req).await.unwrap();
+        assert!(matches!(out, ProcessOutcome::Delivered(_)));
+    }
+
+    assert_eq!(captured.lock().unwrap().len(), 5, "wszystkie 5 emaili dostarczone");
+    assert_eq!(
+        connects.load(Ordering::SeqCst),
+        1,
+        "pula SMTP powinna reużyć jedno połączenie dla sekwencyjnych wysyłek"
+    );
+}
+
+#[test]
+fn offset_tracker_commits_strictly_in_order_per_partition() {
+    let mut tracker = sender::OffsetTracker::default();
+    tracker.track(0, 100);
+    tracker.track(0, 101);
+    tracker.track(0, 102);
+    tracker.track(1, 50);
+
+    // Offset 102 kończy się pierwszy: nie wolno commitować, bo 100 i 101 nadal w locie.
+    assert_eq!(tracker.mark_done(0, 102), None);
+    // Partycja 1 jest niezależna.
+    assert_eq!(tracker.mark_done(1, 50), Some(50));
+    // Offset 100 kończy się: można commitować 100 (101 nadal w locie).
+    assert_eq!(tracker.mark_done(0, 100), Some(100));
+    // Offset 101 kończy się: okno przeskakuje od razu do 102.
+    assert_eq!(tracker.mark_done(0, 101), Some(102));
+    assert_eq!(tracker.in_flight(), 0);
+}

@@ -299,10 +299,102 @@ impl SmtpConnector for TcpSmtpConnector {
     }
 }
 
+const DEFAULT_SMTP_POOL_MAX_IDLE: usize = 16;
+
+struct PooledSmtpSession {
+    lines: tokio::io::Lines<BufReader<BoxedAsyncRead>>,
+    writer: BoxedAsyncWrite,
+}
+
+impl PooledSmtpSession {
+    async fn open(connector: &dyn SmtpConnector) -> Result<Self, SendError> {
+        let (reader, mut writer) = connector.connect().await?;
+        let mut lines = BufReader::new(reader).lines();
+
+        let (code, greeting) = read_smtp_response(&mut lines).await?;
+        if code != 220 {
+            return Err(SendError::Transient(format!("unexpected smtp greeting: {greeting}")));
+        }
+
+        writer
+            .write_all(b"EHLO alerting.local\r\n")
+            .await
+            .map_err(|e| SendError::Transient(format!("smtp write EHLO: {e}")))?;
+        let (code, resp) = read_smtp_response(&mut lines).await?;
+        if code != 250 {
+            return Err(SendError::Transient(format!("smtp EHLO rejected: {resp}")));
+        }
+
+        Ok(Self { lines, writer })
+    }
+
+    async fn send_message(&mut self, from: &str, to: &str, subject: &str, body: &str) -> Result<String, SendError> {
+        self.writer
+            .write_all(format!("MAIL FROM:<{from}>\r\n").as_bytes())
+            .await
+            .map_err(|e| SendError::Transient(format!("smtp write MAIL FROM: {e}")))?;
+        let (code, resp) = read_smtp_response(&mut self.lines).await?;
+        if code != 250 {
+            return Err(SendError::Transient(format!("smtp MAIL FROM rejected: {resp}")));
+        }
+
+        self.writer
+            .write_all(format!("RCPT TO:<{to}>\r\n").as_bytes())
+            .await
+            .map_err(|e| SendError::Transient(format!("smtp write RCPT TO: {e}")))?;
+        let (code, resp) = read_smtp_response(&mut self.lines).await?;
+        if (500..600).contains(&code) {
+            return Err(SendError::Permanent(format!("smtp recipient rejected: {resp}")));
+        }
+        if code != 250 && code != 251 {
+            return Err(SendError::Transient(format!("smtp RCPT TO failed: {resp}")));
+        }
+
+        self.writer
+            .write_all(b"DATA\r\n")
+            .await
+            .map_err(|e| SendError::Transient(format!("smtp write DATA: {e}")))?;
+        let (code, resp) = read_smtp_response(&mut self.lines).await?;
+        if code != 354 {
+            return Err(SendError::Transient(format!("smtp DATA rejected: {resp}")));
+        }
+
+        let clean_subject = subject.replace(['\r', '\n'], " ");
+        let mut payload = format!(
+            "From: Alerting Service <{from}>\r\nTo: <{to}>\r\nSubject: {clean_subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+        );
+        for line in body.lines() {
+            if line.starts_with('.') {
+                payload.push('.');
+            }
+            payload.push_str(line);
+            payload.push_str("\r\n");
+        }
+        payload.push_str(".\r\n");
+
+        self.writer
+            .write_all(payload.as_bytes())
+            .await
+            .map_err(|e| SendError::Transient(format!("smtp write body: {e}")))?;
+        let (code, resp) = read_smtp_response(&mut self.lines).await?;
+        if code != 250 {
+            return Err(SendError::Transient(format!("smtp message rejected: {resp}")));
+        }
+
+        Ok("smtp:250".to_string())
+    }
+
+    async fn quit(mut self) {
+        let _ = self.writer.write_all(b"QUIT\r\n").await;
+    }
+}
+
 pub struct EmailAdapter {
     backend: Arc<dyn DeliveryBackend>,
     connector: Arc<dyn SmtpConnector>,
     from_address: String,
+    pool: Arc<tokio::sync::Mutex<Vec<PooledSmtpSession>>>,
+    max_idle: usize,
 }
 
 impl EmailAdapter {
@@ -314,6 +406,8 @@ impl EmailAdapter {
                 port: smtp_port,
             }),
             from_address: "alerts@alerting.local".to_string(),
+            pool: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            max_idle: DEFAULT_SMTP_POOL_MAX_IDLE,
         }
     }
 
@@ -322,6 +416,59 @@ impl EmailAdapter {
             backend,
             connector,
             from_address: "alerts@alerting.local".to_string(),
+            pool: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            max_idle: DEFAULT_SMTP_POOL_MAX_IDLE,
+        }
+    }
+
+    async fn send_pooled(&self, recipient: &str, subject: &str, body: &str) -> Result<String, SendError> {
+        // Najpierw próbujemy reużyć bezczynną sesję z puli (bez narzutu TCP + EHLO).
+        let pooled = { self.pool.lock().await.pop() };
+        if let Some(mut session) = pooled {
+            match tokio::time::timeout(
+                Duration::from_secs(10),
+                session.send_message(&self.from_address, recipient, subject, body),
+            )
+            .await
+            {
+                Ok(Ok(res)) => {
+                    self.return_to_pool(session).await;
+                    return Ok(res);
+                }
+                Ok(Err(err @ SendError::Permanent(_))) => {
+                    // Błąd trwały (np. odrzucony adres) nie oznacza martwego połączenia — zamykamy czysto.
+                    session.quit().await;
+                    return Err(err);
+                }
+                Ok(Err(SendError::Transient(_))) | Err(_) => {
+                    // Sesja z puli mogła wygasnąć (np. restart Mailpit lub idle timeout) — ponawiamy raz na nowym połączeniu.
+                    drop(session);
+                }
+            }
+        }
+
+        let mut session = tokio::time::timeout(Duration::from_secs(10), PooledSmtpSession::open(self.connector.as_ref()))
+            .await
+            .map_err(|_| SendError::Transient("smtp connect/ehlo timed out".to_string()))??;
+
+        let res = tokio::time::timeout(
+            Duration::from_secs(10),
+            session.send_message(&self.from_address, recipient, subject, body),
+        )
+        .await
+        .map_err(|_| SendError::Transient("smtp transaction timed out".to_string()))??;
+
+        self.return_to_pool(session).await;
+        Ok(res)
+    }
+
+    async fn return_to_pool(&self, session: PooledSmtpSession) {
+        let mut guard = self.pool.lock().await;
+        if guard.len() < self.max_idle {
+            guard.push(session);
+        } else {
+            drop(guard);
+            session.quit().await;
         }
     }
 }
@@ -476,14 +623,7 @@ impl ChannelAdapter for EmailAdapter {
             let recipient = validate_email_address(raw_to)?;
             let body = format_email_body(rendered);
 
-            let (reader, writer) = self.connector.connect().await?;
-
-            tokio::time::timeout(
-                Duration::from_secs(10),
-                run_smtp_client_session(reader, writer, &self.from_address, recipient, &rendered.title, &body),
-            )
-            .await
-            .map_err(|_| SendError::Transient("smtp transaction timed out".to_string()))?
+            self.send_pooled(recipient, &rendered.title, &body).await
         })
     }
 }
