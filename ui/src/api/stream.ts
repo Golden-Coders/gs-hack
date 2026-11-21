@@ -3,7 +3,7 @@
 // Po ponownym połączeniu (`hello`) dociągamy `GET /alerts?since=<ostatni at>` i wysyłamy je jako `resync`.
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api, API_URL, type Schemas } from "./client";
-import { backend } from "./session";
+import { backend, getSessionToken } from "./session";
 
 export type StreamMessage =
   | { type: "alert_changed"; data: Schemas["AlertChanged"] }
@@ -63,7 +63,8 @@ function connect() {
   // Prism nie obsługuje SSE – na mocku nie łączymy się w kółko, tylko mówimy to wprost.
   if (backend === "mock") return setStatus("unavailable");
   setStatus(connectedOnce ? "reconnecting" : "connecting");
-  const es = new EventSource(`${API_URL}/stream?token=${encodeURIComponent(import.meta.env.VITE_API_TOKEN ?? "dev-token")}`);
+  const tok = getSessionToken() ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
+  const es = new EventSource(`${API_URL}/stream?token=${encodeURIComponent(tok)}`, { withCredentials: true });
   source = es;
 
   es.addEventListener("hello", () => {

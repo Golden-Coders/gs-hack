@@ -38,17 +38,6 @@ pub(crate) async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
     if PEOPLE_SEEDED.swap(true, Ordering::SeqCst) {
         return;
     }
-    let people_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM people")
-        .fetch_one(db)
-        .await
-        .unwrap_or(1);
-    let teams_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams")
-        .fetch_one(db)
-        .await
-        .unwrap_or(1);
-    if people_count > 0 && teams_count > 0 {
-        return;
-    }
     let Some(path) = resolve_config_path(config_dir, "people.yaml") else {
         return;
     };
@@ -66,7 +55,8 @@ pub(crate) async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
         let fallback_val = serde_json::to_value(&person.fallback).unwrap_or_else(|_| json!([]));
         let _ = sqlx::query(
             "INSERT INTO people (id, name, timezone, contacts, fallback, def, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, now()) ON CONFLICT (id) DO NOTHING",
+             VALUES ($1, $2, $3, $4, $5, $6, now()) ON CONFLICT (id) DO UPDATE SET \
+             name = EXCLUDED.name, def = EXCLUDED.def, updated_at = now()",
         )
         .bind(&person.id)
         .bind(&person.name)
@@ -77,28 +67,34 @@ pub(crate) async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
         .execute(db)
         .await;
     }
-    for team in &parsed.teams {
-        let Ok(def_val) = serde_json::to_value(team) else {
-            continue;
-        };
-        let _ = sqlx::query(
-            "INSERT INTO teams (id, name, def, updated_at) \
-             VALUES ($1, $2, $3, now()) ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(&team.id)
-        .bind(&team.name)
-        .bind(SqlJson(def_val))
-        .execute(db)
-        .await;
-
-        for member in &team.members {
+    let teams_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams")
+        .fetch_one(db)
+        .await
+        .unwrap_or(1);
+    if teams_count == 0 {
+        for team in &parsed.teams {
+            let Ok(def_val) = serde_json::to_value(team) else {
+                continue;
+            };
             let _ = sqlx::query(
-                "INSERT INTO team_members (team_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                "INSERT INTO teams (id, name, def, updated_at) \
+                 VALUES ($1, $2, $3, now()) ON CONFLICT (id) DO NOTHING",
             )
             .bind(&team.id)
-            .bind(member)
+            .bind(&team.name)
+            .bind(SqlJson(def_val))
             .execute(db)
             .await;
+
+            for member in &team.members {
+                let _ = sqlx::query(
+                    "INSERT INTO team_members (team_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                )
+                .bind(&team.id)
+                .bind(member)
+                .execute(db)
+                .await;
+            }
         }
     }
 }

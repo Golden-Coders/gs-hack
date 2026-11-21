@@ -12,13 +12,15 @@ import {
   SideNavigation,
   type CustomItemComponentProps,
 } from "@atlaskit/side-navigation";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Box } from "@atlaskit/primitives/compiled";
 import { matchPath, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { checkSession, useAuthChecked, usePersonId } from "./api/session";
 import CommandPalette from "./components/CommandPalette";
 import SessionBar from "./components/SessionBar";
 import { Loading } from "./ui/primitives";
 import AlertFeed from "./screens/AlertFeed";
+import Login from "./screens/Login";
 
 // D14: ekrany poza startowym feedem w osobnych chunkach (główny chunk > 500 kB), patrz bundle.md.
 const AlertDetail = lazy(() => import("./screens/AlertDetail"));
@@ -53,6 +55,21 @@ function NavLinkItem({ children, to, ...props }: CustomItemComponentProps & { to
 
 export default function App() {
   const { pathname } = useLocation();
+  const personId = usePersonId();
+  const authChecked = useAuthChecked();
+
+  useEffect(() => {
+    void checkSession();
+  }, []);
+
+  if (!authChecked) {
+    return <Loading>Sprawdzanie sesji…</Loading>;
+  }
+
+  if (!personId) {
+    return <Login />;
+  }
+
   return (
     <PageLayout>
       <CommandPalette screens={NAV} />

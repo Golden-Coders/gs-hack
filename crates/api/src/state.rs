@@ -20,6 +20,7 @@ pub struct AppState {
 impl AppState {
     pub async fn connect(config: common::Config) -> anyhow::Result<Self> {
         let db = common::db::connect_and_migrate(&config.database_url).await?;
+        crate::auth::ensure_auth_users_seeded(&db, &config.config_dir).await;
         let kafka = common::kafka::producer(&config.kafka_brokers)?;
         let author = runbooks::author::from_env()?;
         let auth = AuthStore::from_env();

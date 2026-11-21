@@ -58,7 +58,9 @@ export function switchBackend(next: Backend) {
 // --- uwierzytelniona sesja operatora (wyłącznie w pamięci karty) ---
 
 let personId: string | null = null;
+let personName: string | null = null;
 let sessionToken: string | null = null;
+let authChecked = backend === "mock";
 const listeners = new Set<() => void>();
 
 function notify() {
@@ -69,42 +71,95 @@ export function getPersonId(): string | null {
   return personId;
 }
 
+export function getPersonName(): string | null {
+  return personName;
+}
+
 export function getSessionToken(): string | null {
   return sessionToken;
 }
 
+export function isAuthChecked(): boolean {
+  return authChecked;
+}
+
 export function setPersonId(id: string | null) {
   personId = id;
-  if (id === null) sessionToken = null;
+  if (id === null) {
+    personName = null;
+    sessionToken = null;
+  }
   notify();
 }
 
-export async function loginAs(id: string, token?: string): Promise<void> {
+export async function checkSession(): Promise<void> {
   if (backend === "mock") {
-    personId = id;
-    sessionToken = null;
+    authChecked = true;
     notify();
     return;
   }
-  const cred = token ?? import.meta.env.VITE_API_TOKEN ?? "dev-token";
+  try {
+    const res = await fetch(`${API_URL}/auth/me`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { person_id?: string | null; authenticated?: boolean };
+      if (data.authenticated && data.person_id) {
+        personId = data.person_id;
+        personName = data.person_id;
+      }
+    }
+  } catch {
+    // brak aktywnej sesji
+  } finally {
+    authChecked = true;
+    notify();
+  }
+}
+
+export async function loginWithPassword(username: string, password: string): Promise<void> {
+  const cleanUser = username.trim().toLowerCase();
+  if (!cleanUser || !password) {
+    throw new Error("Podaj login oraz hasło.");
+  }
+  if (backend === "mock") {
+    if (password !== "haslo") {
+      throw new Error("Nieprawidłowy login lub hasło.");
+    }
+    personId = cleanUser;
+    personName = cleanUser;
+    sessionToken = null;
+    authChecked = true;
+    notify();
+    return;
+  }
   const res = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ person_id: id, token: cred }),
+    body: JSON.stringify({ username: cleanUser, password }),
   });
   if (!res.ok) {
-    throw new Error(`Logowanie nie powiodło się (${res.status})`);
+    const errBody = (await res.json().catch(() => null)) as { detail?: string; error?: string } | null;
+    throw new Error(errBody?.detail || errBody?.error || "Nieprawidłowy login lub hasło.");
   }
-  const data = (await res.json()) as { person_id: string; session_token?: string };
+  const data = (await res.json()) as { person_id: string; name?: string; session_token?: string };
   personId = data.person_id;
+  personName = data.name ?? data.person_id;
   sessionToken = data.session_token ?? null;
+  authChecked = true;
   notify();
+}
+
+export async function loginAs(id: string, token?: string): Promise<void> {
+  return loginWithPassword(id, token ?? "haslo");
 }
 
 export async function logout(): Promise<void> {
   const tok = sessionToken;
   personId = null;
+  personName = null;
   sessionToken = null;
   notify();
   if (backend === "mock") return;
@@ -126,4 +181,12 @@ function subscribe(listener: () => void) {
 
 export function usePersonId(): string | null {
   return useSyncExternalStore(subscribe, getPersonId);
+}
+
+export function usePersonName(): string | null {
+  return useSyncExternalStore(subscribe, getPersonName);
+}
+
+export function useAuthChecked(): boolean {
+  return useSyncExternalStore(subscribe, isAuthChecked);
 }

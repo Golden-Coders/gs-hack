@@ -1,0 +1,27 @@
+/* Czysty, wyśrodkowany ekran logowania */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ds-space-300);
+  background: var(--ds-surface-sunken);
+}
+
+.login-wrap {
+  width: 100%;
+  max-width: 380px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-200);
+}
+
+.login-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-050);
+  text-align: center;
+}
