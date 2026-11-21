@@ -1666,6 +1666,7 @@ dependencies = [
  "common",
  "condition",
  "contracts",
+ "futures",
  "serde",
  "serde_json",
  "serde_yaml",

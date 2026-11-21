@@ -113,7 +113,11 @@ async fn send(
         }
         Channel::Kafka => {
             let producer = producer.context("producer Kafka niedostępny")?;
-            common::kafka::publish(producer, topic, event.schema.name(), &event.body).await
+            // Klucz = tożsamość zdarzenia (np. id transakcji), jak u realnego producenta: duplikaty jednej
+            // transakcji trafiają do jednej partycji (kolejność per klucz), różne transakcje – po wszystkich
+            // partycjach. Stały klucz (np. nazwa schematu) wrzucałby cały ruch do jednej partycji i jednego
+            // pasa konsumenta źródła, czyli serializował źródło niezależnie od skalowania ingest.
+            common::kafka::publish(producer, topic, &event.identity, &event.body).await
         }
     }
 }
