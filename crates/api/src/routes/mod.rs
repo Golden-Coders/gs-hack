@@ -4,7 +4,7 @@ mod actions;
 mod alerts;
 mod deliveries;
 mod mappings;
-mod people;
+pub(crate) mod people;
 mod rules;
 mod runbooks;
 

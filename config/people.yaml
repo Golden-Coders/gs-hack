@@ -1,6 +1,6 @@
 people:
   - id: anna
-    name: Anna
+    name: Anna Kowalska
     timezone: Europe/Warsaw
     contacts:
       email: anna@example.com
@@ -8,40 +8,35 @@ people:
       phone: "+48500100300"
     preferences:
       - severity: critical
-        channels:
-          - sms
+        channels: [sms]
         hours: "08:00-20:00"
       - severity: critical
-        channels:
-          - email
+        channels: [email]
         hours: "20:00-08:00"
-    fallback:
-      - email
+    fallback: [email]
 
   - id: jan
-    name: Jan
+    name: Jan Nowak
     timezone: Europe/Warsaw
     contacts:
       email: jan@example.com
       sms: "+48500100200"
       phone: "+48500100200"
     preferences: []
-    fallback:
-      - email
+    fallback: [email]
 
   - id: ola
-    name: Ola
+    name: Ola Wiśniewska
     timezone: Europe/Warsaw
     contacts:
       email: ola@example.com
       sms: "+48500100201"
       phone: "+48500100201"
     preferences: []
-    fallback:
-      - email
+    fallback: [email]
 
   - id: piotr
-    name: Piotr
+    name: Piotr Wójcik
     timezone: Europe/Warsaw
     contacts:
       email: piotr@example.com
@@ -49,43 +44,161 @@ people:
       phone: "+48500100400"
     preferences:
       - severity: critical
-        channels:
-          - email
+        channels: [email]
       - severity: warning
-        channels:
-          - email
-    fallback:
-      - ui
+        channels: [email]
+    fallback: [ui]
 
   - id: tomek
-    name: Tomek
+    name: Tomek Kamiński
     timezone: Europe/Warsaw
     contacts:
       email: tomek@example.com
       sms: "+48500100500"
     preferences:
       - severity: critical
-        channels:
-          - ui
+        channels: [ui]
       - severity: error
-        channels:
-          - ui
+        channels: [ui]
       - severity: warning
-        channels:
-          - ui
-    fallback:
-      - ui
+        channels: [ui]
+    fallback: [ui]
 
   - id: kasia
-    name: Kasia
+    name: Kasia Lewandowska
     timezone: Europe/Warsaw
     contacts:
       email: kasia@example.com
       sms: "+48500100600"
       phone: "+48500100600"
     preferences: []
-    fallback:
-      - email
+    fallback: [email]
+
+  - id: marek
+    name: Marek Zieliński
+    timezone: Europe/Warsaw
+    contacts:
+      email: marek@example.com
+      sms: "+48500100701"
+    preferences: []
+    fallback: [email]
+
+  - id: magda
+    name: Magda Szymańska
+    timezone: Europe/Warsaw
+    contacts:
+      email: magda@example.com
+      sms: "+48500100702"
+    preferences: []
+    fallback: [email]
+
+  - id: michal
+    name: Michał Woźniak
+    timezone: Europe/Warsaw
+    contacts:
+      email: michal@example.com
+      sms: "+48500100703"
+    preferences: []
+    fallback: [email]
+
+  - id: monika
+    name: Monika Dąbrowska
+    timezone: Europe/Warsaw
+    contacts:
+      email: monika@example.com
+      sms: "+48500100704"
+    preferences: []
+    fallback: [email]
+
+  - id: pawel
+    name: Paweł Kozłowski
+    timezone: Europe/Warsaw
+    contacts:
+      email: pawel@example.com
+      sms: "+48500100705"
+    preferences: []
+    fallback: [email]
+
+  - id: agnieszka
+    name: Agnieszka Jankowska
+    timezone: Europe/Warsaw
+    contacts:
+      email: agnieszka@example.com
+      sms: "+48500100706"
+    preferences: []
+    fallback: [email]
+
+  - id: krzysztof
+    name: Krzysztof Mazur
+    timezone: Europe/Warsaw
+    contacts:
+      email: krzysztof@example.com
+      sms: "+48500100707"
+    preferences: []
+    fallback: [email]
+
+  - id: ewa
+    name: Ewa Kwiatkowska
+    timezone: Europe/Warsaw
+    contacts:
+      email: ewa@example.com
+      sms: "+48500100708"
+    preferences: []
+    fallback: [email]
+
+  - id: bartek
+    name: Bartek Krawczyk
+    timezone: Europe/Warsaw
+    contacts:
+      email: bartek@example.com
+      sms: "+48500100709"
+    preferences: []
+    fallback: [email]
+
+  - id: karolina
+    name: Karolina Piotrowska
+    timezone: Europe/Warsaw
+    contacts:
+      email: karolina@example.com
+      sms: "+48500100710"
+    preferences: []
+    fallback: [email]
+
+  - id: lukasz
+    name: Łukasz Grabowski
+    timezone: Europe/Warsaw
+    contacts:
+      email: lukasz@example.com
+      sms: "+48500100711"
+    preferences: []
+    fallback: [email]
+
+  - id: natalia
+    name: Natalia Nowakowska
+    timezone: Europe/Warsaw
+    contacts:
+      email: natalia@example.com
+      sms: "+48500100712"
+    preferences: []
+    fallback: [email]
+
+  - id: dawid
+    name: Dawid Pawłowski
+    timezone: Europe/Warsaw
+    contacts:
+      email: dawid@example.com
+      sms: "+48500100713"
+    preferences: []
+    fallback: [email]
+
+  - id: zuzanna
+    name: Zuzanna Michalska
+    timezone: Europe/Warsaw
+    contacts:
+      email: zuzanna@example.com
+      sms: "+48500100714"
+    preferences: []
+    fallback: [email]
 
 teams:
   - id: settlements
@@ -93,19 +206,17 @@ teams:
     members:
       - jan
       - ola
+      - marek
+      - magda
     preferences:
       - severity: critical
-        channels:
-          - phone
-          - sms
+        channels: [phone, sms]
         hours: null
       - severity: warning
-        channels:
-          - email
+        channels: [email]
         hours: null
       - severity: info
-        channels:
-          - ui
+        channels: [ui]
         hours: null
 
   - id: rates
@@ -113,78 +224,73 @@ teams:
     members:
       - piotr
       - anna
+      - michal
+      - monika
     preferences:
       - severity: critical
-        channels:
-          - email
-          - ui
+        channels: [email, ui]
         hours: null
       - severity: error
-        channels:
-          - email
-          - ui
+        channels: [email, ui]
         hours: null
       - severity: warning
-        channels:
-          - email
+        channels: [email]
         hours: null
       - severity: info
-        channels:
-          - ui
+        channels: [ui]
         hours: null
 
   - id: pricing
     name: Team Pricing
     members:
       - tomek
+      - pawel
+      - agnieszka
     preferences:
       - severity: critical
-        channels:
-          - ui
+        channels: [ui]
         hours: null
       - severity: error
-        channels:
-          - ui
+        channels: [ui]
         hours: null
       - severity: warning
-        channels:
-          - ui
+        channels: [ui]
         hours: null
       - severity: info
-        channels:
-          - ui
+        channels: [ui]
         hours: null
 
   - id: payments
     name: Team Payments
     members:
       - anna
+      - krzysztof
+      - ewa
+      - bartek
     preferences:
       - severity: critical
-        channels:
-          - sms
-          - email
+        channels: [sms, email]
         hours: null
       - severity: warning
-        channels:
-          - email
+        channels: [email]
         hours: null
 
   - id: counterparty-support
     name: Counterparty Support
     members:
       - kasia
+      - karolina
+      - lukasz
+      - natalia
+      - dawid
+      - zuzanna
     preferences:
       - severity: critical
-        channels:
-          - sms
-          - email
+        channels: [sms, email]
         hours: null
       - severity: error
-        channels:
-          - email
+        channels: [email]
         hours: null
       - severity: warning
-        channels:
-          - email
+        channels: [email]
         hours: null

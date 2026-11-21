@@ -11,7 +11,11 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    num::NonZeroU32,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
     time::{Duration, Instant},
 };
 
@@ -22,7 +26,8 @@ use axum::{
     routing::{get, post},
     Extension, Json, Router,
 };
-use common::db::sqlx::{self, types::Uuid};
+use common::db::sqlx::{self, types::Uuid, PgPool};
+use ring::pbkdf2;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -34,6 +39,119 @@ use crate::{
 pub const SESSION_COOKIE_NAME: &str = "alerthub_session";
 const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const MAX_SESSIONS: usize = 4_096;
+const PBKDF2_ITERATIONS: u32 = 100_000;
+const DEFAULT_USER_PASSWORD: &str = "haslo";
+
+static AUTH_USERS_SEEDED: AtomicBool = AtomicBool::new(false);
+
+/// 20 domyślnych kont operatorów (`(username / person_id, display_name)`).
+/// Wszystkie konta są przy starcie zapisywane w tabeli `auth_users` w Postgresie
+/// jako zahashowane hasło (`PBKDF2-HMAC-SHA256`, 100 000 iteracji + unikalna losowa sól).
+pub const SEED_USERS: [(&str, &str); 20] = [
+    ("anna", "Anna Kowalska"),
+    ("jan", "Jan Nowak"),
+    ("ola", "Ola Wiśniewska"),
+    ("piotr", "Piotr Wójcik"),
+    ("tomek", "Tomek Kamiński"),
+    ("kasia", "Kasia Lewandowska"),
+    ("marek", "Marek Zieliński"),
+    ("magda", "Magda Szymańska"),
+    ("michal", "Michał Woźniak"),
+    ("monika", "Monika Dąbrowska"),
+    ("pawel", "Paweł Kozłowski"),
+    ("agnieszka", "Agnieszka Jankowska"),
+    ("krzysztof", "Krzysztof Mazur"),
+    ("ewa", "Ewa Kwiatkowska"),
+    ("bartek", "Bartek Krawczyk"),
+    ("karolina", "Karolina Piotrowska"),
+    ("lukasz", "Łukasz Grabowski"),
+    ("natalia", "Natalia Nowakowska"),
+    ("dawid", "Dawid Pawłowski"),
+    ("zuzanna", "Zuzanna Michalska"),
+];
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+fn from_hex(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    for i in (0..hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex[i..i + 2], 16).ok()?;
+        out.push(byte);
+    }
+    Some(out)
+}
+
+pub fn hash_password(password: &str, salt_hex: &str) -> String {
+    let salt_bytes = from_hex(salt_hex).unwrap_or_else(|| salt_hex.as_bytes().to_vec());
+    let mut out = [0u8; 32];
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        NonZeroU32::new(PBKDF2_ITERATIONS).expect("non-zero iterations"),
+        &salt_bytes,
+        password.as_bytes(),
+        &mut out,
+    );
+    to_hex(&out)
+}
+
+pub fn verify_password(password: &str, salt_hex: &str, expected_hash_hex: &str) -> bool {
+    let Some(salt_bytes) = from_hex(salt_hex) else {
+        return false;
+    };
+    let Some(expected_bytes) = from_hex(expected_hash_hex) else {
+        return false;
+    };
+    pbkdf2::verify(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        NonZeroU32::new(PBKDF2_ITERATIONS).expect("non-zero iterations"),
+        &salt_bytes,
+        password.as_bytes(),
+        &expected_bytes,
+    )
+    .is_ok()
+}
+
+pub async fn ensure_auth_users_seeded(db: &PgPool, config_dir: &str) {
+    if AUTH_USERS_SEEDED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    crate::routes::people::ensure_people_seeded(db, config_dir).await;
+
+    for (username, display_name) in SEED_USERS {
+        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM auth_users WHERE username = $1")
+            .bind(username)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+        if exists.is_some() {
+            continue;
+        }
+        let salt_hex = Uuid::new_v4().simple().to_string();
+        let hash_hex = hash_password(DEFAULT_USER_PASSWORD, &salt_hex);
+        let _ = sqlx::query(
+            "INSERT INTO auth_users (username, person_id, display_name, password_salt, password_hash, created_at) \
+             VALUES ($1, $2, $3, $4, $5, now()) ON CONFLICT (username) DO NOTHING",
+        )
+        .bind(username)
+        .bind(username)
+        .bind(display_name)
+        .bind(&salt_hex)
+        .bind(&hash_hex)
+        .execute(db)
+        .await;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthMethod {
@@ -261,7 +379,12 @@ pub async fn resolve_verified_person_id(
 
 #[derive(Deserialize)]
 struct LoginRequest {
-    person_id: String,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    person_id: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
     #[serde(default)]
     token: Option<String>,
 }
@@ -286,11 +409,66 @@ pub fn protected_router() -> Router<AppState> {
 }
 
 async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<LoginRequest>) -> Response {
-    let person_id = req.person_id.trim();
-    if person_id.is_empty() || person_id.len() > 128 || person_id.chars().any(|c| c.is_control()) {
-        return err(StatusCode::BAD_REQUEST, "invalid person_id", "wymagany prawidłowy identyfikator osoby").into_response();
+    ensure_auth_users_seeded(&st.db, &st.config.config_dir).await;
+
+    let raw_user = req
+        .username
+        .as_deref()
+        .or(req.person_id.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    if raw_user.is_empty() || raw_user.len() > 128 || raw_user.chars().any(|c| c.is_control()) {
+        return err(StatusCode::BAD_REQUEST, "invalid username", "Podaj poprawny login użytkownika").into_response();
     }
 
+    // 1. Logowanie hasłem z bazy `auth_users` (PBKDF2-HMAC-SHA256)
+    if let Some(password) = req.password.as_deref() {
+        let row: Option<(String, String, String, String)> = match sqlx::query_as(
+            "SELECT person_id, display_name, password_salt, password_hash FROM auth_users WHERE LOWER(username) = $1",
+        )
+        .bind(&raw_user)
+        .fetch_optional(&st.db)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return db_err(e).into_response(),
+        };
+
+        let Some((person_id, display_name, salt_hex, hash_hex)) = row else {
+            // Wykonaj sztuczną weryfikację PBKDF2, aby zabezpieczyć przed timing-attackiem (enumeracją kont z zewnątrz)
+            let _ = verify_password(
+                password,
+                "00000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            );
+            return err(StatusCode::UNAUTHORIZED, "unauthorized", "Nieprawidłowy login lub hasło").into_response();
+        };
+
+        if !verify_password(password, &salt_hex, &hash_hex) {
+            return err(StatusCode::UNAUTHORIZED, "unauthorized", "Nieprawidłowy login lub hasło").into_response();
+        }
+
+        let session_token = st.auth.create_session(person_id.clone());
+        let mut resp = (
+            StatusCode::OK,
+            Json(json!({
+                "person_id": person_id,
+                "username": raw_user,
+                "name": display_name,
+                "session_token": session_token,
+                "expires_in_secs": SESSION_TTL.as_secs(),
+            })),
+        )
+            .into_response();
+        resp.headers_mut()
+            .insert(header::SET_COOKIE, session_cookie_header(&session_token, SESSION_TTL.as_secs()));
+        return resp;
+    }
+
+    // 2. Kompatybilność wsteczna dla testów API (`person_id` + `token`)
+    let person_id = &raw_user;
     let presented = req
         .token
         .as_deref()
@@ -304,7 +482,7 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
         });
 
     let Some(presented) = presented else {
-        return err(StatusCode::UNAUTHORIZED, "unauthorized", "brak poświadczeń logowania").into_response();
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "Podaj hasło logowania").into_response();
     };
 
     let credential_ok = if st.auth.has_user_tokens() {
@@ -315,7 +493,7 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
     };
 
     if !credential_ok {
-        return err(StatusCode::UNAUTHORIZED, "unauthorized", "nieprawidłowe poświadczenia").into_response();
+        return err(StatusCode::UNAUTHORIZED, "unauthorized", "Nieprawidłowy login lub hasło").into_response();
     }
 
     let name: Option<String> = match sqlx::query_scalar("SELECT name FROM people WHERE id = $1")
@@ -336,6 +514,7 @@ async fn login(State(st): State<AppState>, headers: HeaderMap, Json(req): Json<L
         StatusCode::OK,
         Json(json!({
             "person_id": person_id,
+            "username": person_id,
             "name": name,
             "session_token": session_token,
             "expires_in_secs": SESSION_TTL.as_secs(),

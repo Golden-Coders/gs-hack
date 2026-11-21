@@ -98,8 +98,15 @@ async fn require_token(State(state): State<AppState>, mut req: Request, next: Ne
         .map(str::to_string);
     let cookie_tok = auth::extract_cookie(req.headers(), auth::SESSION_COOKIE_NAME);
 
-    // 1. Server-issued operator session (Bearer or HttpOnly cookie)
-    for candidate in [bearer.as_deref(), cookie_tok.as_deref()].into_iter().flatten() {
+    // 1. Server-issued operator session (Bearer, HttpOnly cookie, or ?token= on /stream)
+    let stream_query_tok: Option<String> = (req.uri().path() == "/stream")
+        .then(|| {
+            req.uri().query().and_then(|q| {
+                q.split('&').find_map(|kv| kv.strip_prefix("token=").map(str::to_string))
+            })
+        })
+        .flatten();
+    for candidate in [bearer.as_deref(), cookie_tok.as_deref(), stream_query_tok.as_deref()].into_iter().flatten() {
         if let Some(person_id) = state.auth.lookup_session(candidate) {
             req.extensions_mut().insert(auth::AuthenticatedOperator {
                 person_id: Some(person_id),
