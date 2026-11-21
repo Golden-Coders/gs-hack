@@ -35,5 +35,5 @@ Kontynuacja zarchiwizowanego `alerting-service-mvp` (numery w nawiasach kwadrato
 
 ## 6. Otwarte kwestie (P1+P2, do decyzji)
 
-- [ ] 6.1 D10: `rule_ids`, `teams` i severity po `severity_override` w `GET /alerts` (dziś puste/z mappingu; filtr `?team=` w `GET /alerts` ignorowany, w SSE działa); weryfikacja: decyzja zapisana w `design.md`, a przy zmianie zachowania delta spec + test HTTP
+- [x] 6.1 D10: `rule_ids`, `teams` i severity po `severity_override` w `GET /alerts` (dziś puste/z mappingu; filtr `?team=` w `GET /alerts` ignorowany, w SSE działa); weryfikacja: decyzja zapisana w `design.md`, a przy zmianie zachowania delta spec + test HTTP
 - [ ] 6.2 Drobne znaleziska testera do decyzji: wyścig grup `sender`/`sender-retry` na tym samym kluczu (podwójna wysyłka w teorii), severity eskalacji z kontekstu zdarzenia zamiast reguły, opóźnienie ≤ 2 s widoku reguł w `runbooks`, brak pozytywnego testu reguły `pricing-warnings` i kanału `ui` jako głównego; weryfikacja: każde naprawione z testem albo świadomie odrzucone z adnotacją tutaj
