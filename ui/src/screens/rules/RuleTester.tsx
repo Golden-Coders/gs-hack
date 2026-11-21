@@ -1,10 +1,16 @@
 // „Testuj na zdarzeniu” (tasks.md 15.1): wklejone zdarzenie albo ostatnie po event_id -> POST /rules/test.
 // Pokazuje wynik każdego warunku z osobna (który liść pasował) i wyrenderowaną prezentację.
 import { useState } from "react";
+import Button from "@atlaskit/button/new";
+import { Check, X } from "lucide-react";
+import Code from "@atlaskit/code/inline";
+import Heading from "@atlaskit/heading";
+import SectionMessage from "@atlaskit/section-message";
+import { Text } from "@atlaskit/primitives/compiled";
 import { api, type Schemas } from "../../api/client";
 import { describeError } from "../../api/request";
 import { formatValue } from "../../components/Presentation";
-import { Card, ErrorBox, Field, Segmented } from "../../ui/primitives";
+import { Card, ErrorBox, Field, Segmented, TextArea, TextInput } from "../../ui/primitives";
 import { OP_LABEL, skeletonFromFields, type Rule } from "./model";
 
 type Explanation = Schemas["Explanation"];
@@ -44,15 +50,7 @@ function nodeLabel(node: string): { kind: "group" | "leaf"; text: string } {
 }
 
 function ResultIcon({ ok }: { ok: boolean }) {
-  return ok ? (
-    <svg className="rt-icon rt-ok" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-      <path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  ) : (
-    <svg className="rt-icon rt-fail" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-      <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
+  return ok ? <Check className="rt-icon rt-ok" size={16} aria-hidden /> : <X className="rt-icon rt-fail" size={16} aria-hidden />;
 }
 
 function ExplanationNode({ e }: { e: Explanation }) {
@@ -61,12 +59,12 @@ function ExplanationNode({ e }: { e: Explanation }) {
     <li>
       <div className={`rt-node ${e.result ? "rt-pass" : "rt-miss"}`}>
         <ResultIcon ok={e.result} />
-        <span className={label.kind === "group" ? "rt-group-label" : "mono rt-leaf-label"}>{label.text}</span>
+        {label.kind === "group" ? <span className="rt-group-label">{label.text}</span> : <Code>{label.text}</Code>}
         <span className="rt-verdict">{e.result ? "spełniony" : "niespełniony"}</span>
         {label.kind === "leaf" && e.actual !== undefined && (
-          <span className="muted rt-actual">
-            w zdarzeniu: <span className="mono">{e.actual === null ? "brak pola" : formatValue(e.actual)}</span>
-          </span>
+          <Text size="small" color="color.text.subtle">
+            w zdarzeniu: <Code>{e.actual === null ? "brak pola" : formatValue(e.actual)}</Code>
+          </Text>
         )}
       </div>
       {e.children.length > 0 && (
@@ -144,9 +142,9 @@ export default function RuleTester({ rule, blockedReason, suggestedFields }: Pro
 
   return (
     <Card title="Testuj na zdarzeniu" className="rules-tester">
-      <p className="muted rules-lead">
+      <Text as="p" color="color.text.subtle">
         Sprawdź, czy reguła (także jeszcze niezapisana) pasuje do zdarzenia, i zobacz, który warunek zadziałał.
-      </p>
+      </Text>
       <Segmented
         label="Źródło zdarzenia"
         value={mode}
@@ -161,46 +159,53 @@ export default function RuleTester({ rule, blockedReason, suggestedFields }: Pro
           label="Zdarzenie (JSON)"
           hint={
             <>
-              Wklej zdarzenie kanoniczne (z polem <code>raw</code>) albo sam payload – trafi do <code>raw</code>.{" "}
-              <button type="button" className="rules-linkish" onClick={insertSkeleton}>
+              Wklej zdarzenie kanoniczne (z polem <Code>raw</Code>) albo sam payload – trafi do <Code>raw</Code>.{" "}
+              <Button appearance="subtle" spacing="compact" onClick={insertSkeleton}>
                 Wstaw szkielet z podpowiedzi pól
-              </button>
+              </Button>
             </>
           }
         >
-          {(f) => <textarea {...f} className="mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />}
+          {(f) => <TextArea {...f} isMonospaced minimumRows={8} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />}
         </Field>
       ) : (
         <Field label="event_id (UUID)">
           {(f) => (
-            <input {...f} className="mono" value={eventId} onChange={(e) => setEventId(e.target.value)} spellCheck={false} autoComplete="off" />
+            <TextInput {...f} isMonospaced value={eventId} onChange={(e) => setEventId(e.currentTarget.value)} spellCheck={false} autoComplete="off" />
           )}
         </Field>
       )}
       <div className="rules-actions">
-        <button type="button" className="primary" onClick={run} disabled={busy || !rule}>
-          {busy ? "Testuję…" : "Uruchom test"}
-        </button>
-        {!rule && blockedReason && <span className="field-hint">{blockedReason}</span>}
+        <Button appearance="primary" onClick={run} isDisabled={!rule} isLoading={busy}>
+          Uruchom test
+        </Button>
+        {!rule && blockedReason && (
+          <Text size="small" color="color.text.subtle">
+            {blockedReason}
+          </Text>
+        )}
       </div>
       {error && <ErrorBox message={error} />}
       {result && (
         <div className="rt-result" aria-live="polite">
-          <p className={`rt-banner ${result.matched ? "rt-banner-pass" : "rt-banner-miss"}`}>
-            <ResultIcon ok={result.matched} />
+          <SectionMessage appearance={result.matched ? "success" : "warning"}>
             {result.matched ? "Reguła pasuje do tego zdarzenia" : "Reguła NIE pasuje do tego zdarzenia"}
-          </p>
-          <h3>Wyjaśnienie</h3>
+          </SectionMessage>
+          <Heading size="xsmall" as="h3">
+            Wyjaśnienie
+          </Heading>
           <ul className="rt-tree">
             <ExplanationNode e={result.explanation} />
           </ul>
-          <h3>Tak wyglądałoby powiadomienie</h3>
+          <Heading size="xsmall" as="h3">
+            Tak wyglądałoby powiadomienie
+          </Heading>
           <div className="rt-rendered">
             <div className="rt-rendered-title">
-              {result.rendered.title || <span className="muted">(pusty tytuł)</span>}
+              {result.rendered.title || <Text color="color.text.subtle">(pusty tytuł)</Text>}
             </div>
             {result.rendered.body && <div className="rt-rendered-body">{result.rendered.body}</div>}
-            {result.rendered.link && <div className="mono rt-rendered-link">{result.rendered.link}</div>}
+            {result.rendered.link && <Code>{result.rendered.link}</Code>}
           </div>
         </div>
       )}

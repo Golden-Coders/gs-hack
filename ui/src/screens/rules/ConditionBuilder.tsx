@@ -1,7 +1,9 @@
 // Kreator drzewa warunków (tasks.md 15.1): grupy „wszystkie / dowolny / nie” i liście „pole – operator – wartość”.
 // Edytowalny odpowiednik ConditionView; stan trzyma właściciel (RuleEditor), tu tylko edycja drzewa.
 import { useEffect, useRef } from "react";
-import { Field } from "../../ui/primitives";
+import Button from "@atlaskit/button/new";
+import { Text } from "@atlaskit/primitives/compiled";
+import { Field, Select, TextInput } from "../../ui/primitives";
 import {
   OPS,
   mapTree,
@@ -35,13 +37,13 @@ function Leaf({ node, ctx, onRemove }: { node: LeafNode; ctx: Ctx; onRemove: () 
     <div className="cb-leaf">
       <Field label="Pole" error={fieldErr}>
         {(f) => (
-          <input
+          <TextInput
             {...f}
             data-focus={node.uid}
-            className="mono"
+            isMonospaced
             list={ctx.fieldListId}
             value={node.field}
-            onChange={(e) => set({ field: e.target.value })}
+            onChange={(e) => set({ field: e.currentTarget.value })}
             placeholder="np. raw.payload.desk"
             autoComplete="off"
             spellCheck={false}
@@ -50,28 +52,19 @@ function Leaf({ node, ctx, onRemove }: { node: LeafNode; ctx: Ctx; onRemove: () 
       </Field>
       <Field label="Warunek">
         {(f) => (
-          <select {...f} value={node.op} onChange={(e) => set({ op: e.target.value as Op })}>
-            {OPS.map((o) => (
-              <option key={o.op} value={o.op}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+          <Select {...f} value={node.op} onChange={(op) => set({ op: op as Op })} options={OPS.map((o) => ({ value: o.op, label: o.label }))} />
         )}
       </Field>
       {node.op !== "exists" && (
         <Field label="Wartość" hint={valueErr ? undefined : opMeta?.hint} error={valueErr}>
-          {(f) => <input {...f} value={node.value} onChange={(e) => set({ value: e.target.value })} autoComplete="off" spellCheck={false} />}
+          {(f) => <TextInput {...f} value={node.value} onChange={(e) => set({ value: e.currentTarget.value })} autoComplete="off" spellCheck={false} />}
         </Field>
       )}
-      <button
-        type="button"
-        className="cb-remove"
-        onClick={onRemove}
-        aria-label={`Usuń warunek ${node.field || "(bez pola)"}`}
-      >
-        Usuń
-      </button>
+      <div className="cb-remove">
+        <Button onClick={onRemove} aria-label={`Usuń warunek ${node.field || "(bez pola)"}`}>
+          Usuń
+        </Button>
+      </div>
     </div>
   );
 }
@@ -79,17 +72,13 @@ function Leaf({ node, ctx, onRemove }: { node: LeafNode; ctx: Ctx; onRemove: () 
 function AddBar({ uid, ctx, canNest = true }: { uid: string; ctx: Ctx; canNest?: boolean }) {
   return (
     <div className="cb-add">
-      <button type="button" data-focus={`add:${uid}`} onClick={() => ctx.add(uid, newLeaf())}>
-        + Dodaj warunek
-      </button>
+      <Button data-focus={`add:${uid}`} onClick={() => ctx.add(uid, newLeaf())}>
+        Dodaj warunek
+      </Button>
       {canNest && (
         <>
-          <button type="button" onClick={() => ctx.add(uid, newGroup("all"))}>
-            + Dodaj grupę
-          </button>
-          <button type="button" onClick={() => ctx.add(uid, newNot())}>
-            + Dodaj „nie”
-          </button>
+          <Button onClick={() => ctx.add(uid, newGroup("all"))}>Dodaj grupę</Button>
+          <Button onClick={() => ctx.add(uid, newNot())}>Dodaj „nie”</Button>
         </>
       )}
     </div>
@@ -98,32 +87,36 @@ function AddBar({ uid, ctx, canNest = true }: { uid: string; ctx: Ctx; canNest?:
 
 function Group({ node, ctx, isRoot, onRemove }: { node: GroupNode; ctx: Ctx; isRoot?: boolean; onRemove?: () => void }) {
   const warn = ctx.errors.warnings[node.uid];
-  const selId = `${node.uid}-mode`;
   return (
     <div className={`cb-group cb-${node.kind}`} role="group" aria-label={node.kind === "all" ? "Grupa: wszystkie warunki" : "Grupa: dowolny warunek"}>
       <div className="cb-group-head">
-        <label htmlFor={selId} className="sr-only">
-          Sposób łączenia warunków w grupie
-        </label>
-        <select
-          id={selId}
-          className="cb-mode"
-          value={node.kind}
-          onChange={(e) => ctx.change(node.uid, (n) => ({ ...(n as GroupNode), kind: e.target.value as "all" | "any" }))}
-        >
-          <option value="all">wszystkie warunki (I)</option>
-          <option value="any">dowolny warunek (LUB)</option>
-        </select>
-        <span className="muted cb-group-hint">
-          {node.kind === "all" ? "alert musi spełniać każdy z poniższych" : "wystarczy, że alert spełnia jeden z poniższych"}
+        <div className="cb-mode">
+          <Select
+            aria-label="Sposób łączenia warunków w grupie"
+            value={node.kind}
+            onChange={(kind) => ctx.change(node.uid, (n) => ({ ...(n as GroupNode), kind: kind as "all" | "any" }))}
+            options={[
+              { value: "all", label: "wszystkie warunki (I)" },
+              { value: "any", label: "dowolny warunek (LUB)" },
+            ]}
+          />
+        </div>
+        <span className="cb-group-hint">
+          <Text size="small" color="color.text.subtle">
+            {node.kind === "all" ? "alert musi spełniać każdy z poniższych" : "wystarczy, że alert spełnia jeden z poniższych"}
+          </Text>
         </span>
         {!isRoot && onRemove && (
-          <button type="button" className="cb-remove" onClick={onRemove} aria-label="Usuń grupę">
+          <Button onClick={onRemove} aria-label="Usuń grupę">
             Usuń grupę
-          </button>
+          </Button>
         )}
       </div>
-      {warn && <p className="field-hint">{warn}</p>}
+      {warn && (
+        <Text as="p" size="small" color="color.text.subtle">
+          {warn}
+        </Text>
+      )}
       <ul className="cb-children">
         {node.children.map((c) => (
           <li key={c.uid}>
@@ -145,13 +138,25 @@ function Not({ node, ctx, onRemove }: { node: NotNode; ctx: Ctx; onRemove: () =>
   return (
     <div className="cb-group cb-not" role="group" aria-label="Negacja: nie">
       <div className="cb-group-head">
-        <span className="cb-not-label">nie</span>
-        <span className="muted cb-group-hint">poniższy warunek NIE może być spełniony</span>
-        <button type="button" className="cb-remove" onClick={onRemove} aria-label="Usuń negację">
+        <span className="cb-not-label">
+          <Text weight="bold" color="color.text.danger">
+            NIE
+          </Text>
+        </span>
+        <span className="cb-group-hint">
+          <Text size="small" color="color.text.subtle">
+            poniższy warunek NIE może być spełniony
+          </Text>
+        </span>
+        <Button onClick={onRemove} aria-label="Usuń negację">
           Usuń „nie”
-        </button>
+        </Button>
       </div>
-      {err && <p className="field-error">{err}</p>}
+      {err && (
+        <Text as="p" color="color.text.danger">
+          {err}
+        </Text>
+      )}
       {node.child ? (
         <Node
           node={node.child}

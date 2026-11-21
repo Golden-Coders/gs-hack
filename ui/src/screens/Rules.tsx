@@ -1,14 +1,21 @@
 // Reguły — edytor: tasks.md 15.1. Lista reguł + edytor (kreator drzewa warunków ↔ YAML, odbiorcy, prezentacja,
 // „testuj na zdarzeniu”). Reguła wskazuje KTO ma dostać alert; JAK (kanały) wynika z preferencji osoby.
 import { useCallback, useEffect, useState } from "react";
+import Button from "@atlaskit/button/new";
+import { useFlags } from "@atlaskit/flag";
+import { Text } from "@atlaskit/primitives/compiled";
+import Code from "@atlaskit/code/inline";
+import { Plus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
 import { useResource } from "../api/useResource";
-import { Badge } from "../components/Badges";
-import { Empty, ErrorBox, Loading } from "../ui/primitives";
+import { adsIcon } from "../ui/icons";
+import { Empty, ErrorBox, Loading, PageHeader, StatusLozenge } from "../ui/primitives";
 import RuleEditor from "./rules/RuleEditor";
 import type { Rule } from "./rules/model";
 import "./Rules.css";
+
+const PlusIcon = adsIcon(Plus);
 
 type Person = Schemas["PersonDef"];
 type Team = Schemas["TeamDef"];
@@ -40,7 +47,7 @@ export default function Rules() {
   });
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { showFlag } = useFlags();
 
   useEffect(() => {
     if (resource.data) setRules(resource.data.rules);
@@ -54,7 +61,6 @@ export default function Rules() {
     (next: { rule?: string; creating?: boolean }) => {
       if (dirty && !window.confirm("Masz niezapisane zmiany w regule. Odrzucić je?")) return;
       setDirty(false);
-      setNotice(null);
       setParams(next.creating ? { new: "1" } : next.rule ? { rule: next.rule } : {});
     },
     [dirty, setParams],
@@ -69,7 +75,7 @@ export default function Rules() {
     });
     if (wasNew) {
       setDirty(false);
-      setNotice(`Utworzono regułę „${rule.name}”. Obowiązuje dla kolejnych alertów.`);
+      showFlag({ title: `Utworzono regułę „${rule.name}”`, description: "Obowiązuje dla kolejnych alertów.", appearance: "success", isAutoDismiss: true });
       setParams({ rule: rule.id });
     }
   }
@@ -77,27 +83,25 @@ export default function Rules() {
   function onDeleted(id: string) {
     setRules((prev) => (prev ?? []).filter((r) => r.id !== id));
     setDirty(false);
-    setNotice("Reguła została usunięta.");
+    showFlag({ title: "Reguła została usunięta", appearance: "success", isAutoDismiss: true });
     setParams({});
   }
 
   return (
     <section className="rules-screen">
-      <div className="rules-header">
-        <h1>Reguły</h1>
-        <button type="button" className="primary" onClick={() => select({ creating: true })}>
-          + Nowa reguła
-        </button>
-      </div>
-      <p className="muted rules-lead">
+      <PageHeader
+        actions={
+          <Button appearance="primary" iconBefore={PlusIcon} onClick={() => select({ creating: true })}>
+            Nowa reguła
+          </Button>
+        }
+      >
+        Reguły
+      </PageHeader>
+      <Text as="p" color="color.text.subtle">
         Reguła mówi, które alerty kogo dotyczą i jak mają wyglądać. Zmiany obowiązują od razu, bez restartu.
-      </p>
+      </Text>
       {resource.error && <ErrorBox message={resource.error} onRetry={resource.reload} disabled={resource.loading} />}
-      {notice && (
-        <p className="rules-saved" role="status">
-          {notice}
-        </p>
-      )}
 
       <div className="rules-layout">
         <div className="rules-list" role="region" aria-label="Lista reguł">
@@ -106,6 +110,7 @@ export default function Rules() {
           <ul>
             {rules?.map((r) => (
               <li key={r.id}>
+                {/* eslint-disable-next-line @atlaskit/design-system/no-html-button -- wiersz wyboru z wielolinijkową zawartością; Pressable wymaga xcss, a styl wiersza jest w Rules.css */}
                 <button
                   type="button"
                   className="rules-item"
@@ -114,10 +119,12 @@ export default function Rules() {
                 >
                   <span className="rules-item-name">{r.name}</span>
                   <span className="rules-item-meta">
-                    <span className="mono">{r.id}</span>
-                    {r.enabled === false ? <Badge tone="gray">wyłączona</Badge> : <Badge tone="green">włączona</Badge>}
+                    <Code>{r.id}</Code>
+                    <StatusLozenge domain="rule" value={r.enabled !== false} />
                   </span>
-                  <span className="rules-item-rec muted">→ {recipientsLabel(r, people, teams) || "brak odbiorców"}</span>
+                  <Text size="small" color="color.text.subtle">
+                    → {recipientsLabel(r, people, teams) || "brak odbiorców"}
+                  </Text>
                 </button>
               </li>
             ))}
