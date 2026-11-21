@@ -43,6 +43,7 @@ dependencies = [
  "contracts",
  "futures",
  "lifecycle",
+ "runbooks",
  "serde",
  "serde_json",
  "serde_yaml",
