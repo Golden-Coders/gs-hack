@@ -1,6 +1,9 @@
 // Kolejka zatwierdzeń — tasks.md 14.3.
 // Zatwierdzać i odrzucać można tylko tutaj (z UI); autorem jest wybrana tożsamość („działam jako”).
+import { Text } from "@atlaskit/primitives/compiled";
 import { useState } from "react";
+import Button from "@atlaskit/button/new";
+import { Code } from "@atlaskit/code";
 import { Link } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
@@ -8,7 +11,7 @@ import { usePollWhenQuiet, useStream } from "../api/stream";
 import { useResource } from "../api/useResource";
 import { RiskBadge } from "../components/Badges";
 import { formatTime } from "../ui/format";
-import { ConfirmInline, Empty, ErrorBox, Loading } from "../ui/primitives";
+import { ConfirmInline, Empty, ErrorBox, Loading, PageHeader } from "../ui/primitives";
 import "./Approvals.css";
 
 type Pending = Schemas["PendingApproval"];
@@ -37,7 +40,7 @@ function formatSince(iso: string): string {
 
 function Params({ params }: { params: Pending["params"] }) {
   const entries = Object.entries(params ?? {});
-  if (entries.length === 0) return <span className="muted">brak parametrów</span>;
+  if (entries.length === 0) return <Text color="color.text.subtle">brak parametrów</Text>;
   return (
     <dl className="approval-params">
       {entries.map(([k, v]) => (
@@ -105,23 +108,18 @@ export default function Approvals() {
 
   return (
     <section className="approvals">
-      <header className="approvals-head">
-        <h1>Kolejka zatwierdzeń</h1>
-        <button type="button" onClick={list.reload}>
-          Odśwież
-        </button>
-      </header>
-      <p className="muted">
+      <PageHeader actions={<Button onClick={list.reload}>Odśwież</Button>}>Kolejka zatwierdzeń</PageHeader>
+      <Text as="p" color="color.text.subtle">
         Kroki runbooków czekające na decyzję człowieka. Zatwierdzenie jest możliwe tylko tutaj
         {personId ? (
           <>
             {" "}
-            — decyzję zapiszemy jako <strong>{personId}</strong>.
+            — decyzję zapiszemy jako <Text as="strong" weight="bold">{personId}</Text>.
           </>
         ) : (
           "."
         )}
-      </p>
+      </Text>
 
       {!personId && (
         <ErrorBox message="Wybierz tożsamość („działam jako” w panelu bocznym), aby zatwierdzać i odrzucać kroki." />
@@ -139,11 +137,11 @@ export default function Approvals() {
             const key = keyOf(a);
             const isBusy = busy.has(key);
             return (
-              <li key={key} className={`approval${a.risk === "high" ? " approval-high" : ""}`}>
+              <li key={key} className="approval">
                 <div className="approval-main">
                   <div className="approval-title">
                     <RiskBadge risk={a.risk} />
-                    <strong>{a.text}</strong>
+                    <Text as="strong" weight="bold">{a.text}</Text>
                   </div>
                   <dl className="approval-meta">
                     <div>
@@ -158,7 +156,7 @@ export default function Approvals() {
                     </div>
                     <div>
                       <dt>Akcja</dt>
-                      <dd>{a.action ? <code>{a.action}</code> : <span className="muted">brak (krok ręczny)</span>}</dd>
+                      <dd>{a.action ? <Code>{a.action}</Code> : <Text color="color.text.subtle">brak (krok ręczny)</Text>}</dd>
                     </div>
                     <div>
                       <dt>Czeka od</dt>
@@ -174,14 +172,9 @@ export default function Approvals() {
                   {rowErrors[key] && <ErrorBox message={rowErrors[key]} />}
                 </div>
                 <div className="approval-actions">
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={isBusy || !personId}
-                    onClick={() => void decide(a, "approve")}
-                  >
+                  <Button appearance="primary" isLoading={isBusy} isDisabled={!personId} onClick={() => void decide(a, "approve")}>
                     {isBusy ? "Wysyłanie…" : "Zatwierdź"}
-                  </button>
+                  </Button>
                   <ConfirmInline
                     label="Odrzuć"
                     question="Odrzucić ten krok?"

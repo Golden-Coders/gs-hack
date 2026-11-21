@@ -1,5 +1,11 @@
 // Akcje — tasks.md 15.3: rejestr akcji (builtin tylko do odczytu), formularz akcji HTTP
 // oraz lista akcji brakujących w rejestrze z przyciskiem „Dodaj”.
+import { Text } from "@atlaskit/primitives/compiled";
+import VisuallyHidden from "@atlaskit/visually-hidden";
+import ButtonGroup from "@atlaskit/button/button-group";
+import Button from "@atlaskit/button/new";
+import { Code } from "@atlaskit/code";
+import { useFlags } from "@atlaskit/flag";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
@@ -7,7 +13,7 @@ import { send } from "../api/request";
 import { useStream } from "../api/stream";
 import { useResource } from "../api/useResource";
 import { RiskBadge } from "../components/Badges";
-import { Card, ConfirmInline, Empty, ErrorBox, Loading } from "../ui/primitives";
+import { Card, ConfirmInline, Empty, ErrorBox, Loading, PageHeader } from "../ui/primitives";
 import ActionForm from "./actions/ActionForm";
 import { emptyForm, fromAction, type ActionDef, type FormState } from "./actions/model";
 import "./Actions.css";
@@ -21,7 +27,7 @@ const ADDED_HIDE_MS = 15_000;
 
 export default function Actions() {
   const [form, setForm] = useState<FormTarget | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { showFlag } = useFlags();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   // Świeżo zapisane akcje: do czasu przeładowania rejestru przez backend pokazujemy je lokalnie.
@@ -54,14 +60,18 @@ export default function Actions() {
   });
 
   function openForm(target: Omit<FormTarget, "key">) {
-    setNotice(null);
     setForm({ key: ++seq.current, ...target });
   }
 
   function onSaved(saved: ActionDef) {
     added.current.set(saved.name, { at: Date.now(), action: saved });
     setForm(null);
-    setNotice(`Zapisano akcję ${saved.name}. Zmiana jest widoczna w rejestrze w ciągu kilku sekund.`);
+    showFlag({
+      title: `Zapisano akcję ${saved.name}`,
+      description: "Zmiana jest widoczna w rejestrze w ciągu kilku sekund.",
+      appearance: "success",
+      isAutoDismiss: true,
+    });
     resource.refresh();
   }
 
@@ -74,7 +84,12 @@ export default function Actions() {
     } else {
       added.current.delete(name);
       setForm((cur) => (cur && !cur.isNew && cur.initial.name === name ? null : cur));
-      setNotice(`Usunięto akcję ${name}. Kroki runbooków, które jej używały, staną się ręczne.`);
+      showFlag({
+        title: `Usunięto akcję ${name}`,
+        description: "Kroki runbooków, które jej używały, staną się ręczne.",
+        appearance: "success",
+        isAutoDismiss: true,
+      });
       resource.refresh();
     }
     setDeleting(false);
@@ -85,28 +100,24 @@ export default function Actions() {
 
   return (
     <section className="actions">
-      <header className="act-head">
-        <h1>Akcje</h1>
-        <div className="act-head-btns">
-          <button type="button" onClick={resource.reload}>
-            Odśwież
-          </button>
-          <button type="button" className="primary" onClick={() => openForm({ initial: emptyForm(), isNew: true })}>
-            Nowa akcja HTTP
-          </button>
-        </div>
-      </header>
-      <p className="muted">
+      <PageHeader
+        actions={
+          <ButtonGroup label="Operacje na rejestrze akcji">
+            <Button onClick={resource.reload}>Odśwież</Button>
+            <Button appearance="primary" onClick={() => openForm({ initial: emptyForm(), isNew: true })}>
+              Nowa akcja HTTP
+            </Button>
+          </ButtonGroup>
+        }
+      >
+        Akcje
+      </PageHeader>
+      <Text as="p" color="color.text.subtle">
         Rejestr akcji, które mogą wykonywać runbooki. Wykonywane są wyłącznie akcje z rejestru; akcje o wysokim ryzyku
         zawsze wymagają zatwierdzenia w UI.
-      </p>
+      </Text>
 
       {resource.error && <ErrorBox message={resource.error} onRetry={resource.reload} disabled={resource.loading} />}
-      {notice && (
-        <p className="act-notice" role="status">
-          {notice}
-        </p>
-      )}
 
       {form && (
         <div ref={formRef} className="act-form-wrap">
@@ -123,10 +134,10 @@ export default function Actions() {
       )}
 
       <Card title="Brakujące akcje" loading={resource.loading && missing !== null} className="act-block">
-        <p className="muted">
+        <Text as="p" color="color.text.subtle">
           Akcje użyte w runbookach, których nie ma w rejestrze. Takie kroki są dziś wykonywane ręcznie — po dodaniu akcji
           staną się automatyczne.
-        </p>
+        </Text>
         {visibleMissing === null && !resource.error && <Loading />}
         {visibleMissing?.length === 0 && <Empty>Brak brakujących akcji.</Empty>}
         {visibleMissing && visibleMissing.length > 0 && (
@@ -141,36 +152,32 @@ export default function Actions() {
                     Wykonań ręcznych
                   </th>
                   <th scope="col">
-                    <span className="sr-only">Operacje</span>
+                    <VisuallyHidden>Operacje</VisuallyHidden>
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {visibleMissing.map((m) => (
                   <tr key={m.name}>
-                    <th scope="row" className="mono">
-                      {m.name}
+                    <th scope="row">
+                      <Code>{m.name}</Code>
                     </th>
                     <td>
                       <span className="act-count">{m.runbook_ids.length}</span>{" "}
                       {m.runbook_ids.map((id, i) => (
                         <span key={id}>
                           {i > 0 && ", "}
-                          <Link to="/runbooks" className="mono" title="Przejdź do runbooków">
-                            {id}
+                          <Link to="/runbooks" title="Przejdź do runbooków">
+                            <Code>{id}</Code>
                           </Link>
                         </span>
                       ))}
                     </td>
                     <td className="num">{m.manual_executions}</td>
                     <td className="act-row-btns">
-                      <button
-                        type="button"
-                        aria-label={`Dodaj akcję ${m.name}`}
-                        onClick={() => openForm({ initial: emptyForm(m.name), isNew: true })}
-                      >
+                      <Button aria-label={`Dodaj akcję ${m.name}`} onClick={() => openForm({ initial: emptyForm(m.name), isNew: true })}>
                         Dodaj
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -198,7 +205,7 @@ export default function Actions() {
                     Wersja
                   </th>
                   <th scope="col">
-                    <span className="sr-only">Operacje</span>
+                    <VisuallyHidden>Operacje</VisuallyHidden>
                   </th>
                 </tr>
               </thead>
@@ -206,38 +213,39 @@ export default function Actions() {
                 {actions.map((a) => {
                   const http = a.kind === "http";
                   return (
-                    <tr key={a.name} className={a.risk === "high" ? "act-high" : undefined}>
-                      <th scope="row" className="mono">
-                        {a.name}
+                    <tr key={a.name}>
+                      <th scope="row">
+                        <Code>{a.name}</Code>
                       </th>
                       <td>
                         {a.kind === "builtin" ? "wbudowana" : "HTTP"}
                         {http && a.http && (
-                          <div className="act-endpoint mono">
-                            {a.http.method} {a.http.url}
+                          <div className="act-endpoint">
+                            <Code>
+                              {a.http.method} {a.http.url}
+                            </Code>
                           </div>
                         )}
                       </td>
                       <td>
                         <RiskBadge risk={a.risk} />
                       </td>
-                      <td>{a.description ?? <span className="muted">—</span>}</td>
+                      <td>{a.description ?? <Text color="color.text.subtle">—</Text>}</td>
                       <td className="num">{a.version ?? 1}</td>
                       <td className="act-row-btns">
-                        {!http && <span className="muted">tylko do odczytu</span>}
+                        {!http && <Text color="color.text.subtle">tylko do odczytu</Text>}
                         {http && (
                           <>
-                            <button
-                              type="button"
+                            <Button
                               aria-label={`Edytuj akcję ${a.name}`}
                               onClick={() => openForm({ initial: fromAction(a), isNew: false, version: a.version })}
                             >
                               Edytuj
-                            </button>
+                            </Button>
                             <ConfirmInline
                               label={
                                 <>
-                                  Usuń<span className="sr-only"> akcję {a.name}</span>
+                                  Usuń<VisuallyHidden> akcję {a.name}</VisuallyHidden>
                                 </>
                               }
                               question="Usunąć?"
