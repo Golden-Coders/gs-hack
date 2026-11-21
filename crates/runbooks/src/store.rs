@@ -85,19 +85,34 @@ pub async fn sync_files(pool: &PgPool, config_dir: &Path) -> anyhow::Result<()> 
         .execute(pool)
         .await?;
     }
-    sync_dir(pool, &config_dir.join("actions"), "actions", "name", |file, text| {
-        let def = parse::parse_action(file, text)?;
-        registry::validate_action(&def).map_err(|e| format!("{file}: {e}"))?;
-        let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
-        Ok((def.name, val))
-    })
-    .await?;
-    sync_dir(pool, &config_dir.join("runbooks"), "runbooks", "id", |file, text| {
-        let def = parse::parse_runbook(file, text)?;
-        let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
-        Ok((def.id, val))
-    })
-    .await
+    // Seed akcji HTTP z plików wykonujemy tylko wtedy, gdy w bazie nie ma jeszcze żadnych akcji HTTP
+    // (dzięki temu użytkownik może swobodnie zmieniać nazwy, edytować i usuwać akcje w UI bez nadpisywania co 2s).
+    let custom_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM actions WHERE source_file IS DISTINCT FROM 'builtin'")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(1);
+    if custom_count == 0 {
+        sync_dir(pool, &config_dir.join("actions"), "actions", "name", |file, text| {
+            let def = parse::parse_action(file, text)?;
+            registry::validate_action(&def).map_err(|e| format!("{file}: {e}"))?;
+            let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
+            Ok((def.name, val))
+        })
+        .await?;
+    }
+    let rb_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runbooks")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(1);
+    if rb_count == 0 {
+        sync_dir(pool, &config_dir.join("runbooks"), "runbooks", "id", |file, text| {
+            let def = parse::parse_runbook(file, text)?;
+            let val = serde_json::to_value(&def).map_err(|e| e.to_string())?;
+            Ok((def.id, val))
+        })
+        .await?;
+    }
+    Ok(())
 }
 
 /// `table`/`key_col` to stałe z kodu (nie dane od użytkownika), więc `format!` jest bezpieczny.

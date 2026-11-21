@@ -1,7 +1,5 @@
-// Runbooki dopasowane do alertu: MANUAL = treść Markdown, AUTOMATIC = kroki ze statusem i komendami.
-// Zatwierdzanie (approve/reject) jest tylko w kolejce `/approvals` – tu tylko status i link.
+// Runbooki dopasowane do alertu: uproszczony widok kroków oraz bezpośredni link do konkretnego kafelka w /approvals.
 import { Text } from "@atlaskit/primitives/compiled";
-import { Code } from "@atlaskit/code";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../../api/client";
@@ -14,16 +12,8 @@ import { Card, Empty, StatusLozenge, TextInput } from "../../ui/primitives";
 import { useResultFlag } from "./flags";
 import { send } from "../../api/request";
 import type { Resource } from "../../api/useResource";
-import { formatTime } from "../../ui/format";
 
 type Command = "done" | "retry" | "skip" | "manual_mode";
-
-const STEP_TYPE: Record<Schemas["StepState"]["type"], string> = {
-  check: "sprawdzenie",
-  action: "akcja",
-  manual: "ręczny",
-  note: "notatka",
-};
 
 export default function Runbooks({
   resource,
@@ -67,15 +57,19 @@ export default function Runbooks({
           <header>
             <Heading size="small" as="h3">{rb.title}</Heading>
             <StatusLozenge domain="runbookKind" value={rb.kind} />
-            {rb.episode != null && <span className="muted">epizod #{rb.episode}</span>}
           </header>
           {rb.kind === "manual" && rb.body && <Markdown source={rb.body} />}
-          {rb.kind === "automatic" && rb.steps.length === 0 && <Text as="p" color="color.text.subtle">Runbook bez kroków.</Text>}
+          {rb.kind === "automatic" && rb.steps.length === 0 && (
+            <Text as="p" color="color.text.subtle">Runbook bez kroków.</Text>
+          )}
           {rb.steps.length > 0 && (
             <ol className="ad-steps">
               {rb.steps.map((s, i) => {
                 const runId = rb.run_id;
                 const key = `${runId}/${s.step_id}`;
+                const approvalTarget = runId
+                  ? `/approvals?step=${encodeURIComponent(`${runId}:${s.step_id}`)}#approval-${runId}-${s.step_id}`
+                  : "/approvals";
                 return (
                   <li key={s.step_id} className="ad-step">
                     <div className="ad-step-main">
@@ -83,31 +77,11 @@ export default function Runbooks({
                       <StepStatusBadge status={s.status} />
                       <span className="ad-step-text">{s.text}</span>
                     </div>
-                    <div className="ad-step-meta muted">
-                      {STEP_TYPE[s.type] ?? s.type}
-                      {s.action && (
-                        <>
-                          {" · "}
-                          <Code>{s.action}</Code>
-                        </>
-                      )}
-                      {s.approval === "required" && " · wymaga zatwierdzenia"}
-                      {s.automation === "manual" && s.type === "action" && " · do wykonania ręcznie (akcja spoza rejestru)"}
-                      {s.condition && ` · jeśli: ${s.condition}`}
-                      {s.attempt > 0 && ` · próba ${s.attempt}`}
-                      {` · ${formatTime(s.updated_at)}`}
-                    </div>
-                    {s.result && (
-                      <div className={s.status === "failed" ? "ad-step-result ad-error-text" : "ad-step-result"}>
-                        Wynik: {s.result}
-                      </div>
-                    )}
                     {s.note && <div className="ad-step-result">Notatka: {s.note}</div>}
 
                     {s.status === "waiting_approval" && (
                       <div className="ad-step-actions">
-                        <Text>Czeka na zatwierdzenie.</Text>
-                        <Link to="/approvals">Przejdź do zatwierdzeń</Link>
+                        <Link to={approvalTarget}>Przejdź do zatwierdzenia →</Link>
                       </div>
                     )}
                     {runId && s.status === "failed" && (

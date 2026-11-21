@@ -1,16 +1,111 @@
-/* Układ ekranu; tabelę, lozenge i podpowiedzi dają komponenty ADS. */
-.person-name { font-weight: var(--ds-font-weight-semibold); }
-.person-id { color: var(--ds-text-subtle); font-family: var(--ds-font-family-code); font: var(--ds-font-body-small); }
-.contacts, .prefs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--ds-space-050); }
-.contacts li { display: flex; gap: var(--ds-space-100); align-items: baseline; }
-.contact-channel { color: var(--ds-text-subtle); min-width: 40px; font: var(--ds-font-body-small); }
-.pref { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ds-space-075); }
-.pref-arrow { color: var(--ds-text-subtle); }
-.pref-hours { color: var(--ds-text-subtle); font: var(--ds-font-body-small); }
-.fallback { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ds-space-075); }
-.ui-fallback-note { margin: var(--ds-space-100) 0 var(--ds-space-150); color: var(--ds-text-subtle); }
-.team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--ds-space-150); }
-.team { background: var(--ds-surface); border: var(--ds-border-width) solid var(--ds-border); border-radius: var(--ds-radius-medium); padding: var(--ds-space-150) var(--ds-space-200); }
-.team h3 { margin: 0; font: var(--ds-font-heading-small); }
-.team h4 { margin: var(--ds-space-150) 0 var(--ds-space-050); font: var(--ds-font-body-small); text-transform: uppercase; color: var(--ds-text-subtle); }
-.members { display: flex; flex-wrap: wrap; gap: var(--ds-space-050); }
+/* Przejrzysty układ ekranu Teams — lista zespołów po lewej, przypisywanie osób z listy po prawej */
+.tm-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-200);
+}
+
+.tm-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--ds-space-250);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .tm-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tm-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.tm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.tm-item {
+  width: 100%;
+  text-align: left;
+  background: var(--ds-surface);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-medium);
+  padding: var(--ds-space-150);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-050);
+  font: inherit;
+  color: inherit;
+}
+
+.tm-item:hover {
+  background: var(--ds-surface-hovered);
+}
+
+.tm-item.active {
+  border-color: var(--ds-border-selected);
+  background: var(--ds-background-selected);
+}
+
+.tm-item-title {
+  font-weight: var(--ds-font-weight-semibold);
+  word-break: break-word;
+}
+
+.tm-item-sub {
+  font: var(--ds-font-body-small);
+  color: var(--ds-text-subtle);
+}
+
+/* Edytor zespołu */
+.tm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-200);
+}
+
+.tm-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tm-people-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.tm-person-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-150);
+  padding: var(--ds-space-100) var(--ds-space-150);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-medium);
+  background: var(--ds-surface);
+  flex-wrap: wrap;
+}
+
+.tm-person-row.checked {
+  border-color: var(--ds-border-selected);
+  background: var(--ds-background-selected);
+}
+
+.tm-savebar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+  padding-top: var(--ds-space-100);
+}

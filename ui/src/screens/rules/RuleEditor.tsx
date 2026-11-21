@@ -1,212 +1,223 @@
-// Edytor jednej reguły (tasks.md 15.1): zakładki „Kreator” i „YAML” nad jednym stanem formularza,
-// podpowiedzi pól, odbiorcy, prezentacja, nadpisanie severity, test na zdarzeniu, zapis i usuwanie.
-import { useEffect, useMemo, useRef, useState } from "react";
+// Przejrzysty, maksymalnie prosty edytor reguły:
+// 1. Panel komunikacji z AI (gotowy do podpięcia pod backend)
+// 2. Nazwa + priorytet
+// 3. Płaska, czytelna lista warunków (Pole -> Operator -> Wartość)
+// 4. Wybór odbiorców (Zespoły / Osoby)
+import { useEffect, useMemo, useState } from "react";
 import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
-import { useFlags } from "@atlaskit/flag";
 import { ErrorMessage } from "@atlaskit/form";
 import SectionMessage from "@atlaskit/section-message";
 import { Text } from "@atlaskit/primitives/compiled";
-import { api, type Schemas } from "../../api/client";
-import Lozenge from "@atlaskit/lozenge";
-import { paletteColor } from "../../components/colors";
+import { Sparkles } from "lucide-react";
+import { api, API_URL, type Schemas } from "../../api/client";
 import { describeError, send } from "../../api/request";
-import { Card, Checkbox, ConfirmInline, ErrorBox, Field, Select, Tabs, TextArea, TextInput } from "../../ui/primitives";
-import ConditionBuilder from "./ConditionBuilder";
-import RuleTester from "./RuleTester";
+import { getPersonId, getSessionToken } from "../../api/session";
+import { adsIcon } from "../../ui/icons";
+import { Card, Checkbox, ConfirmInline, ErrorBox, Field, Segmented, Select, TextArea, TextInput } from "../../ui/primitives";
 import {
   CANONICAL_FIELDS,
-  COLORS,
+  OPS,
   SEVERITIES,
   emptyForm,
   findLeaves,
   formToRule,
-  guessSchema,
-  newUid,
-  parseRuleYaml,
+  newLeaf,
   ruleToForm,
-  ruleToYaml,
   slugify,
   validateForm,
+  type LeafNode,
+  type Op,
   type Recipient,
   type Rule,
   type RuleForm,
-  type YamlResult,
 } from "./model";
+
+const SparklesIcon = adsIcon(Sparkles);
 
 type Person = Schemas["PersonDef"];
 type Team = Schemas["TeamDef"];
-type YamlFailure = Extract<YamlResult, { ok: false }>;
 
 const FIELD_LIST_ID = "rule-field-options";
-const SCHEMA_LIST_ID = "rule-schema-options";
+
+const COMMON_FIELDS = [
+  ...CANONICAL_FIELDS,
+  "raw.type",
+  "raw.error.code",
+  "raw.workflowName",
+  "raw.alertname",
+  "raw.labels.service",
+  "raw.labels.region",
+  "raw.payload.desk",
+  "raw.payload.reason",
+  "raw.payload.notional",
+  "service",
+];
 
 interface Props {
-  /** Edytowana reguła; null = nowa. */
   initial: Rule | null;
   people: Person[];
   teams: Team[];
-  /** Znane schematy (z mappingów) – podpowiedzi do wyboru schematu dla podpowiedzi pól. */
   schemas: string[];
   onSaved: (rule: Rule, wasNew: boolean) => void;
   onDeleted: (id: string) => void;
   onDirtyChange: (dirty: boolean) => void;
 }
 
-/** Błąd zapisu z backendu; walidacja YAML po stronie serwera podaje też numer linii. */
 function apiMessage(error: unknown, response: Response): string {
   const line = (error as { line?: number | null } | undefined)?.line;
   return `${describeError(error, response)}${line ? ` (linia ${line})` : ""}`;
 }
 
-function ColorSelect({ id, value, onChange, label, noneLabel }: { id: string; value: string; onChange: (v: string) => void; label: string; noneLabel: string }) {
-  const color = paletteColor(value);
-  const options = [
-    { value: "", label: noneLabel },
-    ...COLORS.map((c) => ({ value: c.value, label: c.label })),
-    ...(value && !COLORS.some((c) => c.value === value) ? [{ value, label: `${value} (nieznany)` }] : []),
-  ];
-  return (
-    <span className="rules-color">
-      <span className="rules-swatch" style={color ? { background: color.bg, borderColor: color.fg } : undefined} aria-hidden="true" />
-      <span className="rules-color-select">
-        <Select id={id} value={value} onChange={onChange} options={options} aria-label={label} />
-      </span>
-    </span>
-  );
-}
-
-export default function RuleEditor({ initial, people, teams, schemas, onSaved, onDeleted, onDirtyChange }: Props) {
+export default function RuleEditor({ initial, people, teams, onSaved, onDeleted, onDirtyChange }: Props) {
   const isNew = initial === null;
   const [initialForm] = useState<RuleForm>(() => (initial ? ruleToForm(initial) : emptyForm()));
   const [form, setForm] = useState<RuleForm>(initialForm);
   const [baseline, setBaseline] = useState(() => JSON.stringify(formToRule(initialForm)));
-  const [tab, setTab] = useState<"wizard" | "yaml">("wizard");
-  const [yamlText, setYamlText] = useState("");
-  const [yamlError, setYamlError] = useState<YamlFailure | null>(null);
-  // Niepoprawny YAML, z którego wyszliśmy do kreatora: wracamy do niego, jeśli kreator nic nie zmienił.
-  const brokenYaml = useRef<{ text: string; error: YamlFailure; snapshot: string } | null>(null);
-  const [idTouched, setIdTouched] = useState(!isNew);
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const { showFlag } = useFlags();
-  const [schemaInput, setSchemaInput] = useState<string | null>(null);
-  const [suggested, setSuggested] = useState<string[]>([]);
+
+  // Panel AI (połączony z lokalnym modelem Ollama i tool-callami przez POST /rules/draft)
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiToolInfo, setAiToolInfo] = useState<string | null>(null);
 
   const rule = useMemo(() => formToRule(form), [form]);
   const snapshot = useMemo(() => JSON.stringify(rule), [rule]);
-  const dirty = snapshot !== baseline || (tab === "yaml" && yamlError !== null);
+  const dirty = snapshot !== baseline;
   const errors = useMemo(() => validateForm(form, isNew), [form, isNew]);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 
-  // Ostrzeżenie przy zamknięciu karty z niezapisanymi zmianami.
-  useEffect(() => {
-    if (!dirty) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
-
-  // ---- podpowiedzi pól (GET /fields) dla schematu wpisanego lub wykrytego z warunku `schema = …`
-  const guessed = guessSchema(form.root);
-  const schema = (schemaInput ?? guessed).trim();
-  useEffect(() => {
-    if (!schema) {
-      setSuggested([]);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(async () => {
-      try {
-        const { data } = await api.GET("/fields", { params: { query: { schema } } });
-        if (!cancelled) setSuggested(data ?? []);
-      } catch {
-        if (!cancelled) setSuggested([]);
-      }
-    }, 300);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [schema]);
-  const fieldOptions = useMemo(() => [...new Set([...CANONICAL_FIELDS, ...suggested])], [suggested]);
-
-  // ---- zmiany formularza
   const update = (patch: Partial<RuleForm>) => setForm((f) => ({ ...f, ...patch }));
-  const onName = (name: string) => setForm((f) => ({ ...f, name, id: idTouched ? f.id : slugify(name) }));
+  const onName = (name: string) =>
+    setForm((f) => ({
+      ...f,
+      name,
+      id: isNew ? slugify(name) || "nowa-regula" : f.id,
+    }));
 
-  function switchTab(next: "wizard" | "yaml") {
-    if (next === tab) return;
-    if (next === "yaml") {
-      const b = brokenYaml.current;
-      if (b && b.snapshot === snapshot) {
-        setYamlText(b.text);
-        setYamlError(b.error);
-      } else {
-        setYamlText(ruleToYaml(rule));
-        setYamlError(null);
-        brokenYaml.current = null;
-      }
-    } else if (yamlError) {
-      brokenYaml.current = { text: yamlText, error: yamlError, snapshot };
-    }
-    setTab(next);
+  // Płaska lista warunków z głównej grupy (prosto i czytelnie)
+  const leaves: LeafNode[] = useMemo(() => {
+    const direct = form.root.children.filter((c): c is LeafNode => c.kind === "leaf");
+    return direct.length > 0 ? direct : findLeaves(form.root);
+  }, [form.root]);
+
+  function setLeaves(nextLeaves: LeafNode[], mode: "all" | "any" = form.root.kind) {
+    update({
+      root: {
+        ...form.root,
+        kind: mode,
+        children: nextLeaves,
+      },
+    });
   }
 
-  function onYamlChange(text: string) {
-    setYamlText(text);
-    const r = parseRuleYaml(text, form.version);
-    if (!r.ok) {
-      setYamlError(r);
-      return;
-    }
-    if (!isNew && initial && r.rule.id !== initial.id) {
-      setYamlError({ ok: false, message: `nie można zmienić id istniejącej reguły („${initial.id}”)` });
-      return;
-    }
-    setYamlError(null);
-    brokenYaml.current = null;
-    if (isNew) setIdTouched(true);
-    setForm(ruleToForm(r.rule));
+  function updateLeaf(uid: string, patch: Partial<LeafNode>) {
+    setLeaves(leaves.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
   }
 
-  // Zmiana w kreatorze zastępuje ewentualny niepoprawny YAML (kreator pamięta ostatni poprawny stan).
-  const wizardBanner = tab === "wizard" && brokenYaml.current && brokenYaml.current.snapshot === snapshot;
+  function addCondition() {
+    setLeaves([...leaves, newLeaf()]);
+  }
+
+  function removeCondition(uid: string) {
+    if (leaves.length <= 1) {
+      setLeaves([{ ...leaves[0], field: "", op: "eq", value: "" }]);
+      return;
+    }
+    setLeaves(leaves.filter((l) => l.uid !== uid));
+  }
 
   function toggleRecipient(r: Recipient) {
     const has = form.recipients.some((x) => x.type === r.type && x.id === r.id);
-    update({ recipients: has ? form.recipients.filter((x) => !(x.type === r.type && x.id === r.id)) : [...form.recipients, r] });
+    const nextRecipients = has
+      ? form.recipients.filter((x) => !(x.type === r.type && x.id === r.id))
+      : [...form.recipients, r];
+    const firstTeam = nextRecipients.find((x) => x.type === "team")?.id ?? form.team;
+    update({ recipients: nextRecipients, team: firstTeam });
   }
 
-  const knownRecipients = new Set([...people.map((p) => `person:${p.id}`), ...teams.map((t) => `team:${t.id}`)]);
-  const unknownRecipients = form.recipients.filter((r) => !knownRecipients.has(`${r.type}:${r.id}`));
+  async function handleAiSubmit() {
+    const prompt = aiPrompt.trim();
+    if (!prompt || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    setAiToolInfo(null);
+    try {
+      const sess = getSessionToken();
+      const bearer = sess ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+      };
+      const personId = getPersonId();
+      if (personId) headers["X-Person-Id"] = personId;
 
-  // ---- lista błędów do podsumowania nad przyciskiem zapisu
-  const errorList = useMemo(() => {
-    const out: string[] = [];
-    if (errors.name) out.push(`Nazwa: ${errors.name}`);
-    if (errors.id) out.push(`Identyfikator: ${errors.id}`);
-    const leaves = findLeaves(form.root);
-    for (const [uid, le] of Object.entries(errors.leaves)) {
-      const leaf = leaves.find((l) => l.uid === uid);
-      out.push(`Warunek „${leaf?.field || "bez pola"}”: ${le.field ?? le.value}`);
+      const resp = await fetch(`${API_URL}/rules/draft`, {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: JSON.stringify({ prompt }),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => null);
+        setAiError(describeError(errBody, resp));
+        return;
+      }
+      const outcome = (await resp.json()) as {
+        tool_call?: string;
+        draft?: Rule | null;
+        target_rule_id?: string | null;
+        message?: string | null;
+        executed_tools?: string[];
+      } & Partial<Rule>;
+
+      const toolsUsed = outcome.executed_tools?.length
+        ? outcome.executed_tools.join(" → ")
+        : outcome.tool_call ?? "create_or_update_rule";
+      setAiToolInfo(`Tool call: ${toolsUsed}`);
+
+      if (outcome.tool_call === "delete_rule") {
+        const targetId = outcome.target_rule_id ?? initial?.id;
+        if (targetId) {
+          const err = await send(() => api.DELETE("/rules/{rule_id}", { params: { path: { rule_id: targetId } } }));
+          if (err) setAiError(`Nie udało się usunąć reguły (${err}).`);
+          else onDeleted(targetId);
+        } else {
+          setAiError("Model wywołał delete_rule, ale nie wskazano reguły do usunięcia.");
+        }
+        return;
+      }
+
+      const drafted: Rule | null = outcome.draft ?? (outcome.condition ? (outcome as Rule) : null);
+      if (drafted) {
+        const draftedForm = ruleToForm(drafted);
+        setForm((prev) => ({
+          ...draftedForm,
+          id:
+            outcome.tool_call === "select_rule" && drafted.id
+              ? drafted.id
+              : isNew
+                ? slugify(draftedForm.name) || draftedForm.id || "nowa-regula"
+                : prev.id,
+          version: outcome.tool_call === "select_rule" ? (drafted.version ?? prev.version) : prev.version,
+        }));
+        setSubmitted(false);
+      }
+    } catch {
+      setAiError("Nie udało się połączyć z lokalnym modelem AI (Ollama).");
+    } finally {
+      setAiBusy(false);
     }
-    for (const msg of Object.values(errors.groups)) out.push(`Warunek: ${msg}`);
-    if (errors.recipients) out.push(`Odbiorcy: ${errors.recipients}`);
-    if (errors.title) out.push(`Tytuł: ${errors.title}`);
-    if (errors.body) out.push(`Treść: ${errors.body}`);
-    return out;
-  }, [errors, form.root]);
+  }
 
-  // ---- zapis / odrzucenie / usunięcie
   async function save() {
     setSubmitted(true);
     setSaveError(null);
-    if ((tab === "yaml" && yamlError) || errors.count > 0) return;
+    if (errors.count > 0) return;
     setSaving(true);
     try {
       const body = rule;
@@ -217,33 +228,17 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
         setSaveError(apiMessage(res.error, res.response));
         return;
       }
-      // Lokalny stan zostaje źródłem prawdy (serwer dopisuje tylko wersję).
       const saved: Rule = { ...rule, version: res.data.version ?? rule.version };
       const next = { ...form, version: saved.version ?? 0 };
       setForm(next);
       setBaseline(JSON.stringify(formToRule(next)));
-      setYamlError(null);
-      brokenYaml.current = null;
       setSubmitted(false);
-      showFlag({ title: `Zapisano regułę „${saved.name}”`, description: `Wersja ${saved.version ?? "?"}. Obowiązuje dla kolejnych alertów.`, appearance: "success", isAutoDismiss: true });
       onSaved(saved, isNew);
     } catch {
       setSaveError("Nie udało się połączyć z API.");
     } finally {
       setSaving(false);
     }
-  }
-
-  function discard() {
-    const f = initial ? ruleToForm(initial) : emptyForm();
-    setForm(f);
-    setBaseline(JSON.stringify(formToRule(f)));
-    setYamlText(ruleToYaml(formToRule(f)));
-    setYamlError(null);
-    brokenYaml.current = null;
-    setSubmitted(false);
-    setSaveError(null);
-    setIdTouched(!isNew);
   }
 
   async function remove() {
@@ -256,20 +251,11 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
     setSaving(false);
   }
 
-  const testBlocked =
-    tab === "yaml" && yamlError ? "Popraw błąd w YAML, aby przetestować regułę." : errors.count > 0 ? "Popraw błędy w regule (lista nad przyciskiem zapisu), aby ją przetestować." : undefined;
-  const showErrorList = submitted && errorList.length > 0;
-
   return (
     <div className="rules-editor">
       <datalist id={FIELD_LIST_ID}>
-        {fieldOptions.map((f) => (
+        {COMMON_FIELDS.map((f) => (
           <option key={f} value={f} />
-        ))}
-      </datalist>
-      <datalist id={SCHEMA_LIST_ID}>
-        {schemas.map((s) => (
-          <option key={s} value={s} />
         ))}
       </datalist>
 
@@ -277,292 +263,196 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
         <Heading size="medium" as="h2">
           {isNew ? "Nowa reguła" : form.name || initial?.name}
         </Heading>
-        {!isNew && <Text color="color.text.subtle" as="span">{initial?.id}</Text>}
-        {!isNew && <Text color="color.text.subtle" as="span">wersja {form.version}</Text>}
-        {dirty && (
-          <span role="status">
-            <Lozenge appearance="moved">Niezapisane zmiany</Lozenge>
-          </span>
-        )}
       </header>
 
-      <fieldset className="rules-fieldset" disabled={saving}>
-        <Tabs
-          label="Sposób edycji reguły"
-          value={tab}
-          onChange={switchTab}
-          tabs={[
-            { value: "wizard", label: "Kreator" },
-            { value: "yaml", label: "YAML (zaawansowane)" },
-          ]}
-        >
-        {tab === "wizard" ? (
-          <div className="rules-panel">
-            {wizardBanner && (
-              <SectionMessage appearance="warning">
-                YAML zawiera błąd, więc kreator pokazuje ostatnią poprawną wersję reguły. Wróć do zakładki YAML, aby go poprawić; zmiana w kreatorze zastąpi niepoprawny YAML.
-              </SectionMessage>
-            )}
-
-            <Card title="Podstawowe">
-              <div className="rules-grid">
-                <Field label="Nazwa reguły" error={submitted ? errors.name : null}>
-                  {(f) => <TextInput {...f} value={form.name} onChange={(e) => onName(e.currentTarget.value)} autoComplete="off" />}
-                </Field>
-                <Field
-                  label="Identyfikator"
-                  hint={submitted && errors.id ? undefined : isNew ? "Uzupełnia się z nazwy; po zapisie nie można go zmienić." : "Nie można zmienić."}
-                  error={submitted ? errors.id : null}
-                >
-                  {(f) => (
-                    <TextInput
-                      {...f}
-                      isMonospaced
-                      value={form.id}
-                      isReadOnly={!isNew}
-                      onChange={(e) => {
-                        setIdTouched(true);
-                        update({ id: e.currentTarget.value });
-                      }}
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  )}
-                </Field>
-                <Field label="Zespół właściciel">
-                  {(f) => (
-                    <Select
-                      {...f}
-                      value={form.team}
-                      onChange={(team) => update({ team })}
-                      options={[
-                        { value: "", label: "(brak)" },
-                        ...teams.map((t) => ({ value: t.id, label: t.name })),
-                        ...(form.team && !teams.some((t) => t.id === form.team) ? [{ value: form.team, label: form.team }] : []),
-                      ]}
-                    />
-                  )}
-                </Field>
-                <Field label="Nadpisz severity" hint="Dotyczy powiadomień tej reguły (kanały wg severity odbiorcy).">
-                  {(f) => (
-                    <Select
-                      {...f}
-                      value={form.severityOverride}
-                      onChange={(v) => update({ severityOverride: v as RuleForm["severityOverride"] })}
-                      options={[{ value: "", label: "bez zmian (wg mappingu)" }, ...SEVERITIES.map((x) => ({ value: x.value, label: x.label }))]}
-                    />
-                  )}
-                </Field>
-              </div>
-              <div className="rules-check">
-                <Checkbox isChecked={form.enabled} onChange={(e) => update({ enabled: e.target.checked })} label="Reguła włączona" />
-              </div>
-            </Card>
-
-            <Card title="Kiedy reguła ma zadziałać">
-              <div className="rules-schema">
-                <Field
-                  label="Schemat zdarzeń (tylko do podpowiedzi pól)"
-                  hint={
-                    <>
-                      Pola z ostatnich zdarzeń tego schematu podpowiadają się w polu „Pole”.
-                      {suggested.length > 0 && ` Znaleziono ${suggested.length}.`}
-                    </>
-                  }
-                >
-                  {(f) => (
-                    <TextInput
-                      {...f}
-                      isMonospaced
-                      list={SCHEMA_LIST_ID}
-                      value={schemaInput ?? guessed}
-                      onChange={(e) => setSchemaInput(e.currentTarget.value)}
-                      placeholder="np. trade.rejected.v2"
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
-                  )}
-                </Field>
-              </div>
-              <ConditionBuilder
-                root={form.root}
-                onChange={(root) => update({ root })}
-                errors={errors}
-                showRequired={submitted}
-                fieldListId={FIELD_LIST_ID}
+      {/* 1. Panel AI */}
+      <Card title="Asystent AI — stwórz lub zmień regułę opisem">
+        <div className="rules-ai-box">
+          <Field
+            label="Opisz regułę własnymi słowami"
+            hint="Np. „Gdy transakcja na desku rates zostanie odrzucona z powodu LIMIT_BREACH, ustaw priorytet krytyczny i powiadom zespół Rates”"
+          >
+            {(f) => (
+              <TextArea
+                {...f}
+                minimumRows={3}
+                value={aiPrompt}
+                onChange={(e) => {
+                  setAiPrompt(e.currentTarget.value);
+                  if (aiError) setAiError(null);
+                }}
+                placeholder="Napisz dla AI, jak ma działać ta reguła…"
               />
-            </Card>
+            )}
+          </Field>
+          <div className="rules-ai-actions">
+            <Button
+              appearance="primary"
+              iconBefore={SparklesIcon}
+              isDisabled={!aiPrompt.trim() || aiBusy}
+              isLoading={aiBusy}
+              onClick={() => void handleAiSubmit()}
+            >
+              Wygeneruj z AI
+            </Button>
+            {aiToolInfo && (
+              <Text size="small" color="color.text.subtle">
+                {aiToolInfo}
+              </Text>
+            )}
+            {aiError && <ErrorMessage>{aiError}</ErrorMessage>}
+          </div>
+        </div>
+      </Card>
 
-            <Card title="Kogo powiadomić">
-              <Text as="p" color="color.text.subtle">Kanały (SMS, e-mail, telefon) wynikają z preferencji wybranych osób; zespół ma preferencje domyślne.</Text>
-              <div className="rules-recipients">
-                <fieldset className="rules-group">
-                  <legend>Osoby</legend>
-                  {people.length === 0 && <Text color="color.text.subtle">brak osób w konfiguracji</Text>}
-                  {people.map((p) => (
-                    <Checkbox
-                      key={p.id}
-                      isChecked={form.recipients.some((r) => r.type === "person" && r.id === p.id)}
-                      onChange={() => toggleRecipient({ type: "person", id: p.id })}
-                      label={p.name}
-                    />
-                  ))}
-                </fieldset>
-                <fieldset className="rules-group">
-                  <legend>Zespoły</legend>
-                  {teams.length === 0 && <Text color="color.text.subtle">brak zespołów w konfiguracji</Text>}
-                  {teams.map((t) => (
-                    <Checkbox
-                      key={t.id}
-                      isChecked={form.recipients.some((r) => r.type === "team" && r.id === t.id)}
-                      onChange={() => toggleRecipient({ type: "team", id: t.id })}
-                      label={t.name}
-                    />
-                  ))}
-                </fieldset>
-                {unknownRecipients.length > 0 && (
-                  <fieldset className="rules-group">
-                    <legend>Nieznani w konfiguracji</legend>
-                    {unknownRecipients.map((r) => (
-                      <Checkbox
-                        key={`${r.type}:${r.id}`}
-                        isChecked
-                        onChange={() => toggleRecipient(r)}
-                        label={`${r.type === "team" ? "zespół" : "osoba"} ${r.id}`}
-                      />
-                    ))}
-                  </fieldset>
-                )}
-              </div>
-              {submitted && errors.recipients && <ErrorMessage>{errors.recipients}</ErrorMessage>}
-            </Card>
+      <fieldset className="rules-fieldset" disabled={saving}>
+        {/* 2. Podstawowe informacje */}
+        <Card title="1. Nazwa i priorytet">
+          <div className="rules-grid">
+            <Field label="Nazwa reguły" error={submitted ? errors.name : null}>
+              {(f) => (
+                <TextInput
+                  {...f}
+                  value={form.name}
+                  onChange={(e) => onName(e.currentTarget.value)}
+                  placeholder="np. Krytyczne błędy płatności"
+                  autoComplete="off"
+                />
+              )}
+            </Field>
+            <Field label="Priorytet alertu">
+              {(f) => (
+                <Select
+                  {...f}
+                  value={form.severityOverride}
+                  onChange={(v) => update({ severityOverride: v as RuleForm["severityOverride"] })}
+                  options={[
+                    { value: "", label: "Domyślny (z alertu)" },
+                    ...SEVERITIES.map((x) => ({ value: x.value, label: x.label })),
+                  ]}
+                />
+              )}
+            </Field>
+          </div>
+        </Card>
 
-            <Card title="Jak pokazać alert">
-              <div className="rules-grid">
-                <div className="rules-wide">
-                  <Field
-                    label="Tytuł (szablon)"
-                    hint={errors.title ? undefined : "Pola wstawiaj jako {{raw.payload.desk}}; brakujące pole zostaje puste."}
-                    error={errors.title}
-                  >
+        {/* 3. Warunki */}
+        <Card title="2. Kiedy reguła ma zadziałać?">
+          <div className="rules-cond-mode">
+            <Segmented
+              label="Łączenie warunków"
+              value={form.root.kind}
+              onChange={(mode) => setLeaves(leaves, mode)}
+              options={[
+                { value: "all", label: "Wszystkie warunki muszą pasować (I)" },
+                { value: "any", label: "Wystarczy dowolny warunek (LUB)" },
+              ]}
+            />
+          </div>
+
+          <div className="rules-cond-list">
+            {leaves.map((leaf, idx) => {
+              const err = errors.leaves[leaf.uid];
+              const fieldErr = err?.field && (submitted || err.kind === "format") ? err.field : undefined;
+              const valueErr = err?.value && (submitted || err.kind === "format") ? err.value : undefined;
+              return (
+                <div key={leaf.uid} className="cb-leaf">
+                  <Field label={idx === 0 ? "Pole zdarzenia" : "Pole"} error={fieldErr}>
                     {(f) => (
                       <TextInput
                         {...f}
-                        isMonospaced
-                        value={form.title}
-                        onChange={(e) => update({ title: e.currentTarget.value })}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                    )}
-                  </Field>
-                </div>
-                <div className="rules-wide">
-                  <Field label="Treść (szablon)" error={errors.body}>
-                    {(f) => (
-                      <TextArea {...f} isMonospaced minimumRows={3} value={form.body} onChange={(e) => update({ body: e.target.value })} spellCheck={false} />
-                    )}
-                  </Field>
-                </div>
-                <Field label="Kolor reguły">
-                  {(f) => <ColorSelect id={f.id} value={form.color} onChange={(color) => update({ color })} label="Kolor reguły" noneLabel="bez koloru" />}
-                </Field>
-              </div>
-
-              <Heading size="xsmall" as="h4">Pokazywane pola</Heading>
-              {form.rows.length === 0 && <Text as="p" color="color.text.subtle">Brak dodatkowych pól – alert pokaże tylko tytuł i treść.</Text>}
-              {form.rows.map((row, i) => (
-                <div key={row.uid} className="rules-fieldrow">
-                  <Field label={`Pole ${i + 1}`}>
-                    {(f) => (
-                      <TextInput
-                        {...f}
-                        isMonospaced
                         list={FIELD_LIST_ID}
-                        value={row.path}
-                        onChange={(e) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, path: e.currentTarget.value } : r)) })}
+                        value={leaf.field}
+                        onChange={(e) => updateLeaf(leaf.uid, { field: e.currentTarget.value })}
+                        placeholder="np. raw.labels.service"
                         autoComplete="off"
-                        spellCheck={false}
                       />
                     )}
                   </Field>
-                  <Field label="Wyróżnienie">
+                  <Field label={idx === 0 ? "Warunek" : "Warunek"}>
                     {(f) => (
-                      <ColorSelect
-                        id={f.id}
-                        value={row.color}
-                        onChange={(color) => update({ rows: form.rows.map((r) => (r.uid === row.uid ? { ...r, color } : r)) })}
-                        label={`Kolor wyróżnienia pola ${row.path || i + 1}`}
-                        noneLabel="bez wyróżnienia"
+                      <Select
+                        {...f}
+                        value={leaf.op}
+                        onChange={(op) => updateLeaf(leaf.uid, { op: op as Op })}
+                        options={OPS.map((o) => ({ value: o.op, label: o.label }))}
                       />
                     )}
                   </Field>
-                  <div className="rules-fieldrow-remove">
-                    <Button onClick={() => update({ rows: form.rows.filter((r) => r.uid !== row.uid) })} aria-label={`Usuń pole ${row.path || i + 1}`}>
+                  {leaf.op !== "exists" && (
+                    <Field label={idx === 0 ? "Wartość" : "Wartość"} error={valueErr}>
+                      {(f) => (
+                        <TextInput
+                          {...f}
+                          value={leaf.value}
+                          onChange={(e) => updateLeaf(leaf.uid, { value: e.currentTarget.value })}
+                          placeholder="np. payments-api"
+                          autoComplete="off"
+                        />
+                      )}
+                    </Field>
+                  )}
+                  <div className="cb-remove">
+                    <Button appearance="subtle" onClick={() => removeCondition(leaf.uid)}>
                       Usuń
                     </Button>
                   </div>
                 </div>
-              ))}
-              <div className="rules-actions">
-                <Button onClick={() => update({ rows: [...form.rows, { uid: newUid(), path: "", color: "" }] })}>Dodaj pole</Button>
-              </div>
-            </Card>
+              );
+            })}
           </div>
-        ) : (
-          <div className="rules-panel">
-            <Card title="Reguła w YAML">
-              <Text as="p" color="color.text.subtle">Zmiany są od razu widoczne w kreatorze. Niepoprawny YAML nie zmienia kreatora ani nie zostanie zapisany.</Text>
-              <Field label="Treść YAML">
-                {(f) => (
-                  <TextArea
-                    {...f}
-                    isMonospaced
-                    minimumRows={24}
-                    value={yamlText}
-                    onChange={(e) => onYamlChange(e.target.value)}
-                    spellCheck={false}
-                    aria-invalid={yamlError ? true : undefined}
-                    aria-describedby={yamlError ? "rule-yaml-err" : undefined}
-                  />
-                )}
-              </Field>
-              {yamlError && (
-                <div id="rule-yaml-err">
-                  <ErrorBox
-                    message={`${yamlError.line ? `Linia ${yamlError.line}${yamlError.col ? `, kolumna ${yamlError.col}` : ""}: ` : ""}${yamlError.message}`}
-                  />
-                </div>
-              )}
-            </Card>
-          </div>
-        )}
-        </Tabs>
 
-        {showErrorList && (
-          <div role="alert">
-            <SectionMessage appearance="error" headingLevel="h3" title={`Popraw przed zapisem (${errorList.length})`}>
-              <ul className="rules-errorlist">
-                {errorList.map((m, i) => (
-                  <li key={i}>{m}</li>
-                ))}
-              </ul>
-            </SectionMessage>
+          <div className="cb-add">
+            <Button onClick={addCondition}>+ Dodaj kolejny warunek</Button>
           </div>
+        </Card>
+
+        {/* 4. Odbiorcy */}
+        <Card title="3. Kogo powiadomić?">
+          <div className="rules-recipients">
+            <fieldset className="rules-group">
+              <legend>Zespoły</legend>
+              {teams.length === 0 && <Text color="color.text.subtle">Brak zespołów</Text>}
+              {teams.map((t) => (
+                <Checkbox
+                  key={t.id}
+                  isChecked={form.recipients.some((r) => r.type === "team" && r.id === t.id)}
+                  onChange={() => toggleRecipient({ type: "team", id: t.id })}
+                  label={t.name}
+                />
+              ))}
+            </fieldset>
+            <fieldset className="rules-group">
+              <legend>Osoby</legend>
+              {people.length === 0 && <Text color="color.text.subtle">Brak osób</Text>}
+              {people.map((p) => (
+                <Checkbox
+                  key={p.id}
+                  isChecked={form.recipients.some((r) => r.type === "person" && r.id === p.id)}
+                  onChange={() => toggleRecipient({ type: "person", id: p.id })}
+                  label={p.name}
+                />
+              ))}
+            </fieldset>
+          </div>
+          {submitted && errors.recipients && <ErrorMessage>{errors.recipients}</ErrorMessage>}
+        </Card>
+
+        {submitted && errors.count > 0 && (
+          <SectionMessage appearance="error" title="Uzupełnij brakujące pola przed zapisem">
+            <Text as="p">Sprawdź nazwę reguły, warunki oraz czy wybrano przynajmniej jednego odbiorcę.</Text>
+          </SectionMessage>
         )}
         {saveError && <ErrorBox message={saveError} />}
 
         <div className="rules-savebar">
-          <Button appearance="primary" onClick={save} isDisabled={saving || (!dirty && !isNew)} isLoading={saving}>
-            {isNew ? "Utwórz regułę" : "Zapisz zmiany"}
-          </Button>
-          <Button onClick={discard} isDisabled={saving || !dirty}>
-            Odrzuć zmiany
+          <Button appearance="primary" onClick={() => void save()} isDisabled={saving || (!dirty && !isNew)} isLoading={saving}>
+            {isNew ? "Utwórz regułę" : "Zapisz regułę"}
           </Button>
           {!isNew && (
             <ConfirmInline
               label="Usuń regułę"
-              question={`Usunąć regułę „${initial?.name}”? Tego nie da się cofnąć.`}
+              question={`Usunąć regułę „${initial?.name}”?`}
               confirmLabel="Tak, usuń"
               onConfirm={() => void remove()}
               busy={saving}
@@ -570,8 +460,6 @@ export default function RuleEditor({ initial, people, teams, schemas, onSaved, o
           )}
         </div>
       </fieldset>
-
-      <RuleTester rule={testBlocked ? null : rule} blockedReason={testBlocked} suggestedFields={suggested} />
     </div>
   );
 }

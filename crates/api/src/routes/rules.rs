@@ -29,6 +29,7 @@ static RULES_SEEDED: AtomicBool = AtomicBool::new(false);
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/rules", get(list_rules).post(create_rule))
+        .route("/rules/draft", post(draft_rule))
         .route("/rules/test", post(test_rule))
         .route("/rules/{rule_id}", get(get_rule).put(put_rule).delete(delete_rule))
         .route("/fields", get(get_fields))
@@ -360,6 +361,135 @@ async fn delete_rule(
         .map_err(db_err)?;
     tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ------------------------------------------------------------------ POST /rules/draft
+
+#[derive(Deserialize)]
+struct RuleDraftApiRequest {
+    prompt: String,
+}
+
+async fn draft_rule(
+    State(st): State<AppState>,
+    body: Result<Json<RuleDraftApiRequest>, JsonRejection>,
+) -> ApiResult<Json<runbooks::author::RuleDraftOutcome>> {
+    if !st.author.is_enabled() {
+        return Err(err(
+            StatusCode::NOT_IMPLEMENTED,
+            "llm author disabled",
+            "Asystent AI jest wyłączony (ustaw LLM_PROVIDER=local)",
+        ));
+    }
+    let Json(req) =
+        body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid draft request", e.body_text()))?;
+    if req.prompt.trim().is_empty() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "invalid draft request",
+            "opis reguły nie może być pusty",
+        ));
+    }
+
+    ensure_rules_seeded(&st.db, &st.config.config_dir).await;
+    crate::routes::people::ensure_people_seeded(&st.db, &st.config.config_dir).await;
+
+    let team_rows = sqlx::query("SELECT id, name FROM teams ORDER BY id")
+        .fetch_all(&st.db)
+        .await
+        .map_err(db_err)?;
+    let available_teams: Vec<(String, String)> = team_rows
+        .iter()
+        .map(|r| (r.get::<String, _>("id"), r.get::<String, _>("name")))
+        .collect();
+
+    let people_rows = sqlx::query("SELECT id, name FROM people ORDER BY id")
+        .fetch_all(&st.db)
+        .await
+        .map_err(db_err)?;
+    let available_people: Vec<(String, String)> = people_rows
+        .iter()
+        .map(|r| (r.get::<String, _>("id"), r.get::<String, _>("name")))
+        .collect();
+
+    let rule_rows = sqlx::query("SELECT def, version::bigint AS version, enabled FROM rules ORDER BY id")
+        .fetch_all(&st.db)
+        .await
+        .map_err(db_err)?;
+    let existing_rules: Vec<RuleDef> = rule_rows
+        .iter()
+        .filter_map(|r| rule_from_row(r).ok())
+        .collect();
+
+    let action_rows: Vec<(Value, i64)> = sqlx::query_as("SELECT definition, version FROM actions ORDER BY name")
+        .fetch_all(&st.db)
+        .await
+        .map_err(db_err)?;
+    let mut available_actions: Vec<contracts::ActionDef> = action_rows
+        .into_iter()
+        .filter_map(|(d, v)| serde_json::from_value::<contracts::ActionDef>(d).ok().map(|a| contracts::ActionDef { version: v, ..a }))
+        .collect();
+    for b in runbooks::registry::Registry::builtins() {
+        if !available_actions.iter().any(|a| a.name == b.name) {
+            available_actions.push(b);
+        }
+    }
+
+    let mut available_fields: Vec<String> = vec![
+        "schema",
+        "severity",
+        "source",
+        "title",
+        "service",
+        "raw.type",
+        "raw.error.code",
+        "raw.workflowName",
+        "raw.alertname",
+        "raw.labels.service",
+        "raw.labels.region",
+        "raw.payload.desk",
+        "raw.payload.reason",
+        "raw.payload.notional",
+        "raw.payload.currency",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+
+    for schema_name in ["trade.rejected.v2", "workflow.v1", "alertmanager"] {
+        for &f in builtin_schema_fields(schema_name) {
+            if !available_fields.iter().any(|x| x == f) {
+                available_fields.push(f.to_string());
+            }
+        }
+    }
+
+    let draft_req = runbooks::author::RuleDraftRequest {
+        prompt: req.prompt,
+        available_teams,
+        available_people,
+        available_fields,
+        existing_rules,
+        available_actions,
+    };
+
+    let outcome = st.author.draft_rule(&draft_req).await.map_err(|e| match e {
+        runbooks::author::AuthorError::Disabled => {
+            err(StatusCode::NOT_IMPLEMENTED, "llm author disabled", e)
+        }
+        runbooks::author::AuthorError::InvalidInput(msg) => {
+            err(StatusCode::BAD_REQUEST, "invalid draft request", msg)
+        }
+        runbooks::author::AuthorError::Timeout(_) => {
+            err(StatusCode::GATEWAY_TIMEOUT, "llm timeout", e)
+        }
+        runbooks::author::AuthorError::Upstream(_)
+        | runbooks::author::AuthorError::InvalidResponse(_) => {
+            err(StatusCode::BAD_GATEWAY, "llm error", e)
+        }
+    })?;
+
+    Ok(Json(outcome))
 }
 
 // ------------------------------------------------------------------ POST /rules/test

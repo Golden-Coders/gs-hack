@@ -1,438 +1,635 @@
-// Runbooki: lista z plików i bazy, oraz opcjonalna ekstrakcja kroków AUTOMATIC z tekstu/Markdownu przez LLM.
-import { useState } from "react";
-import { api, type Schemas } from "../api/client";
-import { describeError } from "../api/request";
-import { useResource } from "../api/useResource";
-import { CodeBlock } from "@atlaskit/code";
+// Przejrzysty, maksymalnie prosty ekran Runbooków z możliwością tworzenia/edycji na stronie
+// oraz generowania kroków runbooka przez lokalny model AI (Ollama).
+import { useEffect, useState } from "react";
+import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
+import { ErrorMessage } from "@atlaskit/form";
 import { Text } from "@atlaskit/primitives/compiled";
-import Lozenge from "@atlaskit/lozenge";
-import SectionMessage from "@atlaskit/section-message";
-import Markdown from "../components/Markdown";
-import ConditionView from "../components/ConditionView";
-import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
-import { Card, CopyButton, Empty, ErrorBox, Field, Loading, Tabs } from "../ui/primitives";
+import { Sparkles } from "lucide-react";
+import { api, API_URL, type Schemas } from "../api/client";
+import { describeError } from "../api/request";
+import { getPersonId, getSessionToken } from "../api/session";
+import { useStream } from "../api/stream";
+import { useResource } from "../api/useResource";
+import { adsIcon } from "../ui/icons";
+import {
+  Card,
+  Checkbox,
+  ConfirmInline,
+  Empty,
+  ErrorBox,
+  Field,
+  Loading,
+  PageHeader,
+  Select,
+  TextArea,
+  TextInput,
+} from "../ui/primitives";
+import { slugify } from "./rules/model";
 import "./Runbooks.css";
 
-type Runbook = Schemas["RunbookDef"];
-type Step = Schemas["StepDef"];
-type DraftResponse = Schemas["RunbookDraftResponse"];
-
-const STEP_TYPE: Record<Step["type"], string> = {
-  check: "sprawdzenie",
-  action: "akcja",
-  manual: "krok ręczny",
-  note: "notatka",
-};
-
-function StepItem({ step, onRemove }: { step: Step; onRemove?: () => void }) {
-  const hasParams = step.params && Object.keys(step.params).length > 0;
-  return (
-    <li className="step">
-      <div>
-        <div className="step-head">
-          <span className="step-text">{step.text}</span>
-          <Lozenge>{STEP_TYPE[step.type] ?? step.type}</Lozenge>
-          <StatusLozenge domain="stepAutomation" value={step.automation} />
-          {step.approval === "required" && <StatusLozenge domain="approval" value={step.approval} />}
-          <span className="runbook-meta mono">{step.id}</span>
-          {onRemove && (
-            <button type="button" className="step-remove" onClick={onRemove}>
-              Usuń
-            </button>
-          )}
-        </div>
-        {step.action && (
-          <div className="step-action">
-            <Text size="small" color="color.text.subtle">akcja:</Text>
-            <span className="mono">{step.action}</span>
-          </div>
-        )}
-        {hasParams && <CodeBlock language="json" text={JSON.stringify(step.params, null, 2)} />}
-        {step.condition && <div className="step-condition">Jeśli (tylko opis, nie jest wykonywane): {step.condition}</div>}
-      </div>
-    </li>
-  );
-}
-
-function RunbookItem({
-  rb,
-  llmEnabled,
-  extractingId,
-  onExtract,
-}: {
-  rb: Runbook;
-  llmEnabled: boolean;
-  extractingId: string | null;
-  onExtract: (rb: Runbook) => void;
-}) {
-  const steps = rb.steps ?? [];
-  const ruleIds = rb.rule_ids ?? [];
-  const isManual = rb.kind === "manual";
-  return (
-    <details className="runbook">
-      <summary>
-        <span className="runbook-title">{rb.title}</span>
-        <StatusLozenge domain="runbookKind" value={rb.kind} />
-        <span className="runbook-meta mono">{rb.id}</span>
-        {!isManual && <span className="runbook-meta">{steps.length} kroków</span>}
-        {ruleIds.length > 0 && <span className="runbook-meta">reguły: {ruleIds.length}</span>}
-      </summary>
-      <div className="runbook-body">
-        <SourceFile path={rb.source_file} />
-        <section>
-          <Heading size="xsmall" as="h3">Dopasowanie (matches)</Heading>
-          <ConditionView condition={rb.matches} />
-        </section>
-        <section>
-          <Heading size="xsmall" as="h3">Przypięte reguły (rule_ids)</Heading>
-          {ruleIds.length ? (
-            <div className="rule-chips">
-              {ruleIds.map((id) => (
-                <span key={id} className="rule-chip">
-                  {id}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <Text color="color.text.subtle">brak – runbook dopasowuje się tylko po warunku</Text>
-          )}
-        </section>
-        {isManual ? (
-          <section>
-            <div className="runbook-section-head">
-              <h3>Treść (dołączana do powiadomień)</h3>
-              <button
-                type="button"
-                disabled={!llmEnabled || extractingId !== null}
-                title={llmEnabled ? "Wyodrębnij kroki AUTOMATIC przez LLM (z podglądem przed zapisem)" : "Ustaw LLM_PROVIDER=local lub api"}
-                onClick={() => onExtract(rb)}
-              >
-                {extractingId === rb.id ? "Ekstrakcja…" : "Wyodrębnij kroki (LLM)"}
-              </button>
-            </div>
-            {rb.body ? <Markdown source={rb.body} /> : <span className="muted">brak treści</span>}
-          </section>
-        ) : (
-          <section>
-            <Heading size="xsmall" as="h3">Kroki ({steps.length})</Heading>
-            {steps.length ? (
-              <ol className="steps">
-                {steps.map((s) => (
-                  <StepItem key={s.id} step={s} />
-                ))}
-              </ol>
-            ) : (
-              <Text color="color.text.subtle">brak kroków</Text>
-            )}
-          </section>
-        )}
-      </div>
-    </details>
-  );
-}
+const SparklesIcon = adsIcon(Sparkles);
 
 export function formatRedactedKinds(kinds: Record<string, number>): string {
   const entries = Object.entries(kinds);
   return entries.length ? entries.map(([k, v]) => `${k}: ${v}`).join(", ") : "";
 }
 
+type Runbook = Schemas["RunbookDef"];
+type Step = Schemas["StepDef"];
+type ActionDef = Schemas["ActionDef"];
+type Rule = Schemas["RuleDef"];
+
+interface EditableStep {
+  uid: number;
+  text: string;
+  action: string;
+  paramKey: string;
+  paramValue: string;
+  approval: "none" | "required";
+}
+
+let stepUid = 1;
+
+function defaultParamKeyForAction(actionName: string, actions: ActionDef[]): string {
+  if (!actionName) return "";
+  if (actionName === "http_get") return "url";
+  if (actionName === "escalate") return "team";
+  if (actionName === "notify") return "people";
+  if (actionName === "restart_service" || actionName === "flush_cache") return "service";
+  if (actionName === "retry_workflow") return "workflowId";
+  if (actionName === "open_ticket") return "summary";
+  const found = actions.find((a) => a.name === actionName);
+  const schema = found?.params_schema as { required?: string[]; properties?: Record<string, unknown> } | null | undefined;
+  if (schema?.required?.length) return schema.required[0];
+  if (schema?.properties) {
+    const keys = Object.keys(schema.properties);
+    if (keys.length > 0) return keys[0];
+  }
+  return "value";
+}
+
+function stepToEditable(s: Step, actions: ActionDef[]): EditableStep {
+  const action = s.action ?? "";
+  const entries = Object.entries(s.params ?? {});
+  const [firstKey, firstVal] = entries[0] ?? [defaultParamKeyForAction(action, actions), ""];
+  const paramValue =
+    firstVal === undefined || firstVal === null
+      ? ""
+      : Array.isArray(firstVal)
+        ? firstVal.join(", ")
+        : typeof firstVal === "string"
+          ? firstVal
+          : JSON.stringify(firstVal);
+  return {
+    uid: stepUid++,
+    text: s.text ?? "",
+    action,
+    paramKey: firstKey || defaultParamKeyForAction(action, actions),
+    paramValue,
+    approval: s.approval === "required" ? "required" : "none",
+  };
+}
+
+function editableToStep(es: EditableStep, idx: number, actions: ActionDef[]): Step {
+  const action = es.action.trim();
+  const params: Record<string, unknown> = {};
+  const key = (es.paramKey.trim() || defaultParamKeyForAction(action, actions)).trim();
+  const val = es.paramValue.trim();
+  if (action && key && val) {
+    if (action === "notify" && key === "people") {
+      params[key] = val.split(",").map((x) => x.trim()).filter(Boolean);
+    } else {
+      params[key] = val;
+    }
+  }
+  return {
+    id: `s${idx + 1}`,
+    type: action === "http_get" ? "check" : action ? "action" : "manual",
+    text: es.text.trim() || (action ? `Wykonaj ${action}` : `Krok ${idx + 1}`),
+    action: action || null,
+    params,
+    approval: es.approval,
+    condition: null,
+    automation: action ? "automated" : "manual",
+  };
+}
+
+function emptyEditableStep(): EditableStep {
+  return {
+    uid: stepUid++,
+    text: "",
+    action: "",
+    paramKey: "",
+    paramValue: "",
+    approval: "none",
+  };
+}
+
 export default function Runbooks() {
-  const list = useResource(() => api.GET("/runbooks"));
-  // Błędy parsowania i status LLM są dodatkami – ich brak nie blokuje listy.
-  const loadErrors = useResource(() => api.GET("/runbooks/errors"));
-  const authorStatus = useResource(() => api.GET("/runbooks/author/status"));
+  const listRes = useResource(() => api.GET("/runbooks"));
+  const actionsRes = useResource(() => api.GET("/actions"));
+  const rulesRes = useResource(() => api.GET("/rules"));
 
-  const [showImport, setShowImport] = useState(false);
-  const [importId, setImportId] = useState("");
-  const [importTitle, setImportTitle] = useState("");
-  const [importText, setImportText] = useState("");
+  const runbooks: Runbook[] = listRes.data ?? [];
+  const actions: ActionDef[] = actionsRes.data ?? [];
+  const rules: Rule[] = rulesRes.data ?? [];
 
-  const [extractingId, setExtractingId] = useState<string | null>(null);
-  const [draftError, setDraftError] = useState<string | null>(null);
-  const [draftResult, setDraftResult] = useState<DraftResponse | null>(null);
-  const [draftTab, setDraftTab] = useState<"steps" | "yaml">("steps");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+
+  useStream((msg) => {
+    if (msg.type === "ui_event" && msg.data.kind === "config_changed") {
+      listRes.refresh();
+      actionsRes.refresh();
+      rulesRes.refresh();
+    }
+  });
+
+  useEffect(() => {
+    if (selectedId !== null || isCreatingNew) return;
+    if (runbooks.length > 0) {
+      setSelectedId(runbooks[0].id);
+    }
+  }, [runbooks, selectedId, isCreatingNew]);
+
+  const activeRunbook = isCreatingNew
+    ? null
+    : selectedId
+      ? (runbooks.find((r) => r.id === selectedId) ?? null)
+      : null;
+
+  function handleSelect(rb: Runbook) {
+    setIsCreatingNew(false);
+    setSelectedId(rb.id);
+  }
+
+  function handleStartNew() {
+    setSelectedId(null);
+    setIsCreatingNew(true);
+  }
+
+  function handleSaved(saved: Runbook) {
+    setIsCreatingNew(false);
+    setSelectedId(saved.id);
+    listRes.refresh();
+  }
+
+  async function handleDelete(id: string): Promise<string | null> {
+    const sess = getSessionToken();
+    const bearer = sess ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
+    const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
+    const personId = getPersonId();
+    if (personId) headers["X-Person-Id"] = personId;
+
+    const resp = await fetch(`${API_URL}/runbooks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers,
+    });
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => null);
+      return describeError(errBody, resp);
+    }
+    const remaining = runbooks.filter((r) => r.id !== id);
+    setSelectedId(remaining[0]?.id ?? null);
+    setIsCreatingNew(false);
+    listRes.refresh();
+    return null;
+  }
+
+  return (
+    <section className="rb-screen">
+      <PageHeader
+        actions={
+          <Button appearance="primary" onClick={handleStartNew}>
+            + Nowy runbook
+          </Button>
+        }
+      >
+        Runbooki
+      </PageHeader>
+
+      {listRes.error && <ErrorBox message={listRes.error} onRetry={listRes.reload} />}
+
+      <div className="rb-layout">
+        {/* Lewa kolumna: lista runbooków */}
+        <aside className="rb-sidebar" aria-label="Lista runbooków">
+          {listRes.loading && listRes.data === null && <Loading />}
+          {!listRes.loading && runbooks.length === 0 && (
+            <Empty>Brak runbooków. Kliknij „+ Nowy runbook”.</Empty>
+          )}
+          <ul className="rb-list">
+            {runbooks.map((rb) => {
+              const active = !isCreatingNew && rb.id === selectedId;
+              const stepsCount = rb.steps?.length ?? 0;
+              return (
+                <li key={rb.id}>
+                  <button
+                    type="button"
+                    className={`rb-item ${active ? "active" : ""}`}
+                    onClick={() => handleSelect(rb)}
+                  >
+                    <div className="rb-item-title">{rb.title}</div>
+                    <div className="rb-item-sub">
+                      {stepsCount > 0 ? `Kroków: ${stepsCount}` : "Instrukcja tekstowa"}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </aside>
+
+        {/* Prawa kolumna: edytor runbooka z AI */}
+        <div className="rb-main">
+          {isCreatingNew || activeRunbook ? (
+            <RunbookEditor
+              key={isCreatingNew ? "__new__" : activeRunbook?.id}
+              initial={activeRunbook}
+              actions={actions}
+              rules={rules}
+              onSaved={handleSaved}
+              onDelete={handleDelete}
+            />
+          ) : (
+            <Card>
+              <Heading size="small" as="h2">
+                Wybierz runbook z listy po lewej stronie
+              </Heading>
+            </Card>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RunbookEditor({
+  initial,
+  actions,
+  rules,
+  onSaved,
+  onDelete,
+}: {
+  initial: Runbook | null;
+  actions: ActionDef[];
+  rules: Rule[];
+  onSaved: (rb: Runbook) => void;
+  onDelete: (id: string) => Promise<string | null>;
+}) {
+  const isNew = initial === null;
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [ruleIds, setRuleIds] = useState<string[]>(initial?.rule_ids ?? []);
+  const [steps, setSteps] = useState<EditableStep[]>(() => {
+    if (initial?.steps && initial.steps.length > 0) {
+      return initial.steps.map((s) => stepToEditable(s, actions));
+    }
+    if (initial?.body) {
+      return [
+        {
+          uid: stepUid++,
+          text: initial.body.trim(),
+          action: "",
+          paramKey: "",
+          paramValue: "",
+          approval: "none",
+        },
+      ];
+    }
+    return [emptyEditableStep()];
+  });
+
+  // Panel AI (połączony z lokalnym modelem Ollama przez POST /runbooks/draft)
+  const [aiPrompt, setAiPrompt] = useState(initial?.kind === "manual" && initial?.body ? initial.body : "");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiInfo, setAiInfo] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const runbooks = list.data;
-  const errors = loadErrors.data ?? [];
-  const llm = authorStatus.data;
-  const llmEnabled = llm?.enabled === true;
+  function toggleRule(ruleId: string) {
+    setRuleIds((prev) => (prev.includes(ruleId) ? prev.filter((id) => id !== ruleId) : [...prev, ruleId]));
+  }
 
-  async function requestDraft(body: Schemas["RunbookDraftRequest"], sourceKey: string) {
-    setExtractingId(sourceKey);
-    setDraftError(null);
-    setSaveError(null);
+  function updateStep(uid: number, patch: Partial<EditableStep>) {
+    setSteps((prev) =>
+      prev.map((s) => {
+        if (s.uid !== uid) return s;
+        const next = { ...s, ...patch };
+        if (patch.action !== undefined) {
+          next.paramKey = defaultParamKeyForAction(patch.action, actions);
+          const actDef = actions.find((a) => a.name === patch.action);
+          if (actDef?.risk === "high") {
+            next.approval = "required";
+          }
+        }
+        return next;
+      }),
+    );
+  }
+
+  function addStep() {
+    setSteps((prev) => [...prev, emptyEditableStep()]);
+  }
+
+  function removeStep(uid: number) {
+    setSteps((prev) => (prev.length <= 1 ? [emptyEditableStep()] : prev.filter((s) => s.uid !== uid)));
+  }
+
+  async function handleAiGenerate() {
+    const text = aiPrompt.trim();
+    if (!text || aiBusy) return;
+    setAiBusy(true);
+    setAiError(null);
+    setAiInfo(null);
     try {
-      const { data, error, response } = await api.POST("/runbooks/draft", { body });
+      const { data, error, response } = await api.POST("/runbooks/draft", {
+        body: {
+          id: initial?.id ?? (slugify(title) || null),
+          title: title.trim() || null,
+          text,
+          rule_ids: ruleIds,
+          matches: initial?.matches ?? null,
+        },
+      });
       if (error !== undefined || !response.ok || !data) {
-        setDraftError(describeError(error, response));
+        setAiError(describeError(error, response));
         return;
       }
-      setDraftResult(data);
-      setDraftTab("steps");
-      setShowImport(false);
+      if (data.draft.title && (!title.trim() || isNew)) {
+        setTitle(data.draft.title);
+      }
+      if (data.draft.steps && data.draft.steps.length > 0) {
+        setSteps(data.draft.steps.map((s) => stepToEditable(s, actions)));
+      }
+      setAiInfo(`Wygenerowano kroków z AI: ${data.draft.steps?.length ?? 0}`);
     } catch {
-      setDraftError("Brak połączenia z API");
+      setAiError("Nie udało się połączyć z lokalnym modelem AI (Ollama).");
     } finally {
-      setExtractingId(null);
+      setAiBusy(false);
     }
   }
 
-  async function handleSaveDraft() {
-    if (!draftResult) return;
-    setSaving(true);
+  async function handleSave() {
     setSaveError(null);
+    const cleanTitle = title.trim();
+    if (!cleanTitle) {
+      setSaveError("Podaj nazwę runbooka.");
+      return;
+    }
+    const builtSteps = steps
+      .filter((s) => s.text.trim() !== "" || s.action.trim() !== "")
+      .map((s, idx) => editableToStep(s, idx, actions));
+    if (builtSteps.length === 0) {
+      setSaveError("Dodaj przynajmniej jeden krok runbooka.");
+      return;
+    }
+
+    const id = isNew ? slugify(cleanTitle) || `runbook-${Date.now()}` : initial.id;
+    const payload: Runbook = {
+      id,
+      title: cleanTitle,
+      kind: "automatic",
+      matches: initial?.matches ?? null,
+      rule_ids: ruleIds,
+      body: null,
+      steps: builtSteps,
+      source_file: null,
+      version: initial?.version ?? 1,
+    };
+
+    setSaving(true);
     try {
-      const { error, response } = await api.POST("/runbooks", { body: draftResult.draft });
-      if (error !== undefined || !response.ok) {
-        setSaveError(describeError(error, response));
+      const sess = getSessionToken();
+      const bearer = sess ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+      };
+      const personId = getPersonId();
+      if (personId) headers["X-Person-Id"] = personId;
+
+      const url = isNew ? `${API_URL}/runbooks` : `${API_URL}/runbooks/${encodeURIComponent(initial.id)}`;
+      const method = isNew ? "POST" : "PUT";
+
+      const resp = await fetch(url, {
+        method,
+        credentials: "include",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => null);
+        setSaveError(describeError(errBody, resp));
         return;
       }
-      setDraftResult(null);
-      list.reload();
+      const saved = (await resp.json()) as Runbook;
+      onSaved(saved);
     } catch {
-      setSaveError("Brak połączenia z API");
+      setSaveError("Nie udało się połączyć z API.");
     } finally {
       setSaving(false);
     }
   }
 
-  function updateDraft(patch: Partial<Runbook>) {
-    setDraftResult((prev) => (prev ? { ...prev, draft: { ...prev.draft, ...patch } } : null));
+  async function handleConfirmDelete() {
+    if (!initial) return;
+    setSaving(true);
+    setSaveError(null);
+    const err = await onDelete(initial.id);
+    if (err) setSaveError(`Nie udało się usunąć runbooka: ${err}`);
+    setSaving(false);
   }
 
-  function removeDraftStep(stepId: string) {
-    setDraftResult((prev) => {
-      if (!prev) return null;
-      const steps = (prev.draft.steps ?? []).filter((s) => s.id !== stepId);
-      return { ...prev, draft: { ...prev.draft, steps } };
-    });
-  }
+  const actionOptions = [
+    { value: "", label: "Krok ręczny (bez automatyzacji)" },
+    ...actions.map((a) => ({
+      value: a.name,
+      label: `${a.name}${a.description ? ` — ${a.description}` : ""}`,
+    })),
+  ];
 
   return (
-    <section>
-      <div className="runbooks-header">
-        <h1>Runbooki</h1>
-        <button
-          type="button"
-          disabled={!llmEnabled}
-          title={llmEnabled ? "Wklej Markdown lub tekst i wyodrębnij kroki przez LLM" : "Wymaga LLM_PROVIDER=local lub api"}
-          onClick={() => {
-            setShowImport((v) => !v);
-            setDraftError(null);
-          }}
-        >
-          {showImport ? "Ukryj import LLM" : "Importuj z tekstu (LLM)"}
-        </button>
-      </div>
+    <div className="rb-editor">
+      <header className="rb-editor-head">
+        <Heading size="medium" as="h2">
+          {isNew ? "Nowy runbook" : title || initial.title}
+        </Heading>
+      </header>
 
-      <ReadOnlyNote>
-        Runbooki z plików konfiguracyjnych są w trybie tylko do odczytu (zmiany w plikach ładowane bez restartu).{" "}
-        {llm ? (
-          llm.enabled ? (
-            <>
-              Ekstrakcja LLM aktywna: <span className="mono">{llm.provider}</span>
-              {llm.model ? (
-                <>
-                  {" "}
-                  (<span className="mono">{llm.model}</span>)
-                </>
-              ) : null}
-              .
-            </>
-          ) : (
-            <>Ekstrakcja LLM jest wyłączona (ustaw LLM_PROVIDER=local lub api).</>
-          )
-        ) : null}
-      </ReadOnlyNote>
-
-      {draftError && <ErrorBox message={`Błąd ekstrakcji LLM: ${draftError}`} />}
-
-      {showImport && llmEnabled && (
-        <Card title="Importuj runbook z tekstu (LLM)" className="llm-panel">
-          <div className="llm-form-grid">
-            <Field label="ID runbooka (opcjonalnie)" hint="np. payments-recovery">
-              {(props) => <input {...props} value={importId} onChange={(e) => setImportId(e.target.value)} placeholder="wygenerowane z tytułu" />}
-            </Field>
-            <Field label="Tytuł (opcjonalnie)">
-              {(props) => <input {...props} value={importTitle} onChange={(e) => setImportTitle(e.target.value)} placeholder="wyodrębniony z tekstu" />}
-            </Field>
-          </div>
+      {/* 1. Asystent AI */}
+      <Card title="Asystent AI — wygeneruj runbook z opisu lub instrukcji">
+        <div className="rb-ai-box">
           <Field
-            label="Treść runbooka (Markdown lub wolny tekst)"
-            hint="Przed wysłaniem do modelu adresy URL, IP, e-maile i hosty wewnętrzne zostaną zredagowane; zmienne {{...}} pozostaną bez zmian."
+            label="Wklej opis procedury lub napisz własnymi słowami, co ma robić runbook"
+            hint="AI automatycznie rozbije tekst na kroki i dobierze odpowiednie akcje z systemu (np. http_get, restart_service, retry_workflow, escalate)."
           >
-            {(props) => (
-              <textarea
-                {...props}
-                rows={8}
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder={"# Settlement timeout\n1. Check health of service {{raw.service}}\n2. Retry workflow {{raw.workflowId}}"}
+            {(f) => (
+              <TextArea
+                {...f}
+                minimumRows={3}
+                value={aiPrompt}
+                onChange={(e) => {
+                  setAiPrompt(e.currentTarget.value);
+                  if (aiError) setAiError(null);
+                }}
+                placeholder="Np. 1. Sprawdź czy serwis płatności działa. 2. Zrestartuj usługę payments-api. 3. Jeśli nadal nie działa, eskaluj do zespołu payments."
               />
             )}
           </Field>
-          <div className="llm-actions">
-            <button
-              type="button"
-              className="primary"
-              disabled={extractingId !== null || !importText.trim()}
-              onClick={() =>
-                requestDraft(
-                  {
-                    id: importId.trim() || null,
-                    title: importTitle.trim() || null,
-                    text: importText,
-                  },
-                  "__import__",
-                )
-              }
+          <div className="rb-ai-actions">
+            <Button
+              appearance="primary"
+              iconBefore={SparklesIcon}
+              isDisabled={!aiPrompt.trim() || aiBusy}
+              isLoading={aiBusy}
+              onClick={() => void handleAiGenerate()}
             >
-              {extractingId === "__import__" ? "Ekstrakcja…" : "Wyodrębnij kroki"}
-            </button>
-            <button type="button" onClick={() => setShowImport(false)} disabled={extractingId !== null}>
-              Anuluj
-            </button>
-          </div>
-        </Card>
-      )}
-
-      {draftResult && (
-        <Card
-          title="Podgląd szkicu runbooka (LLM)"
-          className="llm-panel"
-          actions={
-            <Tabs
-              label="Widok szkicu"
-              value={draftTab}
-              onChange={setDraftTab}
-              tabs={[
-                { value: "steps", label: `Kroki (${draftResult.draft.steps?.length ?? 0})` },
-                { value: "yaml", label: "YAML" },
-              ]}
-            />
-          }
-        >
-          <div className="llm-form-grid">
-            <Field label="ID runbooka">
-              {(props) => (
-                <input
-                  {...props}
-                  value={draftResult.draft.id}
-                  onChange={(e) => updateDraft({ id: e.target.value })}
-                />
-              )}
-            </Field>
-            <Field label="Tytuł">
-              {(props) => (
-                <input
-                  {...props}
-                  value={draftResult.draft.title}
-                  onChange={(e) => updateDraft({ title: e.target.value })}
-                />
-              )}
-            </Field>
-          </div>
-
-          <div className="llm-meta">
-            {draftResult.redacted_count > 0 ? (
-              <Badge tone="blue">
-                {`Zredagowano przed wysłaniem: ${draftResult.redacted_count} (${formatRedactedKinds(draftResult.redacted_kinds)})`}
-              </Badge>
-            ) : (
-              <Badge tone="gray">Brak danych wrażliwych do redakcji</Badge>
+              Wygeneruj kroki z AI
+            </Button>
+            {aiInfo && (
+              <Text size="small" color="color.text.subtle">
+                {aiInfo}
+              </Text>
             )}
+            {aiError && <ErrorMessage>{aiError}</ErrorMessage>}
           </div>
-
-          {draftResult.warnings.length > 0 && (
-            <div className="llm-warnings" role="status">
-              <strong>Uwagi klasyfikacji rejestru:</strong>
-              <ul>
-                {draftResult.warnings.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {draftTab === "steps" ? (
-            (draftResult.draft.steps?.length ?? 0) > 0 ? (
-              <ol className="steps">
-                {(draftResult.draft.steps ?? []).map((s) => (
-                  <StepItem
-                    key={s.id}
-                    step={s}
-                    onRemove={draftResult.draft.steps && draftResult.draft.steps.length > 1 ? () => removeDraftStep(s.id) : undefined}
-                  />
-                ))}
-              </ol>
-            ) : (
-              <Empty>Brak kroków w szkicu.</Empty>
-            )
-          ) : (
-            <div>
-              <div className="llm-yaml-bar">
-                <CopyButton text={draftResult.yaml} label="Kopiuj YAML" />
-              </div>
-              <pre className="step-params">{draftResult.yaml}</pre>
-            </div>
-          )}
-
-          {saveError && <ErrorBox message={`Nie udało się zapisać runbooka: ${saveError}`} />}
-
-          <div className="llm-actions">
-            <button
-              type="button"
-              className="primary"
-              disabled={saving || !draftResult.draft.id.trim() || !(draftResult.draft.steps?.length)}
-              onClick={handleSaveDraft}
-            >
-              {saving ? "Zapisywanie…" : "Zapisz runbook"}
-            </button>
-            <button type="button" onClick={() => setDraftResult(null)} disabled={saving}>
-              Anuluj
-            </button>
-          </div>
-        </Card>
-      )}
-
-      {errors.length > 0 && (
-        <div role="alert" className="runbook-errors">
-          <SectionMessage appearance="error" headingLevel="h2" title={`Nie załadowano plików runbooków (${errors.length})`}>
-            <ul>
-              {errors.map((e, i) => (
-                <li key={i}>
-                  <span className="mono">
-                    {e.file}
-                    {e.line != null ? `:${e.line}` : ""}
-                  </span>
-                  {" – "}
-                  {e.error}
-                </li>
-              ))}
-            </ul>
-          </SectionMessage>
         </div>
-      )}
+      </Card>
 
-      {list.error && <ErrorBox message={`Nie udało się pobrać runbooków: ${list.error}`} onRetry={list.reload} disabled={list.loading} />}
-      {!list.error && runbooks === null && <Loading>Ładowanie runbooków…</Loading>}
-      {runbooks && runbooks.length === 0 && <Empty>Brak runbooków w plikach konfiguracyjnych.</Empty>}
-      {runbooks && runbooks.length > 0 && (
-        <div className="runbook-list">
-          {runbooks.map((rb) => (
-            <RunbookItem
-              key={rb.id}
-              rb={rb}
-              llmEnabled={llmEnabled}
-              extractingId={extractingId}
-              onExtract={(item) => requestDraft({ runbook_id: item.id }, item.id)}
+      {/* 2. Nazwa i powiązane reguły */}
+      <Card title="1. Nazwa i powiązane reguły">
+        <Field label="Nazwa runbooka">
+          {(f) => (
+            <TextInput
+              {...f}
+              value={title}
+              onChange={(e) => setTitle(e.currentTarget.value)}
+              placeholder="np. Procedura naprawy błędu płatności"
             />
-          ))}
+          )}
+        </Field>
+
+        {rules.length > 0 && (
+          <div className="rb-rules-box">
+            <Text weight="semibold" size="small">
+              Dla jakich reguł uruchamiać ten runbook? (opcjonalnie)
+            </Text>
+            <div className="rb-rules-grid">
+              {rules.map((r) => (
+                <Checkbox
+                  key={r.id}
+                  isChecked={ruleIds.includes(r.id)}
+                  onChange={() => toggleRule(r.id)}
+                  label={r.name}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* 3. Lista kroków */}
+      <Card title="2. Kroki runbooka">
+        <div className="rb-steps-list">
+          {steps.map((s, idx) => {
+            const pKey = s.paramKey || defaultParamKeyForAction(s.action, actions);
+            return (
+              <div key={s.uid} className="rb-step-card">
+                <div className="rb-step-top">
+                  <span className="rb-step-num">Krok {idx + 1}</span>
+                  <Button appearance="subtle" onClick={() => removeStep(s.uid)}>
+                    Usuń krok
+                  </Button>
+                </div>
+
+                <div className="rb-step-grid">
+                  <Field label="Co należy zrobić? (opis kroku)">
+                    {(f) => (
+                      <TextInput
+                        {...f}
+                        value={s.text}
+                        onChange={(e) => updateStep(s.uid, { text: e.currentTarget.value })}
+                        placeholder="np. Zrestartuj usługę lub sprawdź status"
+                      />
+                    )}
+                  </Field>
+
+                  <Field label="Akcja do wykonania">
+                    {(f) => (
+                      <Select
+                        {...f}
+                        value={s.action}
+                        options={actionOptions}
+                        onChange={(val) => updateStep(s.uid, { action: val })}
+                      />
+                    )}
+                  </Field>
+                </div>
+
+                {s.action && (
+                  <div className="rb-step-extra">
+                    <Field
+                      label={`Parametr akcji (${pKey || "wartość"})`}
+                      hint="Np. nazwa usługi, adres URL, zespół lub zmienna {{raw.workflowId}}"
+                    >
+                      {(f) => (
+                        <TextInput
+                          {...f}
+                          value={s.paramValue}
+                          onChange={(e) => updateStep(s.uid, { paramKey: pKey, paramValue: e.currentTarget.value })}
+                          placeholder={
+                            pKey === "url"
+                              ? "http://mock-targets:8090/health"
+                              : pKey === "team"
+                                ? "np. payments"
+                                : "np. {{service}}"
+                          }
+                        />
+                      )}
+                    </Field>
+
+                    <div className="rb-step-approval">
+                      <Checkbox
+                        isChecked={s.approval === "required"}
+                        onChange={() =>
+                          updateStep(s.uid, {
+                            approval: s.approval === "required" ? "none" : "required",
+                          })
+                        }
+                        label="Wymagaj zatwierdzenia człowieka przed wykonaniem tego kroku"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
-    </section>
+
+        <div className="rb-add-btn">
+          <Button onClick={addStep}>+ Dodaj kolejny krok</Button>
+        </div>
+      </Card>
+
+      {saveError && <ErrorBox message={saveError} />}
+
+      <div className="rb-savebar">
+        <Button appearance="primary" isLoading={saving} isDisabled={saving} onClick={() => void handleSave()}>
+          {isNew ? "Utwórz runbook" : "Zapisz runbook"}
+        </Button>
+        {!isNew && (
+          <ConfirmInline
+            label="Usuń runbook"
+            question={`Usunąć runbook „${initial.title}”?`}
+            confirmLabel="Tak, usuń"
+            busy={saving}
+            onConfirm={() => void handleConfirmDelete()}
+          />
+        )}
+      </div>
+    </div>
   );
 }

@@ -13,9 +13,9 @@ x-backend: &backend
     SMTP_HOST: mailpit
     SMTP_PORT: "1025"
     ACTION_HOST_ALLOWLIST: mock-targets,localhost
-    LLM_PROVIDER: ${LLM_PROVIDER:-none}
-    LLM_BASE_URL: ${LLM_BASE_URL:-}
-    LLM_MODEL: ${LLM_MODEL:-}
+    LLM_PROVIDER: ${LLM_PROVIDER:-local}
+    LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+    LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
     LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-30000}
     RUST_LOG: info
   volumes:

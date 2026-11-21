@@ -1,195 +1,311 @@
-// Osoby, zespoły i preferencje powiadomień (tylko do odczytu) – tasks.md 15.4.
-// Reguła wskazuje KTO, a JAK (kanały) wynika z preferencji osoby; zespół daje domyślne preferencje.
-import { api, type Schemas } from "../api/client";
-import { useResource } from "../api/useResource";
-import DynamicTable from "@atlaskit/dynamic-table";
+// Ekran Teams: przejrzysta lista zespołów po lewej stronie oraz prosty edytor zespołu po prawej,
+// w którym dodajemy/usuwamy osoby z listy checkboxami.
+import { useEffect, useState } from "react";
+import Button from "@atlaskit/button/new";
 import Heading from "@atlaskit/heading";
 import { Text } from "@atlaskit/primitives/compiled";
-import Lozenge from "@atlaskit/lozenge";
-import Tooltip from "@atlaskit/tooltip";
-import SourceFile, { ReadOnlyNote } from "../components/SourceFile";
-import { Card, Empty, ErrorBox, Loading, PageHeader, StatusLozenge } from "../ui/primitives";
+import { api, API_URL, type Schemas } from "../api/client";
+import { describeError } from "../api/request";
+import { getPersonId, getSessionToken } from "../api/session";
+import { useStream } from "../api/stream";
+import { useResource } from "../api/useResource";
+import { Card, Checkbox, ConfirmInline, Empty, ErrorBox, Field, Loading, PageHeader, TextInput } from "../ui/primitives";
+import { slugify } from "./rules/model";
 import "./People.css";
 
 type Person = Schemas["PersonDef"];
 type Team = Schemas["TeamDef"];
-type Preference = Schemas["Preference"];
-type Channel = Schemas["Channel"];
-
-const SEVERITY_ORDER: Record<Schemas["Severity"], number> = { critical: 0, error: 1, warning: 2, info: 3 };
-
-function Channels({ channels }: { channels: Channel[] }) {
-  return (
-    <>
-      {channels.map((c, i) => (
-        <span key={`${c}-${i}`}>
-          {i > 0 && <span aria-hidden="true"><Text color="color.text.subtle">{" → "}</Text></span>}
-          <StatusLozenge domain="channel" value={c} />
-        </span>
-      ))}
-    </>
-  );
-}
-
-function Preferences({ prefs, emptyText }: { prefs?: Preference[]; emptyText: string }) {
-  if (!prefs || prefs.length === 0) return <Text color="color.text.subtle">{emptyText}</Text>;
-  const sorted = [...prefs].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
-  return (
-    <ul className="prefs">
-      {sorted.map((p, i) => (
-        <li key={i} className="pref">
-          <StatusLozenge domain="severity" value={p.severity} />
-          <span aria-hidden="true"><Text color="color.text.subtle">
-            →
-          </Text></span>
-          <Channels channels={p.channels} />
-          <span className="pref-hours">{p.hours ? `godz. ${p.hours}` : "całą dobę"}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function personCells(person: Person) {
-  const contacts = Object.entries(person.contacts ?? {});
-  const fallback = person.fallback ?? [];
-  return [
-    {
-      key: "person",
-      content: (
-        <>
-          <div className="person-name">{person.name}</div>
-          <div className="person-id">{person.id}</div>
-        </>
-      ),
-    },
-    { key: "tz", content: person.timezone ?? <Text color="color.text.subtle">—</Text> },
-    {
-      key: "contacts",
-      content: contacts.length ? (
-        <ul className="contacts">
-          {contacts.map(([channel, value]) => (
-            <li key={channel}>
-              <span className="contact-channel">{channel}</span>
-              <span className="mono">{value}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <Text color="color.text.subtle">brak</Text>
-      ),
-    },
-    { key: "prefs", content: <Preferences prefs={person.preferences} emptyText="brak – obowiązują domyślne zespołu" /> },
-    {
-      key: "fallback",
-      content: (
-        <div className="fallback">
-          {fallback.length > 0 && <Channels channels={fallback} />}
-          {fallback.length > 0 && (
-            <span aria-hidden="true"><Text color="color.text.subtle">
-              →
-            </Text></span>
-          )}
-          <Tooltip content="UI jest zawsze ostatnim kanałem zapasowym">
-            <span>
-              <StatusLozenge domain="channel" value="ui" />
-            </span>
-          </Tooltip>
-        </div>
-      ),
-    },
-  ];
-}
-
-function TeamCard({ team, people }: { team: Team; people: Map<string, Person> }) {
-  return (
-    <article className="team">
-      <Heading size="small" as="h3">{team.name}</Heading>
-      <div className="person-id">{team.id}</div>
-      <Heading size="xsmall" as="h4">Członkowie ({team.members.length})</Heading>
-      <div className="members">
-        {team.members.map((id) => {
-          const p = people.get(id);
-          return (
-            <Tooltip key={id} content={p ? undefined : "brak tej osoby w pliku osób"}>
-              <Lozenge appearance={p ? "default" : "moved"}>{p ? `${p.name} (${id})` : `${id} (nieznana)`}</Lozenge>
-            </Tooltip>
-          );
-        })}
-      </div>
-      <Heading size="xsmall" as="h4">Domyślne preferencje zespołu</Heading>
-      <Preferences prefs={team.preferences} emptyText="brak" />
-    </article>
-  );
-}
 
 export default function People() {
   const peopleRes = useResource(() => api.GET("/people"));
   const teamsRes = useResource(() => api.GET("/teams"));
 
-  const people = peopleRes.data?.people ?? null;
-  const sourceFile = peopleRes.data?.source_file ?? null;
-  const teams = teamsRes.data;
+  const people: Person[] = peopleRes.data?.people ?? [];
+  const teams: Team[] = teamsRes.data ?? [];
   const failure = peopleRes.error ?? teamsRes.error;
-  const reload = () => {
-    peopleRes.reload();
-    teamsRes.reload();
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+
+  const refresh = () => {
+    peopleRes.refresh();
+    teamsRes.refresh();
   };
 
-  const byId = new Map((people ?? []).map((p) => [p.id, p]));
-  const loading = !failure && (people === null || teams === null);
+  useStream((msg) => {
+    if (msg.type === "ui_event" && msg.data.kind === "config_changed") {
+      refresh();
+    }
+  });
+
+  useEffect(() => {
+    if (selectedId !== null || isCreatingNew) return;
+    if (teams.length > 0) {
+      setSelectedId(teams[0].id);
+    }
+  }, [teams, selectedId, isCreatingNew]);
+
+  const activeTeam = isCreatingNew
+    ? null
+    : selectedId
+      ? (teams.find((t) => t.id === selectedId) ?? null)
+      : null;
+
+  const peopleById = new Map(people.map((p) => [p.id, p]));
+
+  function handleSelect(t: Team) {
+    setIsCreatingNew(false);
+    setSelectedId(t.id);
+  }
+
+  function handleStartNew() {
+    setSelectedId(null);
+    setIsCreatingNew(true);
+  }
+
+  function handleSaved(saved: Team) {
+    setIsCreatingNew(false);
+    setSelectedId(saved.id);
+    refresh();
+  }
+
+  async function handleDelete(id: string): Promise<string | null> {
+    const sess = getSessionToken();
+    const bearer = sess ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
+    const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
+    const personId = getPersonId();
+    if (personId) headers["X-Person-Id"] = personId;
+
+    const resp = await fetch(`${API_URL}/teams/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "include",
+      headers,
+    });
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => null);
+      return describeError(errBody, resp);
+    }
+    const remaining = teams.filter((t) => t.id !== id);
+    setSelectedId(remaining[0]?.id ?? null);
+    setIsCreatingNew(false);
+    refresh();
+    return null;
+  }
 
   return (
-    <section>
-      <PageHeader>Osoby i zespoły</PageHeader>
-      <ReadOnlyNote>
-        Osoby, zespoły i preferencje edytuje się w pliku konfiguracyjnym; zmiany są ładowane bez restartu.
-      </ReadOnlyNote>
-      <Text as="p" color="color.text.subtle">
-        Reguła wskazuje, KTO dostaje powiadomienie; kanały (JAK) wynikają z preferencji osoby, a gdy ich brak – z
-        domyślnych preferencji zespołu. UI jest zawsze ostatnim kanałem zapasowym.
-      </Text>
+    <section className="tm-screen">
+      <PageHeader
+        actions={
+          <Button appearance="primary" onClick={handleStartNew}>
+            + Nowy team
+          </Button>
+        }
+      >
+        Teams
+      </PageHeader>
 
-      {failure && <ErrorBox message={`Nie udało się pobrać danych: ${failure}`} onRetry={reload} />}
-      {loading && <Loading>Ładowanie osób i zespołów…</Loading>}
+      {failure && <ErrorBox message={failure} onRetry={refresh} />}
 
-      {people && teams && (
-        <>
-          <Card title={`Osoby (${people.length})`}>
-            <SourceFile path={sourceFile} />
-            {people.length === 0 ? (
-              <Empty>Brak osób w pliku konfiguracyjnym.</Empty>
-            ) : (
-              <DynamicTable
-                head={{
-                  cells: [
-                    { key: "person", content: "Osoba" },
-                    { key: "tz", content: "Strefa czasowa" },
-                    { key: "contacts", content: "Kontakty" },
-                    { key: "prefs", content: "Preferencje (severity → kanały)" },
-                    { key: "fallback", content: "Fallback" },
-                  ],
-                }}
-                rows={people.map((p) => ({ key: p.id, cells: personCells(p) }))}
-              />
-            )}
-          </Card>
+      <div className="tm-layout">
+        {/* Lewa kolumna: lista zespołów */}
+        <aside className="tm-sidebar" aria-label="Lista zespołów">
+          {(peopleRes.loading || teamsRes.loading) && teamsRes.data === null && <Loading />}
+          {!teamsRes.loading && teams.length === 0 && <Empty>Brak zespołów. Kliknij „+ Nowy team”.</Empty>}
+          <ul className="tm-list">
+            {teams.map((t) => {
+              const active = !isCreatingNew && t.id === selectedId;
+              const memberNames = t.members
+                .map((id) => peopleById.get(id)?.name ?? id)
+                .join(", ");
+              return (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    className={`tm-item ${active ? "active" : ""}`}
+                    onClick={() => handleSelect(t)}
+                  >
+                    <div className="tm-item-title">{t.name}</div>
+                    <div className="tm-item-sub">
+                      {t.members.length > 0 ? `Osoby (${t.members.length}): ${memberNames}` : "Brak przypisanych osób"}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </aside>
 
-          <Card title={`Zespoły (${teams.length})`}>
-            <SourceFile path={sourceFile} label="Edytuj w (wg planu ten sam plik):" />
-            <Text as="p" color="color.text.subtle">GET /teams nie zwraca ścieżki pliku – powyżej plik osób, w którym według planu są też zespoły.</Text>
-            {teams.length === 0 ? (
-              <Empty>Brak zespołów w pliku konfiguracyjnym.</Empty>
-            ) : (
-              <div className="team-grid">
-                {teams.map((t) => (
-                  <TeamCard key={t.id} team={t} people={byId} />
-                ))}
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+        {/* Prawa kolumna: edytor zespołu i wybór osób z listy */}
+        <div className="tm-main">
+          {isCreatingNew || activeTeam ? (
+            <TeamEditor
+              key={isCreatingNew ? "__new__" : activeTeam?.id}
+              initial={activeTeam}
+              people={people}
+              onSaved={handleSaved}
+              onDelete={handleDelete}
+            />
+          ) : (
+            <Card>
+              <Heading size="small" as="h2">
+                Wybierz team z listy po lewej stronie
+              </Heading>
+            </Card>
+          )}
+        </div>
+      </div>
     </section>
+  );
+}
+
+function TeamEditor({
+  initial,
+  people,
+  onSaved,
+  onDelete,
+}: {
+  initial: Team | null;
+  people: Person[];
+  onSaved: (team: Team) => void;
+  onDelete: (id: string) => Promise<string | null>;
+}) {
+  const isNew = initial === null;
+  const [name, setName] = useState(initial?.name ?? "");
+  const [members, setMembers] = useState<string[]>(initial?.members ?? []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function togglePerson(personId: string) {
+    setMembers((prev) => (prev.includes(personId) ? prev.filter((id) => id !== personId) : [...prev, personId]));
+  }
+
+  async function handleSave() {
+    setError(null);
+    const cleanName = name.trim();
+    if (!cleanName) {
+      setError("Podaj nazwę zespołu.");
+      return;
+    }
+    const id = isNew ? slugify(cleanName) || `team-${Date.now()}` : initial.id;
+    const payload: Team = {
+      id,
+      name: cleanName,
+      members,
+      preferences: initial?.preferences ?? [],
+    };
+
+    setSaving(true);
+    try {
+      const sess = getSessionToken();
+      const bearer = sess ?? (import.meta.env.VITE_API_TOKEN ?? "dev-token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+      };
+      const personId = getPersonId();
+      if (personId) headers["X-Person-Id"] = personId;
+
+      const url = isNew ? `${API_URL}/teams` : `${API_URL}/teams/${encodeURIComponent(initial.id)}`;
+      const method = isNew ? "POST" : "PUT";
+
+      const resp = await fetch(url, {
+        method,
+        credentials: "include",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        const errBody = await resp.json().catch(() => null);
+        setError(describeError(errBody, resp));
+        return;
+      }
+      const saved = (await resp.json()) as Team;
+      onSaved(saved);
+    } catch {
+      setError("Nie udało się połączyć z API.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!initial) return;
+    setSaving(true);
+    setError(null);
+    const err = await onDelete(initial.id);
+    if (err) setError(`Nie udało się usunąć zespołu: ${err}`);
+    setSaving(false);
+  }
+
+  return (
+    <div className="tm-editor">
+      <header className="tm-editor-head">
+        <Heading size="medium" as="h2">
+          {isNew ? "Nowy team" : name || initial.name}
+        </Heading>
+      </header>
+
+      <Card title="1. Nazwa zespołu">
+        <Field label="Nazwa teamu">
+          {(f) => (
+            <TextInput
+              {...f}
+              value={name}
+              onChange={(e) => setName(e.currentTarget.value)}
+              placeholder="np. Team Payments"
+            />
+          )}
+        </Field>
+      </Card>
+
+      <Card title="2. Osoby w zespole (zaznacz z listy)">
+        {people.length === 0 ? (
+          <Empty>Brak osób w systemie.</Empty>
+        ) : (
+          <div className="tm-people-list">
+            {people.map((p) => {
+              const checked = members.includes(p.id);
+              const email = p.contacts?.email;
+              const phone = p.contacts?.phone ?? p.contacts?.sms;
+              const contactInfo = [email, phone].filter(Boolean).join(" · ");
+              return (
+                <div
+                  key={p.id}
+                  className={`tm-person-row ${checked ? "checked" : ""}`}
+                >
+                  <Checkbox
+                    isChecked={checked}
+                    onChange={() => togglePerson(p.id)}
+                    label={p.name}
+                  />
+                  {contactInfo && (
+                    <Text size="small" color="color.text.subtle">
+                      {contactInfo}
+                    </Text>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {error && <ErrorBox message={error} />}
+
+      <div className="tm-savebar">
+        <Button appearance="primary" isLoading={saving} isDisabled={saving} onClick={() => void handleSave()}>
+          {isNew ? "Utwórz team" : "Zapisz zmiany"}
+        </Button>
+        {!isNew && (
+          <ConfirmInline
+            label="Usuń team"
+            question={`Usunąć team „${initial.name}”?`}
+            confirmLabel="Tak, usuń"
+            busy={saving}
+            onConfirm={() => void handleConfirmDelete()}
+          />
+        )}
+      </div>
+    </div>
   );
 }

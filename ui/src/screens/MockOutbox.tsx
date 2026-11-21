@@ -1,171 +1,138 @@
-// Wysłane SMS / telefony z symulowanych kanałów + przełącznik dostępności kanału — tasks.md 14.4.
-// Wyłączenie kanału pokazuje awarię: kolejne dostarczenia kończą się błędem, a w szczegółach alertu widać fallback.
+// Konfiguracja kanałów powiadomień wg typu (poziomu) alertu:
+// - Krytyczne (critical): domyślnie SMS + Telefon
+// - Średnie (medium / warning): domyślnie E-mail
+// - Pozostałe (info / niskie): domyślnie Na stronę (UI)
+import { Checkbox } from "@atlaskit/checkbox";
 import { Text } from "@atlaskit/primitives/compiled";
-import { useFlags } from "@atlaskit/flag";
-import Toggle from "@atlaskit/toggle";
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, type Schemas } from "../api/client";
-import { send } from "../api/request";
-import { usePollWhenQuiet, useStream } from "../api/stream";
-import { useResource } from "../api/useResource";
-import { formatTime } from "../ui/format";
-import Button from "@atlaskit/button/new";
-import { Card, Empty, ErrorBox, PageHeader, StatusLozenge } from "../ui/primitives";
+import { useState } from "react";
+import { api } from "../api/client";
+import { SeverityBadge } from "../components/Badges";
+import { Card, PageHeader } from "../ui/primitives";
 import "./MockOutbox.css";
 
-type ChannelState = Schemas["MockChannelState"];
+type TierId = "critical" | "medium" | "other";
+type ChannelId = "sms" | "phone" | "email" | "ui";
 
-const CHANNEL_LABEL: Record<Schemas["Channel"], string> = {
-  ui: "UI",
-  email: "E-mail",
-  sms: "SMS",
-  phone: "Telefon",
+type TierConfig = {
+  id: TierId;
+  title: string;
+  badge: "critical" | "warning" | "info";
+  description: string;
 };
 
-function ChannelSwitch({
-  state,
-  pending,
-  onToggle,
-}: {
-  state: ChannelState;
-  pending: boolean;
-  onToggle: (c: ChannelState) => void;
-}) {
-  const name = CHANNEL_LABEL[state.channel] ?? state.channel;
-  return (
-    <li className="channel-card">
-      <div>
-        <Text as="strong" weight="bold">{name}</Text>
-        <div className="channel-state">
-          <StatusLozenge domain="channelAvailability" value={state.available} />
-        </div>
-      </div>
-      <Toggle
-        label={`Kanał ${name}: ${state.available ? "włączony — wyłącz (symuluj awarię)" : "wyłączony — włącz"}`}
-        isChecked={state.available}
-        isDisabled={pending}
-        onChange={() => onToggle(state)}
-      />
-    </li>
-  );
+const TIERS: TierConfig[] = [
+  {
+    id: "critical",
+    title: "Krytyczne (critical)",
+    badge: "critical",
+    description: "Natychmiastowe powiadomienie dla najpoważniejszych awarii.",
+  },
+  {
+    id: "medium",
+    title: "Średnie",
+    badge: "warning",
+    description: "Ostrzeżenia i błędy wymagające reakcji zespołu.",
+  },
+  {
+    id: "other",
+    title: "Pozostałe",
+    badge: "info",
+    description: "Zwykłe zdarzenia informacyjne i niskiego priorytetu.",
+  },
+];
+
+const CHANNELS: { id: ChannelId; label: string }[] = [
+  { id: "sms", label: "SMS" },
+  { id: "phone", label: "Telefon" },
+  { id: "email", label: "E-mail" },
+  { id: "ui", label: "Na stronę" },
+];
+
+type Matrix = Record<TierId, Record<ChannelId, boolean>>;
+
+const DEFAULT_MATRIX: Matrix = {
+  critical: { sms: true, phone: true, email: false, ui: false },
+  medium: { sms: false, phone: false, email: true, ui: false },
+  other: { sms: false, phone: false, email: false, ui: true },
+};
+
+const STORAGE_KEY = "alerting.channelMatrix.v1";
+
+function loadMatrix(): Matrix {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_MATRIX;
+    const parsed = JSON.parse(raw) as Partial<Matrix>;
+    return {
+      critical: { ...DEFAULT_MATRIX.critical, ...parsed.critical },
+      medium: { ...DEFAULT_MATRIX.medium, ...parsed.medium },
+      other: { ...DEFAULT_MATRIX.other, ...parsed.other },
+    };
+  } catch {
+    return DEFAULT_MATRIX;
+  }
 }
 
 export default function MockOutbox() {
-  const { showFlag } = useFlags();
-  const messages = useResource(() => api.GET("/mock/outbox"));
-  const channels = useResource(() => api.GET("/mock/channels"));
-  const [toggleError, setToggleError] = useState<string | null>(null);
-  const [pending, setPending] = useState<Set<string>>(new Set());
-  // Stan kanału zapisany przed odświeżeniem listy – pokazujemy go od razu, serwer potwierdzi przy następnym pobraniu.
-  const [saved, setSaved] = useState<Record<string, boolean>>({});
+  const [matrix, setMatrix] = useState<Matrix>(loadMatrix);
 
-  useEffect(() => setSaved({}), [channels.data]);
-
-  const reload = () => {
-    messages.reload();
-    channels.reload();
-  };
-
-  // Na żywo: nowa „wysłana” wiadomość albo zmiana statusu dostarczenia.
-  useStream((msg) => {
-    if (msg.type !== "ui_event") return;
-    if (msg.data.kind === "mock_outbox" || msg.data.kind === "delivery_status") messages.refresh();
-  });
-
-  usePollWhenQuiet(() => {
-    messages.refresh();
-    channels.refresh();
-  });
-
-  async function toggle(state: ChannelState) {
-    const channel = state.channel;
-    setPending((s) => new Set(s).add(channel));
-    setToggleError(null);
-    const err = await send(() =>
-      api.PUT("/mock/channels/{channel}", { params: { path: { channel } }, body: { available: !state.available } }),
-    );
-    if (err) {
-      setToggleError(`Nie udało się zmienić stanu kanału ${CHANNEL_LABEL[channel] ?? channel}.`);
-    } else {
-      setSaved((s) => ({ ...s, [channel]: !state.available }));
-      showFlag({
-        title: `Kanał ${CHANNEL_LABEL[channel] ?? channel}: ${state.available ? "wyłączony (awaria)" : "włączony"}`,
-        appearance: "success",
-        isAutoDismiss: true,
-      });
-      channels.refresh();
-    }
-    setPending((s) => {
-      const n = new Set(s);
-      n.delete(channel);
-      return n;
+  function toggle(tier: TierId, channel: ChannelId) {
+    setMatrix((prev) => {
+      const next: Matrix = {
+        ...prev,
+        [tier]: {
+          ...prev[tier],
+          [channel]: !prev[tier][channel],
+        },
+      };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // brak localStorage
+      }
+      if (channel !== "ui") {
+        const anyEnabled = TIERS.some((t) => next[t.id][channel]);
+        void api.PUT("/mock/channels/{channel}", {
+          params: { path: { channel } },
+          body: { available: anyEnabled },
+        });
+      }
+      return next;
     });
   }
 
-  const rows = messages.data;
   return (
     <section className="mock-outbox">
-      <PageHeader actions={<Button onClick={reload}>Odśwież</Button>}>Wysłane SMS / telefony</PageHeader>
-      <Text as="p" color="color.text.subtle">
-        Symulowane kanały — nic nie wychodzi na zewnątrz. Wyłącz kanał, aby pokazać awarię: kolejne dostarczenia
-        przez ten kanał zakończą się błędem, a w szczegółach alertu zobaczysz kanał zapasowy.
-      </Text>
+      <PageHeader>Kanały powiadomień (SMS / telefon / e-mail)</PageHeader>
 
-      <Card title="Dostępność kanałów" loading={channels.loading} error={channels.error} onRetry={channels.reload}>
-        {toggleError && <ErrorBox message={toggleError} />}
-        {channels.data && (
-          <ul className="channel-list" aria-label="Dostępność symulowanych kanałów">
-            {channels.data.map((c) => (
-              <ChannelSwitch
-                key={c.channel}
-                state={{ ...c, available: saved[c.channel] ?? c.available }}
-                pending={pending.has(c.channel)}
-                onToggle={toggle}
-              />
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <Card title="Wysłane wiadomości" loading={messages.loading} error={messages.error} onRetry={messages.reload}>
-        {rows?.length === 0 && <Empty>Brak wysłanych wiadomości</Empty>}
-        {rows && rows.length > 0 && (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">Czas</th>
-                  <th scope="col">Kanał</th>
-                  <th scope="col">Do</th>
-                  <th scope="col">Treść</th>
-                  <th scope="col">Alert</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((m) => (
-                  <tr key={m.id}>
-                    <td className="nowrap">{formatTime(m.sent_at)}</td>
-                    <td>
-                      <StatusLozenge domain="channel" value={m.channel} />
-                    </td>
-                    <td>
-                      <div>{m.person_id}</div>
-                      <div className="muted outbox-to">{m.to}</div>
-                    </td>
-                    <td>
-                      <Text as="strong" weight="bold">{m.title}</Text>
-                      <div className="outbox-body">{m.body}</div>
-                    </td>
-                    <td>
-                      {m.alert_id ? <Link to={`/alerts/${m.alert_id}`}>Szczegóły alertu</Link> : <Text color="color.text.subtle">—</Text>}
-                    </td>
-                  </tr>
+      <Card title="Dostępność kanałów dla typów powiadomień">
+        <ul className="tier-list" aria-label="Kanały powiadomień dla poszczególnych typów alertów">
+          {TIERS.map((t) => (
+            <li key={t.id} className="tier-card">
+              <div className="tier-info">
+                <div className="tier-header">
+                  <SeverityBadge severity={t.badge} />
+                  <Text as="strong" weight="bold">
+                    {t.title}
+                  </Text>
+                </div>
+                <Text size="small" color="color.text.subtle">
+                  {t.description}
+                </Text>
+              </div>
+              <div className="tier-channels">
+                {CHANNELS.map((c) => (
+                  <Checkbox
+                    key={c.id}
+                    label={c.label}
+                    isChecked={matrix[t.id][c.id]}
+                    onChange={() => toggle(t.id, c.id)}
+                  />
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              </div>
+            </li>
+          ))}
+        </ul>
       </Card>
     </section>
   );

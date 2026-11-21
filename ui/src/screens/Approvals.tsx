@@ -1,16 +1,12 @@
-// Kolejka zatwierdzeń — tasks.md 14.3.
-// Zatwierdzać i odrzucać można tylko tutaj (z UI); autorem jest wybrana tożsamość („działam jako”).
+// Kolejka zatwierdzeń — bez checkboxów i bez sekcji Parametry; obsługuje bezpośrednie przejście (?step=run_id:step_id).
 import { Text } from "@atlaskit/primitives/compiled";
-import { useRef, useState } from "react";
-import Badge from "@atlaskit/badge";
+import { useEffect, useRef, useState } from "react";
 import Button from "@atlaskit/button/new";
 import { Code } from "@atlaskit/code";
 import { useFlags } from "@atlaskit/flag";
 import ModalDialog, { ModalBody, ModalFooter, ModalHeader, ModalTitle, ModalTransition } from "@atlaskit/modal-dialog";
-import { Checkbox } from "@atlaskit/checkbox";
-import { Inline } from "@atlaskit/primitives/compiled";
 import Tooltip from "@atlaskit/tooltip";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
 import { usePollWhenQuiet, useStream } from "../api/stream";
@@ -19,16 +15,15 @@ import { RiskBadge } from "../components/Badges";
 import { formatTime } from "../ui/format";
 import { useListKeyboard } from "../ui/keyboard";
 import { EmptyList, ErrorBox, ListSkeleton, PageHeader, useRerenderOnMount } from "../ui/primitives";
-import { type Decision, pruneSelection, runBulk, stepKey, stepsLabel } from "./approvals/bulk";
+import { type Decision, runBulk, stepKey, stepsLabel } from "./approvals/bulk";
 import "./Approvals.css";
 
 type Pending = Schemas["PendingApproval"];
 
-// Komenda trafia do runbooków asynchronnie (202) – przez chwilę lista z serwera może jeszcze zawierać krok,
-// który właśnie zatwierdziliśmy. Ukrywamy go lokalnie, ale tylko na krótko (gdyby komenda przepadła).
 const DECIDED_HIDE_MS = 15_000;
 
 const keyOf = (a: Pending) => stepKey(a);
+const domIdOf = (a: Pending) => `approval-${a.run_id}-${a.step_id}`;
 
 function formatSince(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
@@ -43,21 +38,6 @@ function formatSince(iso: string): string {
           ? `${Math.floor(min / 60)} h ${min % 60} min temu`
           : `${Math.floor(min / (24 * 60))} dni temu`;
   return `${ago} (${formatTime(iso)})`;
-}
-
-function Params({ params }: { params: Pending["params"] }) {
-  const entries = Object.entries(params ?? {});
-  if (entries.length === 0) return <Text color="color.text.subtle">brak parametrów</Text>;
-  return (
-    <dl className="approval-params">
-      {entries.map(([k, v]) => (
-        <div key={k}>
-          <dt>{k}</dt>
-          <dd>{typeof v === "string" ? v : JSON.stringify(v)}</dd>
-        </div>
-      ))}
-    </dl>
-  );
 }
 
 function RejectDialog({ steps, onCancel, onConfirm }: { steps: Pending[]; onCancel: () => void; onConfirm: () => void }) {
@@ -91,22 +71,32 @@ function RejectDialog({ steps, onCancel, onConfirm }: { steps: Pending[]; onCanc
 export default function Approvals() {
   const personId = usePersonId();
   const list = useResource(() => api.GET("/approvals"));
+  const [searchParams] = useSearchParams();
+  const targetStepKey = searchParams.get("step");
+  const scrolledForRef = useRef<string | null>(null);
   const [decidedAt, setDecidedAt] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [failed, setFailed] = useState<Record<string, Pending>>({});
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rejecting, setRejecting] = useState<Pending[] | null>(null);
   const { showFlag } = useFlags();
   const navigate = useNavigate();
 
-  // Optymistycznie ukrywamy krok, który właśnie zatwierdziliśmy; odświeżenie potwierdzi stan z serwera.
   const now = Date.now();
   const shown = list.data?.filter((a) => now - (decidedAt[keyOf(a)] ?? -Infinity) > DECIDED_HIDE_MS);
-  // Krok z błędem (np. 409) zostaje przy komunikacie, nawet gdy serwer już go nie zwraca — do zamknięcia komunikatu.
   const items = shown ? [...shown, ...Object.values(failed).filter((f) => !list.data?.some((a) => keyOf(a) === keyOf(f)))] : null;
 
-  // Na żywo: zmiana statusu kroku (np. zatwierdzenie z innej karty) odświeża kolejkę.
+  useEffect(() => {
+    if (!targetStepKey || !items?.length || scrolledForRef.current === targetStepKey) return;
+    const target = items.find((a) => keyOf(a) === targetStepKey);
+    if (!target) return;
+    const el = document.getElementById(domIdOf(target));
+    if (el) {
+      scrolledForRef.current = targetStepKey;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [targetStepKey, items]);
+
   useStream((msg) => {
     if (msg.type === "ui_event" && msg.data.kind === "step_status") list.refresh();
   });
@@ -144,28 +134,17 @@ export default function Approvals() {
       }
       return;
     }
-    const done = new Set(outcome.results.filter((r) => r.ok).map((r) => r.key));
-    setSelected((cur) => new Set([...cur].filter((k) => !done.has(k))));
     if (outcome.results.some((r) => r.status === 409 || r.status === 404)) list.refresh();
-    const verb = command === "approve" ? "Zatwierdzono" : "Odrzucono";
-    const alertIds = new Set(steps.map((x) => x.alert_id));
-    const alertId = alertIds.size === 1 ? steps[0]?.alert_id : undefined;
-    showFlag({
-      title: `${verb} ${outcome.okCount} z ${steps.length}`,
-      description:
-        outcome.failCount > 0
-          ? `Nie udało się: ${stepsLabel(outcome.failCount)} — szczegóły przy wierszach.`
-          : steps.length === 1
-            ? steps[0]?.text
-            : undefined,
-      appearance: outcome.failCount === 0 ? "success" : outcome.okCount === 0 ? "error" : "warning",
-      isAutoDismiss: outcome.failCount === 0,
-      actions: alertId ? [{ content: "Otwórz alert", onClick: () => navigate(`/alerts/${alertId}`) }] : undefined,
-    });
+    if (outcome.failCount > 0) {
+      const verb = command === "approve" ? "Zatwierdzono" : "Odrzucono";
+      showFlag({
+        title: `${verb} ${outcome.okCount} z ${steps.length}`,
+        description: `Nie udało się: ${stepsLabel(outcome.failCount)} — szczegóły przy wierszach.`,
+        appearance: outcome.okCount === 0 ? "error" : "warning",
+        isAutoDismiss: false,
+      });
+    }
   }
-
-  const sel = pruneSelection(selected, items?.map(keyOf) ?? []);
-  const selectedItems = items?.filter((a) => sel.has(keyOf(a))) ?? [];
 
   const { activeKey } = useListKeyboard({
     keys: items?.map(keyOf) ?? [],
@@ -175,11 +154,9 @@ export default function Approvals() {
       if (a) navigate(`/alerts/${a.alert_id}`);
     },
     onAction: (action, key) => {
-      if (action === "Escape") return setSelected(new Set());
       const a = items?.find((x) => keyOf(x) === key);
       if (!a) return;
-      if (action === "x") toggle(key as string);
-      else if (action === "a" && !busy.has(key as string)) void decide([a], "approve");
+      if (action === "a" && !busy.has(key as string)) void decide([a], "approve");
       else if (action === "r" && !busy.has(key as string)) setRejecting([a]);
     },
   });
@@ -187,14 +164,6 @@ export default function Approvals() {
   function dismissError(key: string) {
     setRowErrors((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => k !== key)));
     setFailed((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => k !== key)));
-  }
-
-  function toggle(key: string) {
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
   }
 
   return (
@@ -224,39 +193,24 @@ export default function Approvals() {
         <EmptyList header="Brak kroków do zatwierdzenia" description="Kroki runbooków czekające na człowieka pojawią się tu same." />
       )}
 
-      {selectedItems.length > 0 && (
-        <div role="region" aria-label="Akcje zbiorcze" className="approvals-bulk">
-          <Inline space="space.100" alignBlock="center" shouldWrap>
-            <Badge appearance="primary">{selectedItems.length}</Badge>
-            <Text>zaznaczone</Text>
-            <Button
-              appearance="primary"
-              isDisabled={!personId || selectedItems.some((a) => busy.has(keyOf(a)))}
-              onClick={() => void decide(selectedItems, "approve")}
-            >
-              Zatwierdź zaznaczone
-            </Button>
-            <Button appearance="danger" isDisabled={!personId} onClick={() => setRejecting(selectedItems)}>
-              Odrzuć zaznaczone
-            </Button>
-            <Button appearance="subtle" onClick={() => setSelected(new Set())}>
-              Wyczyść zaznaczenie
-            </Button>
-          </Inline>
-        </div>
-      )}
-
       {items && items.length > 0 && (
         <ul className="approvals-list" aria-label="Kroki oczekujące na zatwierdzenie">
           {items.map((a) => {
             const key = keyOf(a);
             const isBusy = busy.has(key);
+            const isTargeted = targetStepKey === key;
             return (
               <li
+                id={domIdOf(a)}
                 key={key}
-                className={["approval", sel.has(key) && "approval--selected", key === activeKey && "kb-current"].filter(Boolean).join(" ")}
+                className={[
+                  "approval",
+                  isTargeted && "approval--selected",
+                  (key === activeKey || isTargeted) && "kb-current",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
               >
-                <Checkbox isChecked={sel.has(key)} onChange={() => toggle(key)} label="Zaznacz" />
                 <div className="approval-main">
                   <div className="approval-title">
                     <RiskBadge risk={a.risk} />
@@ -280,12 +234,6 @@ export default function Approvals() {
                     <div>
                       <dt>Czeka od</dt>
                       <dd>{formatSince(a.waiting_since)}</dd>
-                    </div>
-                    <div className="approval-params-row">
-                      <dt>Parametry</dt>
-                      <dd>
-                        <Params params={a.params} />
-                      </dd>
                     </div>
                   </dl>
                   {rowErrors[key] && (

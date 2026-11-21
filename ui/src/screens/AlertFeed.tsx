@@ -1,11 +1,12 @@
-// Feed alertów na żywo (tasks.md 14.1): filtr „mój zespół / wszystkie”, stan, severity, licznik, ostatnie wystąpienie.
+// Maksymalnie uproszczona lista aktywnych alertów: tylko nierozwiązane alerty, szybkie rozwiązanie jednym kliknięciem.
 import { Text } from "@atlaskit/primitives/compiled";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { api, asPerson } from "../api/client";
+import { send } from "../api/request";
 import { usePersonId } from "../api/session";
-import { useStreamStatus } from "../api/stream";
 import { useAlertFeed, useTeamsOf } from "../api/useAlertFeed";
-import { SeverityBadge, StateBadge } from "../components/Badges";
+import { SeverityBadge } from "../components/Badges";
 import { paletteColor } from "../components/colors";
 import { ago } from "../ui/format";
 import Button from "@atlaskit/button/new";
@@ -19,7 +20,6 @@ type Filter = "mine" | "all";
 const FILTER_KEY = "alerting.feedFilter";
 const FLASH_MS = 3_000;
 
-// Wybór zapamiętany w przeglądarce; `null` = jeszcze nie wybierano.
 function readFilter(): Filter | null {
   try {
     const v = localStorage.getItem(FILTER_KEY);
@@ -29,7 +29,6 @@ function readFilter(): Filter | null {
   }
 }
 
-// Odświeżanie „x s temu” bez zapytań do API.
 function useNow(intervalMs: number) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -42,12 +41,11 @@ function useNow(intervalMs: number) {
 export default function AlertFeed() {
   const personId = usePersonId();
   const myTeams = useTeamsOf(personId);
-  const { alerts, touched, loading, error, retry } = useAlertFeed();
-  const status = useStreamStatus();
+  const { alerts, touched, loading, error, retry, remove } = useAlertFeed();
   const navigate = useNavigate();
   const now = useNow(5_000);
   const [chosen, setFilterState] = useState<Filter | null>(readFilter);
-  // Bez własnego wyboru: „mój zespół” tylko dla osoby, która ma zespół – inaczej feed byłby pusty.
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const filter: Filter = chosen ?? (myTeams?.length ? "mine" : "all");
 
   const setFilter = (f: Filter) => {
@@ -59,9 +57,21 @@ export default function AlertFeed() {
     }
   };
 
+  async function resolveAlert(e: React.MouseEvent, alertId: string) {
+    e.stopPropagation();
+    if (!personId) return;
+    setResolvingId(alertId);
+    const err = await send(() =>
+      api.POST("/alerts/{alert_id}/resolve", {
+        params: { path: { alert_id: alertId }, header: asPerson() },
+      }),
+    );
+    setResolvingId(null);
+    if (!err) remove(alertId);
+  }
+
   const visible =
     filter === "all" || !myTeams ? alerts : alerts.filter((a) => a.teams.some((t) => myTeams.includes(t)));
-  const lastChange = touched.size ? Math.max(...touched.values()) : null;
 
   const { index: current } = useListKeyboard({
     keys: visible.map((a) => a.id),
@@ -74,26 +84,38 @@ export default function AlertFeed() {
     const flash = t !== undefined && Date.now() - t < FLASH_MS;
     const color = paletteColor(a.color);
     return {
-      // nowy klucz po zmianie na żywo restartuje animację wyróżnienia
       key: flash ? `${a.id}:${t}` : a.id,
       className: [flash && "flash", i === current && "kb-current"].filter(Boolean).join(" ") || undefined,
       style: color ? { boxShadow: `inset 4px 0 0 ${color.fg}` } : undefined,
       onClick: () => navigate(`/alerts/${a.id}`),
       cells: [
         { key: "severity", content: <SeverityBadge severity={a.severity} /> },
-        { key: "state", content: <StateBadge state={a.state} /> },
         {
           key: "title",
           content: (
             <span className="feed-title">
-              <Link to={`/alerts/${a.id}`} onClick={(e) => e.stopPropagation()}>{a.title}</Link>
-              <span className="muted">{a.schema}{a.episode > 1 ? ` · epizod ${a.episode}` : ""}</span>
+              <Link to={`/alerts/${a.id}`} onClick={(e) => e.stopPropagation()}>
+                {a.title}
+              </Link>
             </span>
           ),
         },
-        { key: "teams", content: a.teams.length ? a.teams.join(", ") : <Text color="color.text.subtle">—</Text> },
-        { key: "count", content: <span className="num">×{a.count}</span> },
         { key: "last", content: <span title={new Date(a.last_seen).toLocaleString()}>{ago(a.last_seen, now)}</span> },
+        {
+          key: "actions",
+          content: (
+            <div onClick={(e) => e.stopPropagation()}>
+              <Button
+                spacing="compact"
+                isLoading={resolvingId === a.id}
+                isDisabled={!personId || resolvingId !== null}
+                onClick={(e) => void resolveAlert(e, a.id)}
+              >
+                Rozwiąż
+              </Button>
+            </div>
+          ),
+        },
       ],
     };
   });
@@ -111,12 +133,6 @@ export default function AlertFeed() {
               { value: "all", label: "Wszystkie" },
             ]}
           />
-        }
-        bottomBar={
-          <Text as="p" color="color.text.subtle" aria-live="polite">
-            {status === "live" ? "Na żywo" : status === "unavailable" ? "Bez aktualizacji na żywo (mock)" : "Łączenie…"}
-            {lastChange && ` · ostatnia zmiana ${new Date(lastChange).toLocaleTimeString()}`}
-          </Text>
         }
       >
         Alerty
@@ -138,15 +154,13 @@ export default function AlertFeed() {
         <DynamicTable
           label="Alerty"
           highlightedRowIndex={current >= 0 ? current : undefined}
-          emptyView={<EmptyList header="Brak alertów" description="Nowe alerty pojawią się tu na żywo." />}
+          emptyView={<EmptyList header="Brak aktywnych alertów" description="Wszystkie alerty są rozwiązane." />}
           head={{
             cells: [
-              { key: "severity", content: "Severity" },
-              { key: "state", content: "Stan" },
+              { key: "severity", content: "Priorytet" },
               { key: "title", content: "Alert" },
-              { key: "teams", content: "Zespoły" },
-              { key: "count", content: "Licznik" },
-              { key: "last", content: "Ostatnio" },
+              { key: "last", content: "Kiedy" },
+              { key: "actions", content: "" },
             ],
           }}
           rows={rows}

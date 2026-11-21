@@ -74,13 +74,14 @@ export function looksLikePastedSecret(name: string, value: string): boolean {
   return SECRET_NAME.test(name) && stripped.length > 0 && !/^(bearer|basic|token)$/i.test(v);
 }
 
-export function validate(f: FormState, opts: { isNew: boolean; takenNames: Set<string> }): FieldErrors {
+export function validate(f: FormState, opts: { isNew: boolean; originalName?: string; takenNames: Set<string> }): FieldErrors {
   const e: FieldErrors = {};
   const name = f.name.trim();
+  const isRenamed = !opts.isNew && opts.originalName !== undefined && name !== opts.originalName;
   if (!name) e.name = "Podaj nazwę akcji.";
   else if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name))
     e.name = "Nazwa: litery, cyfry, „_” i „-”, zaczyna się od litery (np. flush_cache).";
-  else if (opts.isNew && (RESERVED_NAMES.includes(name) || opts.takenNames.has(name)))
+  else if ((opts.isNew || isRenamed) && (RESERVED_NAMES.includes(name) || opts.takenNames.has(name)))
     e.name = "Akcja o tej nazwie już istnieje (albo nazwa jest zarezerwowana).";
 
   const url = f.url.trim();

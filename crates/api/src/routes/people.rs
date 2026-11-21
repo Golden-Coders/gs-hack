@@ -2,7 +2,12 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use axum::{
+    extract::{rejection::JsonRejection, Path, State},
+    http::StatusCode,
+    routing::{get, put},
+    Json, Router,
+};
 use common::db::sqlx::{self, types::Json as SqlJson, PgPool};
 use contracts::{PersonDef, TeamDef};
 use serde::Deserialize;
@@ -17,7 +22,8 @@ static PEOPLE_SEEDED: AtomicBool = AtomicBool::new(false);
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/people", get(list_people))
-        .route("/teams", get(list_teams))
+        .route("/teams", get(list_teams).post(create_team))
+        .route("/teams/{id}", put(put_team).delete(delete_team))
 }
 
 #[derive(Deserialize)]
@@ -28,7 +34,7 @@ pub(crate) struct PeopleConfigFile {
     pub teams: Vec<TeamDef>,
 }
 
-async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
+pub(crate) async fn ensure_people_seeded(db: &PgPool, config_dir: &str) {
     if PEOPLE_SEEDED.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -128,4 +134,110 @@ async fn list_teams(State(st): State<AppState>) -> ApiResult<Json<Vec<TeamDef>>>
         teams.push(t);
     }
     Ok(Json(teams))
+}
+
+async fn upsert_team(db: &PgPool, old_id: Option<&str>, team: TeamDef) -> ApiResult<TeamDef> {
+    if team.id.trim().is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "invalid team", "id zespołu nie może być puste"));
+    }
+    if team.name.trim().is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "invalid team", "nazwa zespołu nie może być pusta"));
+    }
+    let def_val = serde_json::to_value(&team)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e))?;
+
+    let mut tx = db.begin().await.map_err(db_err)?;
+    if let Some(prev) = old_id {
+        if prev != team.id {
+            sqlx::query("DELETE FROM team_members WHERE team_id = $1")
+                .bind(prev)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            sqlx::query("DELETE FROM teams WHERE id = $1")
+                .bind(prev)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+        }
+    }
+
+    sqlx::query(
+        "INSERT INTO teams (id, name, def, updated_at) VALUES ($1, $2, $3, now()) \
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, def = EXCLUDED.def, updated_at = now()",
+    )
+    .bind(&team.id)
+    .bind(&team.name)
+    .bind(SqlJson(def_val))
+    .execute(&mut *tx)
+    .await
+    .map_err(db_err)?;
+
+    sqlx::query("DELETE FROM team_members WHERE team_id = $1")
+        .bind(&team.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+
+    for member in &team.members {
+        let _ = sqlx::query(
+            "INSERT INTO team_members (team_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(&team.id)
+        .bind(member)
+        .execute(&mut *tx)
+        .await;
+    }
+
+    sqlx::query("SELECT pg_notify('config_changed', 'people')")
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(team)
+}
+
+async fn create_team(
+    State(st): State<AppState>,
+    body: Result<Json<TeamDef>, JsonRejection>,
+) -> ApiResult<(StatusCode, Json<TeamDef>)> {
+    ensure_people_seeded(&st.db, &st.config.config_dir).await;
+    let Json(team) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e.body_text()))?;
+    let saved = upsert_team(&st.db, None, team).await?;
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+
+async fn put_team(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    body: Result<Json<TeamDef>, JsonRejection>,
+) -> ApiResult<Json<TeamDef>> {
+    ensure_people_seeded(&st.db, &st.config.config_dir).await;
+    let Json(team) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid team", e.body_text()))?;
+    let saved = upsert_team(&st.db, Some(&id), team).await?;
+    Ok(Json(saved))
+}
+
+async fn delete_team(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    ensure_people_seeded(&st.db, &st.config.config_dir).await;
+    let mut tx = st.db.begin().await.map_err(db_err)?;
+    sqlx::query("DELETE FROM team_members WHERE team_id = $1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    sqlx::query("DELETE FROM teams WHERE id = $1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    sqlx::query("SELECT pg_notify('config_changed', 'people')")
+        .execute(&mut *tx)
+        .await
+        .map_err(db_err)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }
