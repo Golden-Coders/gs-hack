@@ -1,11 +1,14 @@
 // Szczegóły alertu (tasks.md 14.2): prezentacja wg reguły, epizody, runbooki, dostarczenia, dziennik.
 // Każda sekcja ładuje się osobno i odświeża na żywo po zdarzeniach z `/stream` dotyczących tego alertu.
+import { Text } from "@atlaskit/primitives/compiled";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../api/client";
 import { usePersonId } from "../api/session";
 import { usePollWhenQuiet, useStream } from "../api/stream";
+import Button from "@atlaskit/button/new";
 import { ErrorBox, Loading } from "../ui/primitives";
+import { useResultFlag } from "./alert-detail/flags";
 import Presentation from "../components/Presentation";
 import Audit from "./alert-detail/Audit";
 import Deliveries from "./alert-detail/Deliveries";
@@ -84,9 +87,9 @@ export default function AlertDetail() {
   const a = alert.data;
   return (
     <section className="alert-detail">
-      <p className="ad-back">
+      <div className="ad-back">
         <Link to="/">← Wszystkie alerty</Link>
-      </p>
+      </div>
 
       {alert.error && (
         <ErrorBox message={`Nie udało się pobrać alertu: ${alert.error}`} onRetry={alert.reload} disabled={alert.loading} />
@@ -121,18 +124,18 @@ function AlertMeta({
 }) {
   const personId = usePersonId();
   const [busy, setBusy] = useState<"ack" | "resolve" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const flag = useResultFlag();
 
   async function run(kind: "ack" | "resolve") {
     setBusy(kind);
-    setError(null);
     const params = { path: { alert_id: a.id }, header: asPerson() };
     const err = await send(() =>
       kind === "ack" ? api.POST("/alerts/{alert_id}/ack", { params }) : api.POST("/alerts/{alert_id}/resolve", { params }),
     );
     setBusy(null);
-    if (err) setError(`Nie udało się wykonać „${kind === "ack" ? "potwierdź" : "rozwiąż"}”: ${err}`);
-    else onChanged();
+    const name = kind === "ack" ? "potwierdź" : "rozwiąż";
+    flag(err, `Wykonano „${name}”`, `Nie udało się wykonać „${name}”`);
+    if (!err) onChanged();
   }
 
   const resolved = a.state === "resolved";
@@ -140,26 +143,25 @@ function AlertMeta({
   return (
     <div className="ad-meta">
       <div className="ad-toolbar">
-        <button
-          type="button"
-          className="primary"
-          disabled={busy !== null || noPerson || a.state === "acked" || resolved}
+        <Button
+          appearance="primary"
+          isLoading={busy === "ack"}
+          isDisabled={busy !== null || noPerson || a.state === "acked" || resolved}
           title={noPerson ? "Wybierz osobę w polu „Działam jako”" : undefined}
           onClick={() => run("ack")}
         >
-          {busy === "ack" ? "Potwierdzanie…" : "Potwierdź (ack)"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null || noPerson || resolved}
+          Potwierdź (ack)
+        </Button>
+        <Button
+          isLoading={busy === "resolve"}
+          isDisabled={busy !== null || noPerson || resolved}
           title={noPerson ? "Wybierz osobę w polu „Działam jako”" : undefined}
           onClick={() => run("resolve")}
         >
-          {busy === "resolve" ? "Rozwiązywanie…" : "Rozwiąż (resolve)"}
-        </button>
-        {noPerson && <span className="muted">Wybierz osobę w polu „Działam jako”, aby działać na alercie.</span>}
+          Rozwiąż (resolve)
+        </Button>
+        {noPerson && <Text color="color.text.subtle">Wybierz osobę w polu „Działam jako”, aby działać na alercie.</Text>}
       </div>
-      {error && <ErrorBox message={error} />}
       <dl className="ad-facts">
         <div>
           <dt>Licznik zdarzeń</dt>

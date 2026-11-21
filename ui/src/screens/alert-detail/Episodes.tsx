@@ -1,5 +1,5 @@
 import type { Schemas } from "../../api/client";
-import { Card } from "../../ui/primitives";
+import { Card, Empty } from "../../ui/primitives";
 import type { Resource } from "../../api/useResource";
 import { actorLabel, formatTime } from "../../ui/format";
 
@@ -7,7 +7,7 @@ export default function Episodes({ resource }: { resource: Resource<Schemas["Epi
   const episodes = resource.data ?? [];
   return (
     <Card title="Epizody" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
-      {!resource.loading && !resource.error && episodes.length === 0 && <p className="muted">Brak epizodów.</p>}
+      {!resource.loading && !resource.error && episodes.length === 0 && <Empty>Brak epizodów.</Empty>}
       {episodes.length > 0 && (
         <div className="table-wrap">
           <table className="data-table">

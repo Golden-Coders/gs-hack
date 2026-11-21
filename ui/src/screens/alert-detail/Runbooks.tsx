@@ -1,12 +1,17 @@
 // Runbooki dopasowane do alertu: MANUAL = treść Markdown, AUTOMATIC = kroki ze statusem i komendami.
 // Zatwierdzanie (approve/reject) jest tylko w kolejce `/approvals` – tu tylko status i link.
+import { Text } from "@atlaskit/primitives/compiled";
+import { Code } from "@atlaskit/code";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, asPerson, type Schemas } from "../../api/client";
 import { usePersonId } from "../../api/session";
-import { Badge, StepStatusBadge } from "../../components/Badges";
+import Button from "@atlaskit/button/new";
+import Heading from "@atlaskit/heading";
+import { StepStatusBadge } from "../../components/Badges";
 import Markdown from "../../components/Markdown";
-import { Card, ErrorBox } from "../../ui/primitives";
+import { Card, Empty, StatusLozenge, TextInput } from "../../ui/primitives";
+import { useResultFlag } from "./flags";
 import { send } from "../../api/request";
 import type { Resource } from "../../api/useResource";
 import { formatTime } from "../../ui/format";
@@ -29,7 +34,7 @@ export default function Runbooks({
 }) {
   const personId = usePersonId();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const flag = useResultFlag();
   const [notes, setNotes] = useState<Record<string, string>>({});
 
   const runbooks = resource.data ?? [];
@@ -37,8 +42,7 @@ export default function Runbooks({
   async function command(run: string, step: string, cmd: Command) {
     const key = `${run}/${step}`;
     const note = notes[key]?.trim();
-    setBusy(key);
-    setError(null);
+    setBusy(`${key}/${cmd}`);
     const err = await send(() =>
       api.POST("/runs/{run_id}/steps/{step_id}/{command}", {
         params: { path: { run_id: run, step_id: step, command: cmd }, header: asPerson() },
@@ -46,8 +50,8 @@ export default function Runbooks({
       }),
     );
     setBusy(null);
-    if (err) setError(`Komenda „${cmd}” dla kroku ${step} nie powiodła się: ${err}`);
-    else onChanged();
+    flag(err, `Komenda „${cmd}” dla kroku ${step} wykonana`, `Komenda „${cmd}” dla kroku ${step} nie powiodła się`);
+    if (!err) onChanged();
   }
 
   const blocked = busy !== null || !personId;
@@ -55,26 +59,25 @@ export default function Runbooks({
 
   return (
     <Card title="Runbooki" loading={resource.loading} error={resource.error} onRetry={resource.reload}>
-      {error && <ErrorBox message={error} />}
       {!resource.loading && !resource.error && runbooks.length === 0 && (
-        <p className="muted">Żaden runbook nie pasuje do tego alertu.</p>
+        <Empty>Żaden runbook nie pasuje do tego alertu.</Empty>
       )}
       {runbooks.map((rb) => (
         <article key={rb.runbook_id} className="ad-runbook">
           <header>
-            <h3>{rb.title}</h3>
-            <Badge tone="gray">{rb.kind === "automatic" ? "automatyczny" : "ręczny"}</Badge>
+            <Heading size="small" as="h3">{rb.title}</Heading>
+            <StatusLozenge domain="runbookKind" value={rb.kind} />
             {rb.episode != null && <span className="muted">epizod #{rb.episode}</span>}
           </header>
           {rb.kind === "manual" && rb.body && <Markdown source={rb.body} />}
-          {rb.kind === "automatic" && rb.steps.length === 0 && <p className="muted">Runbook bez kroków.</p>}
+          {rb.kind === "automatic" && rb.steps.length === 0 && <Text as="p" color="color.text.subtle">Runbook bez kroków.</Text>}
           {rb.steps.length > 0 && (
             <ol className="ad-steps">
               {rb.steps.map((s, i) => {
                 const runId = rb.run_id;
                 const key = `${runId}/${s.step_id}`;
                 return (
-                  <li key={s.step_id} className={`ad-step ad-step-${s.status}`}>
+                  <li key={s.step_id} className="ad-step">
                     <div className="ad-step-main">
                       <span className="ad-step-no">{i + 1}.</span>
                       <StepStatusBadge status={s.status} />
@@ -85,7 +88,7 @@ export default function Runbooks({
                       {s.action && (
                         <>
                           {" · "}
-                          <code>{s.action}</code>
+                          <Code>{s.action}</Code>
                         </>
                       )}
                       {s.approval === "required" && " · wymaga zatwierdzenia"}
@@ -103,43 +106,40 @@ export default function Runbooks({
 
                     {s.status === "waiting_approval" && (
                       <div className="ad-step-actions">
-                        <span>Czeka na zatwierdzenie.</span>
+                        <Text>Czeka na zatwierdzenie.</Text>
                         <Link to="/approvals">Przejdź do zatwierdzeń</Link>
                       </div>
                     )}
                     {runId && s.status === "failed" && (
                       <div className="ad-step-actions">
-                        <button type="button" disabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "retry")}>
+                        <Button spacing="compact" isLoading={busy === `${key}/retry`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "retry")}>
                           Ponów
-                        </button>
-                        <button type="button" disabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "skip")}>
+                        </Button>
+                        <Button spacing="compact" isLoading={busy === `${key}/skip`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "skip")}>
                           Pomiń
-                        </button>
-                        <button type="button" disabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "manual_mode")}>
+                        </Button>
+                        <Button spacing="compact" isLoading={busy === `${key}/manual_mode`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "manual_mode")}>
                           Tryb ręczny
-                        </button>
-                        {busy === key && <span className="muted">Wysyłanie…</span>}
+                        </Button>
                       </div>
                     )}
                     {runId && s.status === "waiting_manual" && (
                       <div className="ad-step-actions">
-                        <label className="ad-note">
-                          <span className="sr-only">Notatka do kroku {i + 1}</span>
-                          <input
-                            type="text"
+                        <div className="ad-note">
+                          <TextInput
+                            aria-label={`Notatka do kroku ${i + 1}`}
                             placeholder="Notatka (opcjonalnie)"
                             value={notes[key] ?? ""}
-                            onChange={(e) => setNotes((n) => ({ ...n, [key]: e.target.value }))}
-                            disabled={busy !== null}
+                            onChange={(e) => setNotes((n) => ({ ...n, [key]: e.currentTarget.value }))}
+                            isDisabled={busy !== null}
                           />
-                        </label>
-                        <button type="button" className="primary" disabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "done")}>
+                        </div>
+                        <Button appearance="primary" spacing="compact" isLoading={busy === `${key}/done`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "done")}>
                           Zrobione
-                        </button>
-                        <button type="button" disabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "skip")}>
+                        </Button>
+                        <Button spacing="compact" isLoading={busy === `${key}/skip`} isDisabled={blocked} title={hint} onClick={() => command(runId, s.step_id, "skip")}>
                           Pomiń
-                        </button>
-                        {busy === key && <span className="muted">Wysyłanie…</span>}
+                        </Button>
                       </div>
                     )}
                   </li>
