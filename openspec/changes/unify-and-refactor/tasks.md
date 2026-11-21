@@ -32,11 +32,11 @@ Nowy aktywny change po zarchiwizowaniu `alerting-service-mvp` i `alerting-servic
 - [x] 5.1 Przegląd poprawności i błędów: usunąć wszystkie produkcyjne `.unwrap()`/`.expect()` na danych zewnętrznych (HTTP/Kafka/DB), zweryfikować kolejność commitów offsetów Kafki i idempotencję w `ingest`, `lifecycle`, `router`, `sender`, `runbooks`; weryfikacja: raport przeglądu + testy regresyjne dla znalezionych przypadków
 - [x] 5.2 Przegląd bezpieczeństwa: zweryfikować uwierzytelnianie Bearer/`?token=`, sandbox `condition` (brak obejść), `ACTION_HOST_ALLOWLIST` + brak redirectów poza allowlistę, wymuszone `approval` dla `risk: high`, brak wycieku `${ENV}` w API i logach; weryfikacja: wszystkie testy bezpieczeństwa zielone
 - [x] 5.3 Przegląd wydajności i pamięci: sprawdzić zapytania N+1 w `crates/api/src/routes/`, brak blokującego I/O w zadaniach Tokio, limity pamięci map w `lifecycle`/`api`/`sender`; weryfikacja: brak krytycznych znalezisk, poprawki z testami
-- [ ] 5.4 Pełna regresja E2E po refaktoryzacji i review: `first-flow.sh`, `appendix-a.sh`, `runbooks.sh`, `RUN_RULE_CHANGE=1 criteria.sh`, `resilience.sh` oraz czyste `docker compose down -v && make demo`; weryfikacja: wszystkie skrypty kończą się `PASS`
+- [x] 5.4 Pełna regresja E2E po refaktoryzacji i review: `first-flow.sh`, `appendix-a.sh`, `runbooks.sh`, `RUN_RULE_CHANGE=1 criteria.sh`, `resilience.sh` oraz czyste `docker compose down -v && make demo`; weryfikacja: wszystkie skrypty kończą się `PASS`
 
 ## 6. Pozostałe weryfikacje przeniesione z `alerting-service-hardening`
 
-- [ ] 6.1 [hardening 2.4] Zweryfikować na przebudowanym obrazie współbieżnego `sender`a (1 instancja) przy 500 msg/s, że lag `sender` nie rośnie i wynik dopisać do `docs/LOADTEST.md`; weryfikacja: `cargo test -p sender` zielone, max lag `sender` stabilny przy 500 msg/s
+- [x] 6.1 [hardening 2.4] Zweryfikować na przebudowanym obrazie współbieżnego `sender`a (1 instancja) przy 500 msg/s, że lag `sender` nie rośnie i wynik dopisać do `docs/LOADTEST.md`; weryfikacja: `cargo test -p sender` zielone, max lag `sender` stabilny przy 500 msg/s
 - [ ] 6.2 [hardening 4.1] Weryfikacja UI na prawdziwym backendzie — kolejka zatwierdzeń: zatwierdzenie usuwa krok z kolejki i aktualizuje szczegóły alertu
 - [ ] 6.3 [hardening 4.2] Weryfikacja UI na prawdziwym backendzie — podgląd mocków SMS/telefonu z przełącznikiem: wyłączenie SMS pokazuje fallback w szczegółach alertu
 - [ ] 6.4 [hardening 4.3] Weryfikacja UI na prawdziwym backendzie — edytor reguł: utworzenie reguły w kreatorze bez pisania YAML
