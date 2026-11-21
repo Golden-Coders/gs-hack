@@ -584,10 +584,78 @@ mod tests {
         assert_eq!(e["sample"], "{");
     }
 
+    const WORKFLOW_MAPPING: &str = include_str!("../../contracts/fixtures/config/mapping.workflow.json");
+    const WORKFLOW_EVENT: &str = include_str!("../../contracts/fixtures/events/workflow_failed.json");
+
+    async fn mapping_rows(s: &Server, schema: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM mappings WHERE schema = $1").bind(schema).fetch_one(&s.st.db).await.unwrap()
+    }
+
     #[tokio::test]
-    async fn preview_not_implemented() {
+    async fn preview_workflow_json_payload() {
         let s = server().await;
-        let (st, _) = s.http("POST", "/mappings/preview", &[], Some("{}")).await;
-        assert_eq!(st, 501);
+        let mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        let payload = serde_json::from_str::<Value>(WORKFLOW_EVENT).unwrap()["payload"].clone();
+        let body = json!({"mapping": mapping, "payload": payload}).to_string();
+        let (st, v) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 200, "{v}");
+        assert_eq!(v["severity"], "error");
+        assert_eq!(v["title"], "Counterparty service did not respond in 5000 ms");
+        assert_eq!(v["fingerprint"], "workflow.v1|order-settlement|validate-counterparty|TIMEOUT");
+        assert_eq!(v["raw"], payload);
+        assert_eq!(v["fields"]["step"], "validate-counterparty");
+    }
+
+    #[tokio::test]
+    async fn preview_yaml_string_payload() {
+        let s = server().await;
+        let mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        let yaml = "workflowName: order-settlement\nstep: validate-counterparty\nseverity: WARN\nerror:\n  code: TIMEOUT\n  message: boom\n";
+        let body = json!({"mapping": mapping, "payload": yaml}).to_string();
+        let (st, v) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 200, "{v}");
+        assert_eq!(v["fields"]["workflowName"], "order-settlement");
+        assert_eq!(v["fields"]["step"], "validate-counterparty");
+        assert_eq!(v["severity"], "warning");
+        assert_eq!(v["title"], "boom");
+    }
+
+    #[tokio::test]
+    async fn preview_errors_are_400_and_nothing_is_stored() {
+        let s = server().await;
+        let schema = uniq("prev");
+        let mut mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        mapping["schema"] = json!(schema);
+
+        let mut bad = mapping.clone();
+        bad["fields"]["x"] = json!("$[[[");
+        let body = json!({"mapping": bad, "payload": {"a": 1}}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 400);
+
+        let body = json!({"mapping": mapping}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 400);
+
+        let body = json!({"mapping": mapping, "payload": "a: [unclosed"}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 400);
+
+        let body = json!({"mapping": mapping, "payload": {"workflowName": "w"}}).to_string();
+        let (st, _) = s.http("POST", "/mappings/preview", &[], Some(&body)).await;
+        assert_eq!(st, 200);
+        assert_eq!(mapping_rows(&s, &schema).await, 0);
+    }
+
+    #[tokio::test]
+    async fn put_rejects_uncompilable_mapping() {
+        let s = server().await;
+        let schema = uniq("badput");
+        let mut mapping: Value = serde_json::from_str(WORKFLOW_MAPPING).unwrap();
+        mapping["schema"] = json!(schema);
+        mapping["fields"]["x"] = json!("$[[[");
+        let (st, _) = s.http("PUT", &format!("/mappings/{schema}"), &[], Some(&mapping.to_string())).await;
+        assert_eq!(st, 400);
+        assert_eq!(mapping_rows(&s, &schema).await, 0);
     }
 }
