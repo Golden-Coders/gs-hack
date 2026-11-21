@@ -150,9 +150,51 @@ fn partition_count(topic: &str) -> Option<usize> {
     md.topics().iter().find(|t| t.name() == topic && t.error().is_none()).map(|t| t.partitions().len())
 }
 
+/// Sprzątanie na końcu testu (także przy panice): zatrzymuje skaner, usuwa topiki i wiersze `ingest_errors`.
+#[derive(Default)]
+struct Cleanup {
+    topic: Option<String>,
+    dir: Option<std::path::PathBuf>,
+    scanner: Option<tokio::task::AbortHandle>,
+    source: Option<String>,
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let (topic, dir, scanner, source) = (self.topic.take(), self.dir.take(), self.scanner.take(), self.source.take());
+        // własny runtime w osobnym wątku: działa niezależnie od runtime'u testu (który może się już zamykać)
+        let _ = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(async move {
+                if let Some(d) = &dir {
+                    // skaner sam zatrzymuje konsumenta źródła po zniknięciu pliku (cykl 2 s)
+                    let _ = std::fs::remove_dir_all(d);
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                }
+                if let Some(h) = scanner {
+                    h.abort();
+                }
+                if let Some(t) = topic {
+                    use common::kafka::rdkafka::{admin::{AdminClient, AdminOptions}, client::DefaultClientContext, config::ClientConfig};
+                    let admin: AdminClient<DefaultClientContext> = ClientConfig::new().set("bootstrap.servers", BROKERS).create().unwrap();
+                    let _ = admin.delete_topics(&[t.as_str()], &AdminOptions::new()).await;
+                }
+                if let Some(src) = source {
+                    if let Ok(pool) = common::db::connect_and_migrate(DB).await {
+                        let _ = common::db::sqlx::query("DELETE FROM ingest_errors WHERE source = $1").bind(src).execute(&pool).await;
+                    }
+                }
+            });
+        })
+        .join();
+    }
+}
+
 #[tokio::test]
 async fn ensure_topic_creates_and_is_idempotent() {
     let topic = uniq("test.ensure");
+    let mut _cleanup = Cleanup::default();
+    _cleanup.topic = Some(topic.clone());
     assert_eq!(partition_count(&topic), None);
     sources::ensure_topic(BROKERS, &topic).await.unwrap();
     assert_eq!(partition_count(&topic), Some(topics::PARTITIONS as usize));
@@ -168,11 +210,16 @@ async fn kafka_source_added_without_restart() {
     let p = producer();
     let ctx = Arc::new(sources::Ctx { brokers: BROKERS.into(), pool: pool.clone(), producer: p.clone() });
     let scanner = tokio::spawn(sources::run_scanner(ctx, dir.to_string_lossy().into()));
+    let mut cleanup = Cleanup::default();
+    cleanup.dir = Some(dir.clone());
+    cleanup.scanner = Some(scanner.abort_handle());
 
     // źródło dodane PO starcie skanera
     tokio::time::sleep(Duration::from_millis(500)).await;
     let topic = uniq("test.src");
     let schema = uniq("t.kafka");
+    cleanup.topic = Some(topic.clone());
+    cleanup.source = Some(format!("kafka:{topic}"));
     std::fs::write(dir.join("s.yaml"), format!("topic: {topic}\nschema: {schema}\nformat: json\n")).unwrap();
     // poczekaj, aż skaner (2 s) uruchomi konsumenta, i wyślij wiadomości (earliest => nie zginą)
     tokio::time::sleep(Duration::from_secs(4)).await;
@@ -204,6 +251,4 @@ async fn kafka_source_added_without_restart() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     assert_eq!(n, 1);
-    scanner.abort();
-    let _ = std::fs::remove_dir_all(&dir);
 }
