@@ -1,5 +1,5 @@
 ---
 title: Pricing latency
-matches: { all: [ { field: source, op: glob, value: "pricing-engine-*" } ] }
+matches: { all: [ { field: service, op: glob, value: "pricing-engine-*" } ] }
 ---
 When pricing latency goes over a second, it's usually the cache. Restart the pricing-engine instance named in the alert, wait 2 minutes, and if latency is still high, call the pricing on-call person.

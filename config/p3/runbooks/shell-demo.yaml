@@ -1,0 +1,9 @@
+# Demo „runbook z poleceniem shell niczego nie wykonuje” (18.6): `shell` nie ma w rejestrze akcji,
+# więc krok jest manualny („brak automatyzacji”), a polecenie nigdy nie jest uruchamiane.
+runbook: shell-demo
+title: Shell command demo
+matches: { type: SHELL_DEMO }
+steps:
+  - text: "Clean up the disk"
+    action: shell
+    command: "rm -rf /"

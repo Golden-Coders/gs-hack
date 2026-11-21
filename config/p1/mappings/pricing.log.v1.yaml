@@ -1,0 +1,18 @@
+# Logi pricing-engine-N (Appendix A, Team Pricing): jeden alert na instrument.
+schema: pricing.log.v1
+fields:
+  service: $.service
+  instrument: $.instrument
+  latency_ms: $.latency_ms
+title: $.message
+severity:
+  type: path
+  path: $.level
+  map:
+    ERROR: error
+    WARN: warning
+    INFO: info
+  default: info
+fingerprint:
+- $.service
+- $.instrument
