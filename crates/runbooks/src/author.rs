@@ -16,7 +16,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use contracts::{ActionDef, Approval, Automation, Condition, RunbookDef, RunbookKind, StepDef, StepType};
+use contracts::{
+    ActionDef, Approval, Automation, Condition, Op, Presentation, Recipient, RuleDef, RunbookDef, RunbookKind,
+    Severity, StepDef, StepType,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -26,7 +29,7 @@ use crate::registry::Registry;
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 const DEFAULT_LOCAL_URL: &str = "http://localhost:11434/v1";
-const DEFAULT_LOCAL_MODEL: &str = "qwen2.5:7b";
+const DEFAULT_LOCAL_MODEL: &str = "qwen2.5:3b";
 const DEFAULT_API_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_API_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -74,6 +77,36 @@ pub enum AuthorError {
     InvalidResponse(String),
 }
 
+/// Dane wejściowe do wygenerowania lub wykonania operacji na regule przez LLM (z obsługą tool-calli).
+#[derive(Debug, Clone)]
+pub struct RuleDraftRequest {
+    pub prompt: String,
+    pub available_teams: Vec<(String, String)>,
+    pub available_people: Vec<(String, String)>,
+    pub available_fields: Vec<String>,
+    pub existing_rules: Vec<RuleDef>,
+    pub available_actions: Vec<ActionDef>,
+}
+
+/// Wynik działania asystenta AI dla reguł (oraz rozpoznanych tool-calli z kodu).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleDraftOutcome {
+    /// Nazwa wywołanego narzędzia (`create_or_update_rule`, `delete_rule`, `select_rule`, lub nazwa akcji z rejestru).
+    pub tool_call: String,
+    /// Szkic reguły (dla utworzenia/edycji/wyboru).
+    #[serde(default)]
+    pub draft: Option<RuleDef>,
+    /// ID docelowej reguły (np. przy `delete_rule` lub `select_rule`).
+    #[serde(default)]
+    pub target_rule_id: Option<String>,
+    /// Krótkie podsumowanie wywołanych tool-calli dla operatora w UI.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Lista wszystkich tool-calli wywołanych przez model w trakcie przetwarzania.
+    #[serde(default)]
+    pub executed_tools: Vec<String>,
+}
+
 pub trait RunbookAuthor: Send + Sync {
     fn name(&self) -> &'static str;
 
@@ -94,6 +127,10 @@ pub trait RunbookAuthor: Send + Sync {
     }
 
     fn draft<'a>(&'a self, req: &'a DraftRequest, actions: &'a [ActionDef]) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>>;
+
+    fn draft_rule<'a>(&'a self, _req: &'a RuleDraftRequest) -> BoxFuture<'a, Result<RuleDraftOutcome, AuthorError>> {
+        Box::pin(async { Err(AuthorError::Disabled) })
+    }
 }
 
 /// Dostawca `none`: brak wywołań modelu.
@@ -132,19 +169,9 @@ impl OpenAiCompatAuthor {
         })
     }
 
-    async fn call_chat_completions(&self, system_prompt: &str, user_prompt: &str, response_format: Value) -> Result<(u16, String), AuthorError> {
+    async fn call_chat_payload(&self, payload: &Value) -> Result<(u16, String), AuthorError> {
         let url = format!("{}/chat/completions", self.base_url);
-        let payload = json!({
-            "model": self.model,
-            "temperature": 0.0,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": user_prompt }
-            ],
-            "response_format": response_format
-        });
-
-        let mut req = self.client.post(&url).json(&payload);
+        let mut req = self.client.post(&url).json(payload);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
@@ -174,6 +201,19 @@ impl OpenAiCompatAuthor {
         }
         let body = String::from_utf8_lossy(&buf).into_owned();
         Ok((status, body))
+    }
+
+    async fn call_chat_completions(&self, system_prompt: &str, user_prompt: &str, response_format: Value) -> Result<(u16, String), AuthorError> {
+        let payload = json!({
+            "model": self.model,
+            "temperature": 0.0,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "response_format": response_format
+        });
+        self.call_chat_payload(&payload).await
     }
 
     async fn draft_inner(&self, req: &DraftRequest, actions: &[ActionDef]) -> Result<DraftOutcome, AuthorError> {
@@ -215,13 +255,30 @@ impl OpenAiCompatAuthor {
             )
             .await?;
 
-        // Fallback dla serwerów OpenAI-compatible bez obsługi `json_schema`.
-        if status == 400 && (body.contains("response_format") || body.contains("json_schema")) {
+        // Fallback dla serwerów OpenAI-compatible (np. Ollama) bez obsługi `json_schema` lub gdy zwróciły niepełny JSON.
+        let mut parsed_opt: Option<LlmDraftPayload> = if (200..300).contains(&status) {
+            extract_message_content(&body)
+                .ok()
+                .and_then(|c| serde_json::from_str::<LlmDraftPayload>(strip_code_fences(&c)).ok())
+                .filter(|p| !p.steps.is_empty())
+        } else {
+            None
+        };
+
+        if parsed_opt.is_none() {
             let (s2, b2) = self
                 .call_chat_completions(&system_prompt, &user_prompt, json!({ "type": "json_object" }))
                 .await?;
             status = s2;
             body = b2;
+            if (200..300).contains(&status) {
+                let content = extract_message_content(&body)?;
+                let cleaned = strip_code_fences(&content);
+                parsed_opt = Some(
+                    serde_json::from_str(cleaned)
+                        .map_err(|e| AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu: {e}")))?,
+                );
+            }
         }
 
         if !(200..300).contains(&status) {
@@ -229,10 +286,7 @@ impl OpenAiCompatAuthor {
             return Err(AuthorError::Upstream(format!("HTTP {status}")));
         }
 
-        let content = extract_message_content(&body)?;
-        let cleaned = strip_code_fences(&content);
-        let parsed: LlmDraftPayload = serde_json::from_str(cleaned)
-            .map_err(|e| AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu: {e}")))?;
+        let parsed = parsed_opt.ok_or_else(|| AuthorError::InvalidResponse("model nie zwrócił poprawnego szkicu".into()))?;
 
         let (draft, warnings) = build_and_classify_draft(req, parsed, &registry)?;
         let yaml = render_runbook_yaml(&draft);
@@ -243,6 +297,313 @@ impl OpenAiCompatAuthor {
             redacted_count: redacted.count,
             redacted_kinds: redacted.kinds,
             warnings,
+        })
+    }
+
+    async fn draft_rule_inner(&self, req: &RuleDraftRequest) -> Result<RuleDraftOutcome, AuthorError> {
+        if req.prompt.trim().is_empty() {
+            return Err(AuthorError::InvalidInput("opis reguły nie może być pusty".into()));
+        }
+
+        let teams_list = req
+            .available_teams
+            .iter()
+            .map(|(id, name)| format!("- id=\"{id}\" (nazwa: \"{name}\")"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let people_list = req
+            .available_people
+            .iter()
+            .map(|(id, name)| format!("- id=\"{id}\" (nazwa: \"{name}\")"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rules_list = req
+            .existing_rules
+            .iter()
+            .map(|r| format!("- id=\"{}\" (nazwa: \"{}\", priorytet: {:?})", r.id, r.name, r.severity_override))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let actions_list = req
+            .available_actions
+            .iter()
+            .map(|a| format!("- `{}` ({:?}): {}", a.name, a.risk, a.description.as_deref().unwrap_or("")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fields_list = req.available_fields.join(", ");
+
+        let tools = build_rule_tools(&req.available_actions);
+        let system_prompt = format!(
+            "Jesteś asystentem AI systemu AlertHub z dostępem do narzędzi (tool calls) z kodu.\n\
+             Masz do dyspozycji narzędzia (tools):\n\
+             - `list_teams_and_people`: pobiera zespoły i osoby w systemie\n\
+             - `list_event_fields`: pobiera dostępne pola zdarzeń i schematów\n\
+             - `list_existing_rules`: pobiera istniejące reguły w systemie\n\
+             - `list_registered_actions`: pobiera zarejestrowane akcje z rejestru (http_get, escalate, notify, flush_cache, open_ticket, restart_service, retry_workflow)\n\
+             - `create_or_update_rule`: tworzy lub modyfikuje regułę alertową w formularzu (WYWOŁAJ TO NARZĘDZIE, gdy użytkownik chce stworzyć lub zmienić regułę)\n\
+             - `select_rule`: wybiera istniejącą regułę do podglądu/edycji po `rule_id`\n\
+             - `delete_rule`: usuwa istniejącą regułę po `rule_id`\n\
+             - oraz narzędzia akcji systemowych: {actions_list}\n\n\
+             Kontekst systemu:\n\
+             Dostępne pola zdarzenia (`field`):\n\
+             {fields_list}\n\
+             Wskazówki dot. pól:\n\
+             - desk / biurko handlowe (np. rates, fx): `raw.payload.desk`\n\
+             - powód odrzucenia transakcji (np. LIMIT_BREACH): `raw.payload.reason`\n\
+             - kwota / notional transakcji: `raw.payload.notional`\n\
+             - usługa / serwis (np. payments-api): `raw.labels.service` lub `service`\n\
+             - region (np. eu-central-1): `raw.labels.region`\n\
+             - nazwa alertu: `raw.alertname`\n\
+             - kod błędu workflow: `raw.error.code`\n\
+             - nazwa workflow: `raw.workflowName`\n\
+             - typ zdarzenia workflow (np. WORKFLOW_FAILED): `raw.type`\n\
+             - schemat zdarzenia (trade.rejected.v2, workflow.v1, alertmanager): `schema`\n\
+             - priorytet zdarzenia (info, warning, error, critical): `severity`\n\n\
+             Dostępne zespoły (`type: \"team\"`):\n\
+             {teams_list}\n\n\
+             Dostępne osoby (`type: \"person\"`):\n\
+             {people_list}\n\n\
+             Istniejące reguły:\n\
+             {rules_list}\n\n\
+             Zawsze użyj odpowiedniego tool calla (najczęściej `create_or_update_rule`, `delete_rule` lub `select_rule`)."
+        );
+
+        let mut messages = vec![
+            json!({ "role": "system", "content": system_prompt }),
+            json!({ "role": "user", "content": req.prompt.trim() }),
+        ];
+        let mut executed_tools: Vec<String> = Vec::new();
+
+        // Pętla obsługi tool-calli (maksymalnie 3 tury: np. pobranie kontekstu -> finalny tool call).
+        for _turn in 0..3 {
+            let payload = json!({
+                "model": self.model,
+                "temperature": 0.0,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto"
+            });
+
+            let (status, body) = self.call_chat_payload(&payload).await?;
+            if !(200..300).contains(&status) {
+                break;
+            }
+
+            let v: Value = serde_json::from_str(&body)
+                .map_err(|e| AuthorError::InvalidResponse(format!("odpowiedź HTTP nie jest JSON-em: {e}")))?;
+            let Some(msg) = v.pointer("/choices/0/message") else {
+                break;
+            };
+
+            if let Some(tool_calls) = msg.get("tool_calls").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+                messages.push(msg.clone());
+
+                for tc in tool_calls {
+                    let tc_id = tc.get("id").and_then(Value::as_str).unwrap_or("call_1");
+                    let fn_name = tc
+                        .pointer("/function/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
+                    let raw_args = tc.pointer("/function/arguments").cloned().unwrap_or(Value::Null);
+                    let args_val: Value = match &raw_args {
+                        Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+                        other => other.clone(),
+                    };
+
+                    if !fn_name.is_empty() {
+                        executed_tools.push(fn_name.to_string());
+                    }
+
+                    match fn_name {
+                        "create_or_update_rule" => {
+                            let parsed: LlmRuleDraftPayload = serde_json::from_value(args_val.clone()).unwrap_or_default();
+                            let draft = sanitize_rule_draft(req, parsed);
+                            return Ok(RuleDraftOutcome {
+                                tool_call: "create_or_update_rule".into(),
+                                message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+                                draft: Some(draft),
+                                target_rule_id: None,
+                                executed_tools,
+                            });
+                        }
+                        "delete_rule" => {
+                            let rule_id = resolve_target_rule_id(req, &args_val);
+                            return Ok(RuleDraftOutcome {
+                                tool_call: "delete_rule".into(),
+                                message: Some(format!(
+                                    "Wywołano tool: delete_rule ({})",
+                                    rule_id.as_deref().unwrap_or("bieżąca reguła")
+                                )),
+                                draft: None,
+                                target_rule_id: rule_id,
+                                executed_tools,
+                            });
+                        }
+                        "select_rule" => {
+                            let rule_id = resolve_target_rule_id(req, &args_val);
+                            let found = rule_id
+                                .as_deref()
+                                .and_then(|id| req.existing_rules.iter().find(|r| r.id == id).cloned());
+                            return Ok(RuleDraftOutcome {
+                                tool_call: "select_rule".into(),
+                                message: Some(format!(
+                                    "Wywołano tool: select_rule ({})",
+                                    rule_id.as_deref().unwrap_or("nieznana")
+                                )),
+                                draft: found,
+                                target_rule_id: rule_id,
+                                executed_tools,
+                            });
+                        }
+                        "list_teams_and_people" => {
+                            let tool_out = json!({
+                                "teams": req.available_teams.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+                                "people": req.available_people.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+                            });
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": fn_name,
+                                "content": tool_out.to_string()
+                            }));
+                        }
+                        "list_event_fields" => {
+                            let tool_out = json!({ "fields": req.available_fields });
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": fn_name,
+                                "content": tool_out.to_string()
+                            }));
+                        }
+                        "list_existing_rules" => {
+                            let tool_out = json!({
+                                "rules": req.existing_rules.iter().map(|r| json!({
+                                    "id": r.id,
+                                    "name": r.name,
+                                    "team": r.team,
+                                    "severity_override": r.severity_override,
+                                })).collect::<Vec<_>>()
+                            });
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": fn_name,
+                                "content": tool_out.to_string()
+                            }));
+                        }
+                        "list_registered_actions" => {
+                            let tool_out = json!({
+                                "actions": req.available_actions.iter().map(|a| json!({
+                                    "name": a.name,
+                                    "kind": a.kind,
+                                    "risk": a.risk,
+                                    "description": a.description,
+                                })).collect::<Vec<_>>()
+                            });
+                            messages.push(json!({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": fn_name,
+                                "content": tool_out.to_string()
+                            }));
+                        }
+                        other_action => {
+                            // Jeśli model wywołał bezpośrednio akcję z rejestru (np. escalate, notify, restart_service),
+                            // budujemy regułę odpowiadającą temu wywołaniu lub zwracamy informację o tool-callu.
+                            let mut payload = serde_json::from_value::<LlmRuleDraftPayload>(args_val.clone()).unwrap_or_default();
+                            if payload.name.trim().is_empty() {
+                                payload.name = format!("Reguła: {other_action}");
+                            }
+                            if let Some(team) = args_val.get("team").and_then(Value::as_str) {
+                                payload.recipients.push(LlmRuleRecipient {
+                                    kind: "team".into(),
+                                    id: team.to_string(),
+                                });
+                            }
+                            if let Some(people) = args_val.get("people").and_then(Value::as_array) {
+                                for p in people.iter().filter_map(Value::as_str) {
+                                    payload.recipients.push(LlmRuleRecipient {
+                                        kind: "person".into(),
+                                        id: p.to_string(),
+                                    });
+                                }
+                            }
+                            if let Some(svc) = args_val.get("service").and_then(Value::as_str) {
+                                payload.conditions.push(LlmRuleCondition {
+                                    field: "raw.labels.service".into(),
+                                    op: "eq".into(),
+                                    value: Value::String(svc.to_string()),
+                                });
+                            }
+                            let draft = sanitize_rule_draft(req, payload);
+                            return Ok(RuleDraftOutcome {
+                                tool_call: other_action.to_string(),
+                                message: Some(format!("Wywołano tool z rejestru akcji: {other_action}")),
+                                draft: Some(draft),
+                                target_rule_id: None,
+                                executed_tools,
+                            });
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Jeśli model odpowiedział JSON-em w treści wiadomości zamiast natywnego pola `tool_calls`:
+            if let Some(content) = msg.get("content").and_then(Value::as_str) {
+                let cleaned = strip_code_fences(content);
+                if let Ok(parsed_tc) = serde_json::from_str::<Value>(cleaned) {
+                    if let Some(outcome) = try_parse_inline_tool_call(req, &parsed_tc, &mut executed_tools) {
+                        return Ok(outcome);
+                    }
+                    if let Ok(parsed_rule) = serde_json::from_value::<LlmRuleDraftPayload>(parsed_tc) {
+                        if !parsed_rule.name.is_empty() || !parsed_rule.conditions.is_empty() {
+                            executed_tools.push("create_or_update_rule".into());
+                            let draft = sanitize_rule_draft(req, parsed_rule);
+                            return Ok(RuleDraftOutcome {
+                                tool_call: "create_or_update_rule".into(),
+                                message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+                                draft: Some(draft),
+                                target_rule_id: None,
+                                executed_tools,
+                            });
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        // Fallback: wymuszenie odpowiedzi JSON `create_or_update_rule`
+        let user_prompt = format!("Opis reguły od użytkownika:\n{}", req.prompt.trim());
+        let (status, body) = self
+            .call_chat_completions(&system_prompt, &user_prompt, json!({ "type": "json_object" }))
+            .await?;
+
+        if !(200..300).contains(&status) {
+            tracing::warn!(status, provider = self.provider, "LLM upstream returned non-2xx status on draft_rule");
+            return Err(AuthorError::Upstream(format!("HTTP {status}")));
+        }
+
+        let content = extract_message_content(&body)?;
+        let cleaned = strip_code_fences(&content);
+        if let Ok(v) = serde_json::from_str::<Value>(cleaned) {
+            if let Some(outcome) = try_parse_inline_tool_call(req, &v, &mut executed_tools) {
+                return Ok(outcome);
+            }
+        }
+        let parsed: LlmRuleDraftPayload = serde_json::from_str(cleaned)
+            .map_err(|e| AuthorError::InvalidResponse(format!("niepoprawny JSON szkicu reguły: {e}")))?;
+
+        executed_tools.push("create_or_update_rule".into());
+        let draft = sanitize_rule_draft(req, parsed);
+        Ok(RuleDraftOutcome {
+            tool_call: "create_or_update_rule".into(),
+            message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+            draft: Some(draft),
+            target_rule_id: None,
+            executed_tools,
         })
     }
 }
@@ -258,6 +619,10 @@ impl RunbookAuthor for OpenAiCompatAuthor {
 
     fn draft<'a>(&'a self, req: &'a DraftRequest, actions: &'a [ActionDef]) -> BoxFuture<'a, Result<DraftOutcome, AuthorError>> {
         Box::pin(self.draft_inner(req, actions))
+    }
+
+    fn draft_rule<'a>(&'a self, req: &'a RuleDraftRequest) -> BoxFuture<'a, Result<RuleDraftOutcome, AuthorError>> {
+        Box::pin(self.draft_rule_inner(req))
     }
 }
 
@@ -304,7 +669,22 @@ fn build_system_prompt(actions: &[&ActionDef]) -> String {
         catalog.push_str(&format!("- `{}` (risk: {:?}): {} | params_schema: {}\n", a.name, a.risk, desc, schema));
     }
     format!(
-        "Jesteś asystentem przekształcającym opis runbooka (Markdown lub wolny tekst) w listę kroków JSON.\n\
+        "Jesteś asystentem tworzącym runbook (procedurę naprawczą) w formacie JSON na podstawie opisu od użytkownika.\n\
+         Zwróć WYŁĄCZNIE obiekt JSON o strukturze:\n\
+         {{\n\
+           \"title\": \"Tytuł runbooka\",\n\
+           \"steps\": [\n\
+             {{\n\
+               \"id\": \"s1\",\n\
+               \"type\": \"action\" | \"check\" | \"manual\",\n\
+               \"text\": \"Opis kroku po polsku\",\n\
+               \"action\": \"nazwa_akcji_z_rejestru\" | null,\n\
+               \"params\": [{{ \"key\": \"nazwa_parametru\", \"value\": \"wartość\" }}],\n\
+               \"approval\": \"none\" | \"required\",\n\
+               \"condition\": null\n\
+             }}\n\
+           ]\n\
+         }}\n\
          Zasady:\n\
          1. Używaj WYŁĄCZNIE akcji z poniższego rejestru. Jeśli krok nie pasuje do żadnej akcji, ustaw type=\"manual\" i action=null.\n\
          2. Warunki słowne (np. 'jeśli ponowienie zawiedzie dwa razy') zapisz w polu `condition` jako tekst i ustaw type=\"manual\" lub `approval: \"required\"`.\n\
@@ -604,6 +984,415 @@ fn slugify(input: &str) -> String {
     }
     let out = out.trim_matches('-').to_string();
     if out.is_empty() { "extracted-runbook".into() } else { out }
+}
+
+fn build_rule_tools(actions: &[ActionDef]) -> Value {
+    let mut tools = vec![
+        json!({
+            "type": "function",
+            "function": {
+                "name": "create_or_update_rule",
+                "description": "Tworzy nową regułę alertową lub modyfikuje aktualną regułę w formularzu na podstawie opisu użytkownika.",
+                "parameters": {
+                    "type": "object",
+                    "required": ["name", "conditions", "recipients"],
+                    "properties": {
+                        "name": { "type": "string", "description": "Krótka, czytelna nazwa reguły po polsku" },
+                        "severity_override": {
+                            "type": ["string", "null"],
+                            "enum": ["critical", "error", "warning", "info", null],
+                            "description": "Opcjonalny priorytet alertu nadpisywany przez regułę"
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["all", "any"],
+                            "description": "Sposób łączenia warunków: all (I) lub any (LUB)"
+                        },
+                        "conditions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["field", "op", "value"],
+                                "properties": {
+                                    "field": { "type": "string", "description": "Ścieżka pola zdarzenia, np. raw.payload.desk, raw.labels.service, severity, schema" },
+                                    "op": {
+                                        "type": "string",
+                                        "enum": ["eq", "ne", "in", "gt", "gte", "lt", "lte", "contains", "regex", "exists", "glob"]
+                                    },
+                                    "value": { "type": ["string", "number", "boolean", "array", "null"] }
+                                }
+                            }
+                        },
+                        "recipients": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["type", "id"],
+                                "properties": {
+                                    "type": { "type": "string", "enum": ["team", "person"] },
+                                    "id": { "type": "string", "description": "Identyfikator zespołu lub osoby" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "select_rule",
+                "description": "Wybiera i otwiera istniejącą regułę po jej identyfikatorze lub nazwie.",
+                "parameters": {
+                    "type": "object",
+                    "required": ["rule_id"],
+                    "properties": {
+                        "rule_id": { "type": "string", "description": "ID lub nazwa istniejącej reguły" }
+                    }
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "delete_rule",
+                "description": "Usuwa wskazaną regułę po jej identyfikatorze lub nazwie.",
+                "parameters": {
+                    "type": "object",
+                    "required": ["rule_id"],
+                    "properties": {
+                        "rule_id": { "type": "string", "description": "ID lub nazwa reguły do usunięcia" }
+                    }
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_teams_and_people",
+                "description": "Zwraca listę wszystkich zespołów i osób dostępnych w systemie.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_event_fields",
+                "description": "Zwraca listę znanych pól zdarzeń i schematów dostępnych do budowania warunków reguł.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_existing_rules",
+                "description": "Zwraca listę istniejących reguł w systemie.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_registered_actions",
+                "description": "Zwraca listę akcji zarejestrowanych w rejestrze akcji (builtin oraz HTTP).",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+    ];
+
+    for a in actions {
+        let params = a.params_schema.clone().unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": a.name,
+                "description": a.description.clone().unwrap_or_else(|| format!("Akcja systemowa {}", a.name)),
+                "parameters": params
+            }
+        }));
+    }
+
+    Value::Array(tools)
+}
+
+fn resolve_target_rule_id(req: &RuleDraftRequest, args: &Value) -> Option<String> {
+    let raw = args
+        .get("rule_id")
+        .or_else(|| args.get("id"))
+        .or_else(|| args.get("name"))
+        .and_then(Value::as_str)?
+        .trim()
+        .to_ascii_lowercase();
+    if raw.is_empty() {
+        return None;
+    }
+    req.existing_rules
+        .iter()
+        .find(|r| r.id.eq_ignore_ascii_case(&raw) || r.name.to_ascii_lowercase().contains(&raw))
+        .map(|r| r.id.clone())
+        .or(Some(raw))
+}
+
+fn try_parse_inline_tool_call(
+    req: &RuleDraftRequest,
+    v: &Value,
+    executed_tools: &mut Vec<String>,
+) -> Option<RuleDraftOutcome> {
+    let tool_name = v
+        .get("tool_call")
+        .or_else(|| v.get("tool"))
+        .or_else(|| v.get("name"))
+        .and_then(Value::as_str)?
+        .trim();
+    let args = v
+        .get("arguments")
+        .or_else(|| v.get("parameters"))
+        .or_else(|| v.get("args"))
+        .unwrap_or(v);
+
+    match tool_name {
+        "create_or_update_rule" => {
+            executed_tools.push("create_or_update_rule".into());
+            let parsed: LlmRuleDraftPayload = serde_json::from_value(args.clone()).unwrap_or_default();
+            let draft = sanitize_rule_draft(req, parsed);
+            Some(RuleDraftOutcome {
+                tool_call: "create_or_update_rule".into(),
+                message: Some(format!("Wywołano tool: create_or_update_rule ({})", draft.name)),
+                draft: Some(draft),
+                target_rule_id: None,
+                executed_tools: executed_tools.clone(),
+            })
+        }
+        "delete_rule" => {
+            executed_tools.push("delete_rule".into());
+            let rule_id = resolve_target_rule_id(req, args);
+            Some(RuleDraftOutcome {
+                tool_call: "delete_rule".into(),
+                message: Some(format!(
+                    "Wywołano tool: delete_rule ({})",
+                    rule_id.as_deref().unwrap_or("bieżąca reguła")
+                )),
+                draft: None,
+                target_rule_id: rule_id,
+                executed_tools: executed_tools.clone(),
+            })
+        }
+        "select_rule" => {
+            executed_tools.push("select_rule".into());
+            let rule_id = resolve_target_rule_id(req, args);
+            let found = rule_id
+                .as_deref()
+                .and_then(|id| req.existing_rules.iter().find(|r| r.id == id).cloned());
+            Some(RuleDraftOutcome {
+                tool_call: "select_rule".into(),
+                message: Some(format!(
+                    "Wywołano tool: select_rule ({})",
+                    rule_id.as_deref().unwrap_or("nieznana")
+                )),
+                draft: found,
+                target_rule_id: rule_id,
+                executed_tools: executed_tools.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LlmRuleDraftPayload {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    severity_override: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    conditions: Vec<LlmRuleCondition>,
+    #[serde(default)]
+    recipients: Vec<LlmRuleRecipient>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LlmRuleCondition {
+    #[serde(default)]
+    field: String,
+    #[serde(default)]
+    op: String,
+    #[serde(default)]
+    value: Value,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LlmRuleRecipient {
+    #[serde(rename = "type", default)]
+    kind: String,
+    #[serde(default)]
+    id: String,
+}
+
+fn parse_llm_severity(raw: Option<&str>) -> Option<Severity> {
+    match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("critical" | "crit" | "krytyczny" | "krytyczne") => Some(Severity::Critical),
+        Some("error" | "err" | "błąd" | "blad" | "wysoki") => Some(Severity::Error),
+        Some("warning" | "warn" | "ostrzeżenie" | "ostrzezenie" | "średni" | "sredni") => Some(Severity::Warning),
+        Some("info" | "informacyjny" | "niski") => Some(Severity::Info),
+        _ => None,
+    }
+}
+
+fn parse_llm_op(raw: &str) -> Op {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "eq" | "=" | "==" | "equals" => Op::Eq,
+        "ne" | "!=" | "<>" | "not_equals" => Op::Ne,
+        "in" => Op::In,
+        "gt" | ">" => Op::Gt,
+        "gte" | ">=" => Op::Gte,
+        "lt" | "<" => Op::Lt,
+        "lte" | "<=" => Op::Lte,
+        "contains" | "like" => Op::Contains,
+        "regex" | "match" => Op::Regex,
+        "exists" | "not_null" => Op::Exists,
+        "glob" => Op::Glob,
+        _ => Op::Eq,
+    }
+}
+
+fn sanitize_rule_draft(req: &RuleDraftRequest, payload: LlmRuleDraftPayload) -> RuleDef {
+    let name = {
+        let trimmed = payload.name.trim();
+        if trimmed.is_empty() {
+            "Nowa reguła AI".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    };
+    let id = {
+        let s = slugify(&name);
+        if s == "extracted-runbook" { "nowa-regula-ai".to_string() } else { s }
+    };
+    let severity_override = parse_llm_severity(payload.severity_override.as_deref());
+
+    let mut leaves = Vec::new();
+    for c in payload.conditions {
+        let field = c.field.trim().to_string();
+        if field.is_empty() {
+            continue;
+        }
+        let op = parse_llm_op(&c.op);
+        let value = match op {
+            Op::Exists => Value::Null,
+            Op::In => match c.value {
+                Value::Array(arr) => Value::Array(arr),
+                Value::String(s) => Value::Array(
+                    s.split(',')
+                        .map(|x| Value::String(x.trim().to_string()))
+                        .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+                        .collect(),
+                ),
+                other => Value::Array(vec![other]),
+            },
+            Op::Gt | Op::Gte | Op::Lt | Op::Lte => match &c.value {
+                Value::Number(_) => c.value,
+                Value::String(s) => {
+                    if let Ok(n) = s.trim().parse::<f64>() {
+                        serde_json::Number::from_f64(n).map(Value::Number).unwrap_or(Value::String(s.clone()))
+                    } else {
+                        Value::String(s.clone())
+                    }
+                }
+                _ => Value::String(c.value.to_string()),
+            },
+            _ => match c.value {
+                Value::Null => Value::String(String::new()),
+                Value::Bool(b) => Value::Bool(b),
+                Value::Number(n) => Value::Number(n),
+                Value::String(s) => Value::String(s),
+                other => Value::String(other.to_string()),
+            },
+        };
+        leaves.push(Condition::Leaf { field, op, value });
+    }
+
+    if leaves.is_empty() {
+        leaves.push(Condition::Leaf {
+            field: "severity".into(),
+            op: Op::Eq,
+            value: Value::String("critical".into()),
+        });
+    }
+
+    let condition = match payload.mode.as_deref().map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("any" | "or" | "lub") => Condition::Any { any: leaves },
+        _ => Condition::All { all: leaves },
+    };
+
+    let mut recipients = Vec::new();
+    for r in payload.recipients {
+        let target = r.id.trim().to_ascii_lowercase();
+        if target.is_empty() {
+            continue;
+        }
+        let is_person = r.kind.trim().eq_ignore_ascii_case("person");
+        if !is_person {
+            if let Some((tid, _)) = req
+                .available_teams
+                .iter()
+                .find(|(id, tname)| id.eq_ignore_ascii_case(&target) || tname.to_ascii_lowercase().contains(&target))
+            {
+                let rec = Recipient::Team(tid.clone());
+                if !recipients.contains(&rec) {
+                    recipients.push(rec);
+                }
+                continue;
+            }
+        }
+        if let Some((pid, _)) = req
+            .available_people
+            .iter()
+            .find(|(id, pname)| id.eq_ignore_ascii_case(&target) || pname.to_ascii_lowercase().contains(&target))
+        {
+            let rec = Recipient::Person(pid.clone());
+            if !recipients.contains(&rec) {
+                recipients.push(rec);
+            }
+            continue;
+        }
+        if let Some((tid, _)) = req
+            .available_teams
+            .iter()
+            .find(|(id, tname)| id.eq_ignore_ascii_case(&target) || tname.to_ascii_lowercase().contains(&target))
+        {
+            let rec = Recipient::Team(tid.clone());
+            if !recipients.contains(&rec) {
+                recipients.push(rec);
+            }
+        }
+    }
+
+    if recipients.is_empty() {
+        if let Some((first_team, _)) = req.available_teams.first() {
+            recipients.push(Recipient::Team(first_team.clone()));
+        } else if let Some((first_person, _)) = req.available_people.first() {
+            recipients.push(Recipient::Person(first_person.clone()));
+        }
+    }
+
+    let team = recipients.iter().find_map(|r| match r {
+        Recipient::Team(id) => Some(id.clone()),
+        _ => None,
+    });
+
+    RuleDef {
+        id,
+        name,
+        team,
+        condition,
+        recipients,
+        severity_override,
+        presentation: Presentation::default(),
+        enabled: true,
+        version: 1,
+    }
 }
 
 /// Renderuje `RunbookDef` do czytelnego YAML zgodnego z `crate::parse::parse_runbook`.

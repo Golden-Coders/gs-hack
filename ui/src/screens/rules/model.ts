@@ -328,7 +328,11 @@ export function validateForm(f: RuleForm, isNew: boolean): FormErrors {
         if (text.trim() === "") {
           le.value = "Podaj wartość";
           bad = true;
-        } else if (NUMERIC_OPS.has(n.op) && !Number.isFinite(Number(text.trim()))) {
+        } else if (
+          NUMERIC_OPS.has(n.op) &&
+          !Number.isFinite(Number(text.trim())) &&
+          !/^(info|warn|warning|error|crit|critical)$/i.test(text.trim())
+        ) {
           le.value = "Wpisz liczbę";
           le.kind = "format";
           bad = true;

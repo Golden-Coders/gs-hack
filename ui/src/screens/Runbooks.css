@@ -1,34 +1,167 @@
-/* Układ listy runbooków; badge'e, bloki kodu i komunikaty dają komponenty ADS. */
-.runbook-list { display: flex; flex-direction: column; gap: var(--ds-space-100); }
-.runbook { background: var(--ds-surface); border: var(--ds-border-width) solid var(--ds-border); border-radius: var(--ds-radius-medium); }
-.runbook > summary { display: flex; align-items: center; gap: var(--ds-space-150); flex-wrap: wrap; padding: var(--ds-space-150) var(--ds-space-200); cursor: pointer; }
-.runbook > summary::before { content: "▸"; color: var(--ds-text-subtle); width: 1ch; }
-.runbook[open] > summary::before { content: "▾"; }
-.runbook > summary:hover { background: var(--surface-muted); }
-.runbook-title { font-weight: 600; }
-.runbook-meta { color: var(--text-muted); font-size: 12px; }
-.runbook-body { padding: var(--space-2) var(--space-4) var(--space-4); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--space-3); }
-.runbook-body h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 var(--space-1); }
-.rule-chips { display: flex; gap: var(--space-1); flex-wrap: wrap; }
-.rule-chip { font-family: var(--font-mono); font-size: 12px; padding: 1px var(--space-2); border: 1px solid var(--border); border-radius: 999px; background: var(--surface-muted); }
-.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); counter-reset: step; }
-.step { counter-increment: step; display: grid; grid-template-columns: 28px 1fr; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
-.step::before { content: counter(step); color: var(--text-muted); font-weight: 600; }
-.step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.step-text { font-weight: 500; }
-.step-action { margin-top: var(--space-1); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
-.step-params { margin: var(--space-1) 0 0; padding: var(--space-2); background: var(--surface-muted); border: 1px solid var(--border); border-radius: 6px; font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-.step-condition { margin-top: var(--space-1); color: var(--text-muted); font-size: 12px; }
-.runbook-errors { margin-bottom: var(--space-4); }
-.runbook-errors ul { margin: var(--space-1) 0 0; padding-left: var(--space-4); }
-.runbooks-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-2); }
-.runbooks-header h1 { margin: 0; }
-.runbook-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-1); }
-.llm-panel { margin-bottom: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
-.llm-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
-.llm-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.llm-meta { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
-.llm-warnings { padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: 6px; background: var(--surface-muted); font-size: 13px; }
-.llm-warnings ul { margin: var(--space-1) 0 0; padding-left: var(--space-4); }
-.llm-yaml-bar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-.step-remove { margin-left: auto; font-size: 12px; padding: 2px 8px; }
+/* Przejrzysty układ ekranu Runbooków — spójny z Regułami, Mappingami i Akcjami */
+.rb-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-200);
+}
+
+.rb-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--ds-space-250);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .rb-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rb-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.rb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.rb-item {
+  width: 100%;
+  text-align: left;
+  background: var(--ds-surface);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-medium);
+  padding: var(--ds-space-150);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-050);
+  font: inherit;
+  color: inherit;
+}
+
+.rb-item:hover {
+  background: var(--ds-surface-hovered);
+}
+
+.rb-item.active {
+  border-color: var(--ds-border-selected);
+  background: var(--ds-background-selected);
+}
+
+.rb-item-title {
+  font-weight: var(--ds-font-weight-semibold);
+  word-break: break-word;
+}
+
+.rb-item-sub {
+  font: var(--ds-font-body-small);
+  color: var(--ds-text-subtle);
+}
+
+/* Edytor runbooka */
+.rb-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-200);
+}
+
+.rb-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rb-ai-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-150);
+}
+
+.rb-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+  flex-wrap: wrap;
+}
+
+.rb-rules-box {
+  margin-top: var(--ds-space-150);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.rb-rules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--ds-space-075);
+}
+
+.rb-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-150);
+}
+
+.rb-step-card {
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-medium);
+  padding: var(--ds-space-150);
+  background: var(--ds-surface-sunken);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-150);
+}
+
+.rb-step-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rb-step-num {
+  font-weight: var(--ds-font-weight-semibold);
+}
+
+.rb-step-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(200px, 1fr);
+  gap: var(--ds-space-150);
+  align-items: start;
+}
+
+@media (max-width: 680px) {
+  .rb-step-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rb-step-extra {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-100);
+}
+
+.rb-step-approval {
+  padding-top: var(--ds-space-050);
+}
+
+.rb-add-btn {
+  margin-top: var(--ds-space-150);
+}
+
+.rb-savebar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-150);
+  padding-top: var(--ds-space-100);
+}

@@ -1,19 +1,20 @@
-// Formularz dodawania/edycji akcji deklaratywnej HTTP (HttpActionSpec + ActionDef z kontraktu).
-// Bezpieczeństwo (CLAUDE.md, zasada 6): risk=high zawsze wymaga zatwierdzenia, host musi być na allowliście,
-// sekrety wyłącznie jako ${ENV}. Walidacja po stronie backendu jest rozstrzygająca – jej błędy pokazujemy przy polach.
-import { Text } from "@atlaskit/primitives/compiled";
+// Maksymalnie prosty i przejrzysty formularz akcji HTTP:
+// 1. Nazwa, opis i czy akcja wymaga zatwierdzenia przez człowieka
+// 2. Wywołanie HTTP (Metoda, Adres URL, opcjonalna treść JSON)
+// 3. Opcjonalne nagłówki (np. Authorization)
+import { useState, type FormEvent } from "react";
 import Button from "@atlaskit/button/new";
-import { Code } from "@atlaskit/code";
+import Heading from "@atlaskit/heading";
 import SectionMessage from "@atlaskit/section-message";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { Text } from "@atlaskit/primitives/compiled";
 import { api, type Schemas } from "../../api/client";
-import { Card, ErrorBox, Field, Select, TextArea, TextInput } from "../../ui/primitives";
+import { Card, ConfirmInline, ErrorBox, Field, Segmented, Select, TextArea, TextInput } from "../../ui/primitives";
 import {
   METHODS,
+  looksLikePastedSecret,
   newRow,
   toAction,
   validate,
-  looksLikePastedSecret,
   type ActionDef,
   type FieldErrors,
   type FormState,
@@ -21,39 +22,26 @@ import {
 
 type Props = {
   initial: FormState;
-  /** true = nowa akcja (POST), false = edycja istniejącej (PUT). */
   isNew: boolean;
   version?: number;
-  /** Nazwy już zajęte w rejestrze (walidacja duplikatów przy dodawaniu). */
   takenNames: Set<string>;
-  onSaved: (a: ActionDef) => void;
-  onCancel: () => void;
+  onSaved: (a: ActionDef, oldName?: string) => void;
+  onDelete?: (name: string) => Promise<string | null>;
 };
 
 type ApiError = Schemas["Error"];
 
-export default function ActionForm({ initial, isNew, version, takenNames, onSaved, onCancel }: Props) {
-  const headersHintId = useId();
+export default function ActionForm({ initial, isNew, version, takenNames, onSaved, onDelete }: Props) {
   const [f, setF] = useState<FormState>(initial);
   const [errors, setErrors] = useState<FieldErrors>({});
-  const [serverError, setServerError] = useState<ApiError | null>(null);
-  const [serverField, setServerField] = useState<"url" | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [topError, setTopError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const firstRef = useRef<HTMLInputElement>(null);
-  const rootRef = useRef<HTMLFormElement>(null);
-
-  // Po otwarciu formularza (np. „Dodaj” przy brakującej akcji) przewijamy do niego i ustawiamy fokus.
-  useEffect(() => {
-    rootRef.current?.scrollIntoView({ block: "nearest" });
-    (isNew && !initial.name ? firstRef.current : rootRef.current?.querySelector<HTMLInputElement>("[name=url]"))?.focus();
-  }, [initial, isNew]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setF((cur) => ({ ...cur, [k]: v }));
     if (k in errors) setErrors((e) => ({ ...e, [k]: undefined }));
-    if (k === "url") setServerField(null);
   };
+
   const setHeader = (rowId: number, patch: Partial<{ name: string; value: string }>) => {
     setF((cur) => ({ ...cur, headers: cur.headers.map((h) => (h.id === rowId ? { ...h, ...patch } : h)) }));
     setErrors((e) => ({ ...e, headers: undefined }));
@@ -61,112 +49,115 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
 
   async function submit(ev: FormEvent) {
     ev.preventDefault();
-    setFormError(null);
-    setServerError(null);
-    setServerField(null);
-    const errs = validate(f, { isNew, takenNames });
+    setTopError(null);
+    const errs = validate(f, { isNew, originalName: initial.name, takenNames });
     setErrors(errs);
-    if (Object.keys(errs).length > 0) {
-      // Fokus na pierwsze błędne pole – po renderze, gdy aria-invalid jest już ustawione.
-      setTimeout(() => rootRef.current?.querySelector<HTMLElement>("[aria-invalid=true]")?.focus(), 0);
-      return;
-    }
+    if (Object.keys(errs).length > 0) return;
+
     const body = toAction(f, version);
     setSaving(true);
     try {
       const res = isNew
         ? await api.POST("/actions", { body })
-        : await api.PUT("/actions/{name}", { params: { path: { name: body.name } }, body });
+        : await api.PUT("/actions/{name}", { params: { path: { name: initial.name } }, body });
       if (res.response.ok) {
-        // Odpowiedź serwera ma pierwszeństwo tylko, jeśli dotyczy tej samej akcji (np. zaktualizowana wersja).
         const saved = res.data as ActionDef | undefined;
-        onSaved(saved && saved.name === body.name ? saved : body);
+        onSaved(saved ?? body, isNew ? undefined : initial.name);
         return;
       }
       const err = res.error as ApiError | undefined;
       if (err?.error) {
-        setServerError(err);
-        // Błąd dotyczący adresu/hosta (np. spoza allowlisty) pokazujemy przy polu URL.
-        if (/host|url|allowlist|adres/i.test(`${err.error} ${err.detail ?? ""}`)) setServerField("url");
+        setTopError([err.error, err.detail].filter(Boolean).join(": "));
       } else {
-        setFormError(`Nie udało się zapisać akcji (HTTP ${res.response.status}).`);
+        setTopError(`Nie udało się zapisać akcji (HTTP ${res.response.status}).`);
       }
     } catch {
-      setFormError("Brak połączenia z API — akcja nie została zapisana.");
+      setTopError("Brak połączenia z API.");
     } finally {
       setSaving(false);
     }
   }
 
-  const serverText = serverError ? [serverError.error, serverError.detail].filter(Boolean).join(": ") : null;
-  const urlError = errors.url ?? (serverField === "url" ? serverText : null);
-  const topError = formError ?? (serverError && serverField !== "url" ? serverText : null);
-
-
-  const title = isNew ? "Nowa akcja HTTP" : `Edycja akcji ${initial.name}`;
+  async function handleConfirmDelete() {
+    if (!onDelete) return;
+    setSaving(true);
+    setTopError(null);
+    const err = await onDelete(initial.name);
+    if (err) setTopError(`Nie udało się usunąć akcji: ${err}`);
+    setSaving(false);
+  }
 
   return (
-    <Card title={title} className="af">
-      <form className="af-form" ref={rootRef} onSubmit={(e) => void submit(e)} noValidate aria-label={title}>
-        {topError && <ErrorBox message={topError} />}
+    <form className="act-editor-clean" onSubmit={(e) => void submit(e)} noValidate>
+      <header className="act-editor-head">
+        <Heading size="medium" as="h2">
+          {isNew ? (f.name ? `Nowa akcja: ${f.name}` : "Nowa akcja") : initial.name}
+        </Heading>
+      </header>
 
-        <div className="af-grid">
-          <Field label="Nazwa" error={errors.name} hint="Tej nazwy używają kroki runbooków (pole action).">
+      {/* 1. Nazwa, opis i tryb wykonywania */}
+      <Card title="1. Podstawowe informacje">
+        <div className="act-two-col">
+          <Field label="Nazwa akcji (używana w runbookach)" error={errors.name}>
             {(p) => (
               <TextInput
                 {...p}
-                ref={firstRef}
-                name="name"
                 value={f.name}
-                isReadOnly={!isNew}
+                placeholder="np. flush_cdn"
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(e) => set("name", e.currentTarget.value)}
               />
             )}
           </Field>
-
-          <Field label="Ryzyko" hint="Akcja o ryzyku „wysokie” zawsze wymaga zatwierdzenia przez człowieka — niezależnie od ustawień runbooka.">
+          <Field label="Krótki opis (co robi ta akcja?)">
             {(p) => (
-              <Select
+              <TextInput
                 {...p}
-                value={f.risk}
-                options={[
-                  { value: "low", label: "niskie" },
-                  { value: "high", label: "wysokie — zawsze z zatwierdzeniem" },
-                ]}
-                onChange={(v) => set("risk", v as FormState["risk"])}
+                value={f.description}
+                placeholder="np. Czyści pamięć podręczną usługi"
+                onChange={(e) => set("description", e.currentTarget.value)}
               />
             )}
           </Field>
         </div>
 
-        <Field label="Opis">
-          {(p) => <TextInput {...p} name="description" value={f.description} onChange={(e) => set("description", e.currentTarget.value)} />}
-        </Field>
+        <div className="act-risk-box">
+          <Segmented
+            label="Tryb wykonywania akcji"
+            value={f.risk}
+            onChange={(v) => set("risk", v)}
+            options={[
+              { value: "low", label: "Wykonuj automatycznie" },
+              { value: "high", label: "Zawsze pytaj o zatwierdzenie (wysokie ryzyko)" },
+            ]}
+          />
+        </div>
+      </Card>
 
-        <div className="af-grid af-grid-url">
+      {/* 2. Wywołanie HTTP */}
+      <Card title="2. Wywołanie HTTP">
+        <div className="act-url-grid">
           <Field label="Metoda">
             {(p) => (
-              <Select {...p} value={f.method} options={METHODS.map((m) => ({ value: m, label: m }))} onChange={(v) => set("method", v)} />
+              <Select
+                {...p}
+                value={f.method}
+                options={METHODS.map((m) => ({ value: m, label: m }))}
+                onChange={(v) => set("method", v)}
+              />
             )}
           </Field>
           <Field
-            label="URL (szablon)"
-            error={urlError}
-            hint={
-              <>
-                Host musi być na allowliście (<Code>ACTION_HOST_ALLOWLIST</Code>), inaczej wykonanie kończy się błędem „host
-                niedozwolony”. Wartości z alertu i parametrów kroku: <Code>{"{{service}}"}</Code>.
-              </>
-            }
+            label="Adres URL"
+            error={errors.url}
+            hint="Możesz używać zmiennych z alertu w podwójnych nawiasach, np. http://mock-targets:8090/cache/{{service}}/flush"
           >
             {(p) => (
               <TextInput
                 {...p}
-                name="url"
                 value={f.url}
-                placeholder="http://mock-targets:8090/cache/{{service}}/flush"
+                placeholder="http://mock-targets:8090/..."
                 autoComplete="off"
                 spellCheck={false}
                 onChange={(e) => set("url", e.currentTarget.value)}
@@ -175,111 +166,105 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
           </Field>
         </div>
 
-        <fieldset className="af-headers" aria-describedby={headersHintId}>
-          <legend>Nagłówki</legend>
-          <div className="field-hint" id={headersHintId}>
-            Sekrety podawaj wyłącznie jako referencję <Code>{"${ENV_NAME}"}</Code>, np.{" "}
-            <Code>{"Bearer ${CACHE_ADMIN_TOKEN}"}</Code> — wartość jest pobierana ze środowiska w runtime i nigdy nie jest
-            zapisywana w definicji akcji.
+        {f.method !== "GET" && (
+          <div className="act-body-box">
+            <Field
+              label="Dane wysyłane w żądaniu (JSON — opcjonalnie)"
+              hint='Np. {"service": "{{service}}"}'
+            >
+              {(p) => (
+                <TextArea
+                  {...p}
+                  rows={3}
+                  value={f.body}
+                  spellCheck={false}
+                  placeholder='{"service": "{{service}}"}'
+                  onChange={(e) => set("body", e.currentTarget.value)}
+                />
+              )}
+            </Field>
           </div>
-          {f.headers.length === 0 && <Text as="p" color="color.text.subtle">Brak nagłówków.</Text>}
-          {f.headers.map((h, i) => {
-            const secret = looksLikePastedSecret(h.name, h.value);
-            return (
-              <div className="af-header-row" key={h.id}>
-                <div className="af-header-inputs">
-                  <TextInput
-                    aria-label={`Nazwa nagłówka ${i + 1}`}
-                    value={h.name}
-                    placeholder="Authorization"
-                    autoComplete="off"
-                    spellCheck={false}
-                        onChange={(e) => setHeader(h.id, { name: e.currentTarget.value })}
-                  />
-                  <TextInput
-                    aria-label={`Wartość nagłówka ${i + 1}`}
-                    value={h.value}
-                    placeholder="Bearer ${CACHE_ADMIN_TOKEN}"
-                    autoComplete="off"
-                    spellCheck={false}
-                        aria-invalid={secret}
-                    onChange={(e) => setHeader(h.id, { value: e.currentTarget.value })}
-                  />
-                  <Button
-                    aria-label={`Usuń nagłówek ${h.name || i + 1}`}
-                    onClick={() => setF((cur) => ({ ...cur, headers: cur.headers.filter((x) => x.id !== h.id) }))}
-                  >
-                    Usuń
-                  </Button>
-                </div>
-                {secret && (
-                  <div role="status">
-                    <SectionMessage appearance="warning">
-                      Ta wartość wygląda na wklejony sekret. Użyj referencji <Code>{"${ENV_NAME}"}</Code> zamiast wartości —
-                      sekret nie powinien trafić do definicji akcji.
-                    </SectionMessage>
+        )}
+      </Card>
+
+      {/* 3. Nagłówki HTTP (opcjonalne) */}
+      <Card title="3. Nagłówki i autoryzacja (opcjonalnie)">
+        {f.headers.length === 0 ? (
+          <Text as="p" size="small" color="color.text.subtle">
+            Brak dodatkowych nagłówków. Jeśli endpoint wymaga tokenu, dodaj nagłówek (np. Authorization: Bearer {"${CACHE_ADMIN_TOKEN}"}).
+          </Text>
+        ) : (
+          <div className="act-headers-list">
+            {f.headers.map((h, idx) => {
+              const secret = looksLikePastedSecret(h.name, h.value);
+              return (
+                <div key={h.id} className="act-header-item">
+                  <div className="act-header-row">
+                    <Field label={idx === 0 ? "Nagłówek" : "Nagłówek"}>
+                      {(p) => (
+                        <TextInput
+                          {...p}
+                          value={h.name}
+                          placeholder="Authorization"
+                          autoComplete="off"
+                          spellCheck={false}
+                          onChange={(e) => setHeader(h.id, { name: e.currentTarget.value })}
+                        />
+                      )}
+                    </Field>
+                    <Field label={idx === 0 ? "Wartość" : "Wartość"}>
+                      {(p) => (
+                        <TextInput
+                          {...p}
+                          value={h.value}
+                          placeholder="Bearer ${CACHE_ADMIN_TOKEN}"
+                          autoComplete="off"
+                          spellCheck={false}
+                          onChange={(e) => setHeader(h.id, { value: e.currentTarget.value })}
+                        />
+                      )}
+                    </Field>
+                    <div className="act-row-btn">
+                      <Button
+                        appearance="subtle"
+                        onClick={() => setF((cur) => ({ ...cur, headers: cur.headers.filter((x) => x.id !== h.id) }))}
+                      >
+                        Usuń
+                      </Button>
+                    </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-          {errors.headers && (
-            <div className="field-error" role="alert">
-              {errors.headers}
-            </div>
-          )}
-          <Button onClick={() => set("headers", [...f.headers, newRow()])}>Dodaj nagłówek</Button>
-        </fieldset>
-
-        <Field
-          label="Treść żądania (szablon)"
-          hint={
-            <>
-              Opcjonalna. Szablony jak w URL, np. <Code>{'{"service": "{{service}}"}'}</Code>. Bez dostępu do plików i
-              zmiennych środowiskowych.
-            </>
-          }
-        >
-          {(p) => <TextArea {...p} name="body" rows={4} value={f.body} spellCheck={false} onChange={(e) => set("body", e.currentTarget.value)} />}
-        </Field>
-
-        <div className="af-grid">
-          <Field label="Timeout (ms)" error={errors.timeout} hint="Po tym czasie krok kończy się błędem timeoutu.">
-            {(p) => <TextInput {...p} name="timeout" inputMode="numeric" value={f.timeout} onChange={(e) => set("timeout", e.currentTarget.value)} />}
-          </Field>
+                  {secret && (
+                    <SectionMessage appearance="warning">
+                      Zamiast wklejać jawny token, użyj zmiennej środowiskowej, np. <code>{"${NAZWA_TOKENU}"}</code>.
+                    </SectionMessage>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {errors.headers && <ErrorBox message={errors.headers} />}
+        <div className="act-add-btn">
+          <Button onClick={() => set("headers", [...f.headers, newRow()])}>+ Dodaj nagłówek</Button>
         </div>
+      </Card>
 
-        <Field
-          label="Schemat parametrów (JSON Schema)"
-          error={errors.paramsSchema}
-          hint={
-            <>
-              Opcjonalny. Opisuje parametry kroku, np. <Code>{'{"type":"object","required":["service"]}'}</Code>.
-            </>
-          }
-        >
-          {(p) => (
-            <TextArea
-              {...p}
-              name="params_schema"
-              rows={4}
-              value={f.paramsSchema}
-              spellCheck={false}
-             
-              onChange={(e) => set("paramsSchema", e.currentTarget.value)}
-            />
-          )}
-        </Field>
+      {topError && <ErrorBox message={topError} />}
 
-        <div className="af-actions">
-          <Button type="submit" appearance="primary" isLoading={saving}>
-            {saving ? "Zapisywanie…" : isNew ? "Dodaj akcję" : "Zapisz zmiany"}
-          </Button>
-          <Button isDisabled={saving} onClick={onCancel}>
-            Anuluj
-          </Button>
-        </div>
-      </form>
-    </Card>
+      <div className="act-savebar">
+        <Button type="submit" appearance="primary" isLoading={saving} isDisabled={saving}>
+          {isNew ? "Utwórz akcję" : "Zapisz zmiany"}
+        </Button>
+        {!isNew && onDelete && (
+          <ConfirmInline
+            label="Usuń akcję"
+            question={`Usunąć akcję „${initial.name}”?`}
+            confirmLabel="Tak, usuń"
+            busy={saving}
+            onConfirm={() => void handleConfirmDelete()}
+          />
+        )}
+      </div>
+    </form>
   );
 }

@@ -39,7 +39,7 @@ const NAV: { to: string; label: string; group: "ops" | "config" }[] = [
   { to: "/mappings", label: "Mappingi", group: "config" },
   { to: "/actions", label: "Akcje", group: "config" },
   { to: "/runbooks", label: "Runbooki", group: "config" },
-  { to: "/people", label: "Osoby", group: "config" },
+  { to: "/people", label: "Teams", group: "config" },
 ];
 
 // Pozycja menu jako link routera (CustomItem `component`); NavLink sam ustawia aria-current="page".

@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/runbooks/author/status", get(author_status))
         .route("/runbooks/draft", post(draft_runbook))
         .route("/runbooks/errors", get(runbook_errors))
+        .route("/runbooks/{id}", axum::routing::put(put_runbook).delete(delete_runbook))
         .route("/alerts/{alert_id}/runbooks", get(alert_runbooks))
         .route("/alerts/{alert_id}/audit", get(alert_audit))
         .route("/runs/{run_id}/steps/{step_id}/{command}", post(step_command))
@@ -125,22 +126,21 @@ fn validate_runbook_def(def: &RunbookDef) -> Result<(), String> {
     if def.title.trim().is_empty() {
         return Err("tytuł runbooka nie może być pusty".into());
     }
-    if def.kind != RunbookKind::Automatic {
-        return Err("przez API można zapisywać wyłącznie runbooki `kind: automatic`".into());
-    }
-    if def.steps.is_empty() {
-        return Err("runbook musi zawierać co najmniej jeden krok".into());
-    }
-    let mut seen = HashSet::new();
-    for (i, step) in def.steps.iter().enumerate() {
-        if step.id.trim().is_empty() {
-            return Err(format!("krok {}: brak id", i + 1));
+    if def.kind == RunbookKind::Automatic {
+        if def.steps.is_empty() {
+            return Err("runbook musi zawierać co najmniej jeden krok".into());
         }
-        if !seen.insert(step.id.as_str()) {
-            return Err(format!("krok {}: powtórzone id `{}`", i + 1, step.id));
-        }
-        if step.text.trim().is_empty() {
-            return Err(format!("krok {}: brak opisu `text`", step.id));
+        let mut seen = HashSet::new();
+        for (i, step) in def.steps.iter().enumerate() {
+            if step.id.trim().is_empty() {
+                return Err(format!("krok {}: brak id", i + 1));
+            }
+            if !seen.insert(step.id.as_str()) {
+                return Err(format!("krok {}: powtórzone id `{}`", i + 1, step.id));
+            }
+            if step.text.trim().is_empty() {
+                return Err(format!("krok {}: brak opisu `text`", step.id));
+            }
         }
     }
     Ok(())
@@ -153,18 +153,7 @@ async fn create_runbook(
     let Json(mut def) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e.body_text()))?;
     validate_runbook_def(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
     def.source_file = None;
-    def.body = None;
     def.version = 0;
-
-    let existing: Option<Option<String>> =
-        sqlx::query_scalar("SELECT source_file FROM runbooks WHERE id = $1").bind(&def.id).fetch_optional(&st.db).await.map_err(db_err)?;
-    if let Some(source) = existing {
-        let detail = match source {
-            Some(file) => format!("runbook `{}` pochodzi z pliku {file}; wybierz inne id", def.id),
-            None => format!("runbook `{}` już istnieje", def.id),
-        };
-        return Err(err(StatusCode::CONFLICT, "runbook already exists", detail));
-    }
 
     let actions = load_actions(&st).await?;
     let custom_actions: Vec<ActionDef> = actions.into_iter().filter(|a| a.kind != contracts::ActionKind::Builtin).collect();
@@ -172,18 +161,68 @@ async fn create_runbook(
     let def_val = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
     let res_val = serde_json::to_value(&resolved).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid runbook", e))?;
 
-    let version: Option<i64> = sqlx::query_scalar(
+    let version: i64 = sqlx::query_scalar(
         "INSERT INTO runbooks (id, definition, resolved, source_file) VALUES ($1, $2, $3, NULL)
-         ON CONFLICT (id) DO NOTHING RETURNING version",
+         ON CONFLICT (id) DO UPDATE SET definition = EXCLUDED.definition, resolved = EXCLUDED.resolved, source_file = NULL, version = runbooks.version + 1, updated_at = now()
+         RETURNING version",
     )
     .bind(&def.id)
     .bind(&def_val)
     .bind(&res_val)
-    .fetch_optional(&st.db)
+    .fetch_one(&st.db)
     .await
     .map_err(db_err)?;
-    let version = version.ok_or_else(|| err(StatusCode::CONFLICT, "runbook already exists", &def.id))?;
     Ok((StatusCode::CREATED, Json(RunbookDef { version, ..resolved })))
+}
+
+async fn put_runbook(
+    State(st): State<AppState>,
+    Path(old_id): Path<String>,
+    body: Result<Json<RunbookDef>, JsonRejection>,
+) -> ApiResult<Json<RunbookDef>> {
+    let Json(mut def) = body.map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e.body_text()))?;
+    validate_runbook_def(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
+    def.source_file = None;
+
+    let actions = load_actions(&st).await?;
+    let custom_actions: Vec<ActionDef> = actions.into_iter().filter(|a| a.kind != contracts::ActionKind::Builtin).collect();
+    let resolved = Registry::new(custom_actions).classify(&def);
+    let def_val = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid runbook", e))?;
+    let res_val = serde_json::to_value(&resolved).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid runbook", e))?;
+
+    let mut tx = st.db.begin().await.map_err(db_err)?;
+    if def.id != old_id {
+        sqlx::query("DELETE FROM runbooks WHERE id = $1")
+            .bind(&old_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    }
+    let version: i64 = sqlx::query_scalar(
+        "INSERT INTO runbooks (id, definition, resolved, source_file) VALUES ($1, $2, $3, NULL)
+         ON CONFLICT (id) DO UPDATE SET definition = EXCLUDED.definition, resolved = EXCLUDED.resolved, source_file = NULL, version = runbooks.version + 1, updated_at = now()
+         RETURNING version",
+    )
+    .bind(&def.id)
+    .bind(&def_val)
+    .bind(&res_val)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(db_err)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(RunbookDef { version, ..resolved }))
+}
+
+async fn delete_runbook(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    sqlx::query("DELETE FROM runbooks WHERE id = $1")
+        .bind(&id)
+        .execute(&st.db)
+        .await
+        .map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn list_runbooks(State(st): State<AppState>) -> ApiResult<Json<Vec<RunbookDef>>> {

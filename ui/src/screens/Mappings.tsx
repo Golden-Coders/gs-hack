@@ -1,47 +1,49 @@
-// Mappingi i zdarzenia UNMAPPED (tasks.md 15.2): lista schematów bez mappingu z przykładowym payloadem
-// oraz istniejących mappingów; tworzenie i edycja mappingu przez wybór pól z przykładowego payloadu.
-import { useCallback, useEffect, useRef, useState } from "react";
+// Maksymalnie prosty, przyjazny ekran Mappingów:
+// - Lewa kolumna: Nowe nieobsłużone zdarzenia (UNMAPPED) + lista istniejących mappingów
+// - Prawa kolumna: Prosty, czysty formularz bez żargonu (JSONPath "$." dodawany automatycznie pod spodem)
+import { useCallback, useEffect, useState } from "react";
 import Button from "@atlaskit/button/new";
-import { Code, CodeBlock } from "@atlaskit/code";
-import DynamicTable from "@atlaskit/dynamic-table";
-import { useFlags } from "@atlaskit/flag/use-flags";
-import { Inline, Text } from "@atlaskit/primitives/compiled";
-import { useNavigate } from "react-router-dom";
+import Heading from "@atlaskit/heading";
+import { Text } from "@atlaskit/primitives/compiled";
 import { api, type Schemas } from "../api/client";
 import { send } from "../api/request";
 import { usePollWhenQuiet, useStream } from "../api/stream";
 import { useResource } from "../api/useResource";
-import { Card, ConfirmInline, Empty, ErrorBox, Field, Loading, PageHeader, TextInput } from "../ui/primitives";
-import { formatTime } from "../ui/format";
+import { Card, Empty, ErrorBox, Loading, PageHeader } from "../ui/primitives";
 import MappingEditor from "./mappings/MappingEditor";
-import { parseSample } from "./mappings/sample";
 import "./Mappings.css";
 
 type Mapping = Schemas["MappingDef"];
 type Unmapped = Schemas["UnmappedSchema"];
 
-type Editing = { mapping: Mapping; sample: unknown; count?: number; isNew: boolean };
+const SEVERITY_PL: Record<string, string> = {
+  critical: "Krytyczny",
+  error: "Błąd",
+  warning: "Ostrzeżenie",
+  info: "Informacja",
+};
 
 function newMapping(schema: string): Mapping {
-  return { schema, fields: {}, title: null, severity: { type: "const", value: "warning" }, fingerprint: [], resolved: null };
+  return {
+    schema,
+    fields: {},
+    title: null,
+    severity: { type: "const", value: "warning" },
+    fingerprint: [],
+    resolved: null,
+  };
+}
+
+function cleanPath(p: string | null | undefined): string {
+  if (!p) return "Domyślny (nazwa schematu)";
+  return p.startsWith("$.") ? p.slice(2) : p;
 }
 
 function severitySummary(m: Mapping): string {
   const s = m.severity;
-  if (s.type === "const") return `stała: ${s.value}`;
-  if (s.type === "path") return `z pola ${s.path}`;
-  return `z warunków (${s.rules?.length ?? 0})`;
-}
-
-function SampleView({ sample }: { sample: unknown }) {
-  const p = parseSample(sample);
-  const text = typeof sample === "string" ? sample : JSON.stringify(sample, null, 2);
-  return (
-    <details className="mp-sample-view">
-      <summary>Przykładowy payload{p.format !== "invalid" ? ` (${p.format.toUpperCase()})` : ""}</summary>
-      <CodeBlock language={p.format === "yaml" ? "yaml" : "json"} text={text} />
-    </details>
-  );
+  if (s.type === "const") return `Stały: ${SEVERITY_PL[s.value ?? "warning"] ?? s.value}`;
+  if (s.type === "path") return `Z pola: ${cleanPath(s.path)}`;
+  return `Według warunku (${s.rules?.length ?? 0})`;
 }
 
 export default function Mappings() {
@@ -49,16 +51,11 @@ export default function Mappings() {
   const mappingsRes = useResource(() => api.GET("/mappings"));
   const unmapped: Unmapped[] = unmappedRes.data ?? [];
   const mappings: Mapping[] = mappingsRes.data ?? [];
-  const [editing, setEditing] = useState<Editing | null>(null);
-  const { showFlag } = useFlags();
-  const navigate = useNavigate();
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [manual, setManual] = useState("");
-  const [manualError, setManualError] = useState<string | null>(null);
-  const timers = useRef<number[]>([]);
 
-  // Ciche odświeżenie obu list (bez wskaźnika ładowania).
+  const [selectedSchema, setSelectedSchema] = useState<string | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [customSample, setCustomSample] = useState<unknown>(undefined);
+
   const { refresh: refreshUnmapped } = unmappedRes;
   const { refresh: refreshMappings } = mappingsRes;
   const refresh = useCallback(() => {
@@ -66,180 +63,152 @@ export default function Mappings() {
     refreshMappings();
   }, [refreshUnmapped, refreshMappings]);
 
-  useEffect(() => {
-    const pending = timers.current;
-    return () => pending.forEach((t) => window.clearTimeout(t));
-  }, []);
-
-  // Nowe UNMAPPED i zmiany konfiguracji przychodzą na żywo (na mocku SSE jest wyłączone – służy przycisk „Odśwież”).
   useStream((msg) => {
-    if (msg.type === "ui_event" && (msg.data.kind === "unmapped" || msg.data.kind === "config_changed")) refresh();
+    if (msg.type === "ui_event" && (msg.data.kind === "unmapped" || msg.data.kind === "config_changed")) {
+      refresh();
+    }
   });
   usePollWhenQuiet(refresh);
 
-  function startNew(u: Unmapped) {
-    setEditing({ mapping: newMapping(u.schema), sample: u.sample, count: u.count, isNew: true });
+  // Domyślnie wybierz pierwszy istniejący mapping (lub pierwszy UNMAPPED)
+  useEffect(() => {
+    if (selectedSchema !== null || isCreatingNew) return;
+    if (mappings.length > 0) {
+      setSelectedSchema(mappings[0].schema);
+    } else if (unmapped.length > 0) {
+      setSelectedSchema(unmapped[0].schema);
+    }
+  }, [mappings, unmapped, selectedSchema, isCreatingNew]);
+
+  const activeMapping: Mapping | null = isCreatingNew
+    ? newMapping("")
+    : selectedSchema
+      ? (mappings.find((m) => m.schema === selectedSchema) ?? newMapping(selectedSchema))
+      : null;
+
+  const activeIsNew = isCreatingNew || (selectedSchema !== null && !mappings.some((m) => m.schema === selectedSchema));
+  const activeSample =
+    customSample ?? unmapped.find((u) => u.schema === selectedSchema)?.sample;
+
+  function handleSelectExisting(m: Mapping) {
+    setIsCreatingNew(false);
+    setCustomSample(undefined);
+    setSelectedSchema(m.schema);
   }
 
-  function startEdit(m: Mapping) {
-    const u = unmapped.find((x) => x.schema === m.schema);
-    setEditing({ mapping: m, sample: u?.sample, count: u?.count, isNew: false });
+  function handleSelectUnmapped(u: Unmapped) {
+    setIsCreatingNew(false);
+    setCustomSample(u.sample);
+    setSelectedSchema(u.schema);
   }
 
-  function startManual(e: React.FormEvent) {
-    e.preventDefault();
-    const schema = manual.trim();
-    if (!schema) return setManualError("Podaj nazwę schematu.");
-    const existing = mappings.find((m) => m.schema === schema);
-    if (existing) return startEdit(existing);
-    const u = unmapped.find((x) => x.schema === schema);
-    setManualError(null);
-    setManual("");
-    setEditing({ mapping: newMapping(schema), sample: u?.sample, count: u?.count, isNew: true });
+  function handleCreateBlank() {
+    setSelectedSchema(null);
+    setCustomSample(undefined);
+    setIsCreatingNew(true);
   }
 
-  function saved(m: Mapping) {
-    setEditing(null);
-    showFlag({
-      id: `mapping-saved-${m.schema}`,
-      appearance: "success",
-      title: `Zapisano mapping ${m.schema}${m.version && m.version > 0 ? ` (wersja ${m.version})` : ""}`,
-      description: "Czekające zdarzenia są przetwarzane ponownie.",
-      isAutoDismiss: true,
-      actions: [{ content: "Zobacz alerty w feedzie", onClick: () => navigate("/alerts") }],
-    });
+  function handleSaved(saved: Mapping) {
+    setIsCreatingNew(false);
+    setSelectedSchema(saved.schema);
     refresh();
-    // Ponowne przetworzenie UNMAPPED dzieje się asynchronicznie – odświeżamy listę jeszcze dwa razy.
-    timers.current.push(window.setTimeout(refresh, 2_000), window.setTimeout(refresh, 5_000));
   }
 
-  async function remove(schema: string) {
-    setDeleting(true);
-    setDeleteError(null);
-    const failure = await send(() => api.DELETE("/mappings/{schema}", { params: { path: { schema } } }));
-    if (failure) setDeleteError(`Nie udało się usunąć mappingu ${schema}: ${failure}`);
-    else refresh();
-    setDeleting(false);
-  }
-
-  if (editing) {
-    return (
-      <section className="mp">
-        <MappingEditor
-          key={`${editing.mapping.schema}:${editing.isNew}`}
-          initial={editing.mapping}
-          sample={editing.sample}
-          eventCount={editing.count}
-          isNew={editing.isNew}
-          onSaved={saved}
-          onClose={() => setEditing(null)}
-        />
-      </section>
-    );
+  async function handleDelete(schema: string) {
+    const err = await send(() => api.DELETE("/mappings/{schema}", { params: { path: { schema } } }));
+    if (!err) {
+      const remaining = mappings.filter((m) => m.schema !== schema);
+      setSelectedSchema(remaining[0]?.schema ?? null);
+      setIsCreatingNew(false);
+      refresh();
+    }
+    return err;
   }
 
   return (
-    <section className="mp">
-      <PageHeader actions={<Button onClick={refresh}>Odśwież</Button>}>Mappingi i UNMAPPED</PageHeader>
-      <Text as="p" color="color.text.subtle">
-        Zdarzenie ze schematem bez mappingu nie ginie: czeka jako UNMAPPED. Utwórz mapping, wskazując pola w
-        przykładowym payloadzie – zdarzenia zostaną przetworzone i pojawią się w feedzie.
-      </Text>
+    <section className="mp-screen">
+      <PageHeader
+        actions={
+          <Button appearance="primary" onClick={handleCreateBlank}>
+            + Nowy mapping
+          </Button>
+        }
+      >
+        Mappingi
+      </PageHeader>
 
-      <Card title="Krok 1. Wybierz schemat bez mappingu (UNMAPPED)" error={unmappedRes.error} onRetry={unmappedRes.reload} loading={unmappedRes.loading && unmappedRes.data !== null}>
-        {unmappedRes.loading && unmappedRes.data === null ? (
-          <Loading />
-        ) : unmapped.length === 0 ? (
-          <Empty>Brak zdarzeń UNMAPPED. Gdy przyjdzie zdarzenie nieznanego schematu, pojawi się tutaj.</Empty>
-        ) : (
-          <ul className="mp-cards">
+      {mappingsRes.error && <ErrorBox message={mappingsRes.error} onRetry={refresh} />}
+
+      {/* Baner z nowymi nieobsłużonymi typami zdarzeń (tylko gdy faktycznie jakieś czekają) */}
+      {unmapped.length > 0 && (
+        <Card title={`Nowe nieobsłużone typy zdarzeń (${unmapped.length})`}>
+          <ul className="mp-unmapped-list">
             {unmapped.map((u) => (
-              <li key={u.schema} className="mp-card">
-                <div className="mp-card-top">
-                  <div>
-                    <div className="mono mp-schema">{u.schema}</div>
-                    <div className="muted mp-small">
-                      {u.count} {u.count === 1 ? "zdarzenie" : "zdarzeń"} · ostatnie {formatTime(u.last_seen)}
-                    </div>
+              <li key={u.schema} className="mp-unmapped-item">
+                <div>
+                  <Text weight="semibold">{u.schema}</Text>
+                  <div className="muted mp-small">
+                    Oczekujących zdarzeń: {u.count}
                   </div>
-                  <Button appearance="primary" onClick={() => startNew(u)}>
-                    Utwórz mapping
-                  </Button>
                 </div>
-                <SampleView sample={u.sample} />
+                <Button appearance="primary" onClick={() => handleSelectUnmapped(u)}>
+                  Skonfiguruj
+                </Button>
               </li>
             ))}
           </ul>
-        )}
-        <form className="mp-manual" onSubmit={startManual} noValidate>
-          <Field label="Albo nowy schemat ręcznie (wkleisz własny payload)" error={manualError}>
-            {(field) => (
-              <div className="mp-inline">
-                <TextInput
-                  {...field}
-                  className="mono"
-                  value={manual}
-                  onChange={(e) => setManual(e.currentTarget.value)}
-                  placeholder="np. judges.custom.v1"
-                />
-                <Button type="submit">Utwórz</Button>
-              </div>
-            )}
-          </Field>
-        </form>
-      </Card>
+        </Card>
+      )}
 
-      <Card title="Istniejące mappingi" error={mappingsRes.error} onRetry={mappingsRes.reload} loading={mappingsRes.loading && mappingsRes.data !== null}>
-        {deleteError && <ErrorBox message={deleteError} />}
-        {mappingsRes.loading && mappingsRes.data === null ? (
-          <Loading />
-        ) : mappings.length === 0 ? (
-          <Empty>Brak mappingów.</Empty>
-        ) : (
-          <DynamicTable
-            head={{
-              cells: [
-                { key: "schema", content: "Schemat" },
-                { key: "severity", content: "Severity" },
-                { key: "fingerprint", content: "Fingerprint" },
-                { key: "resolved", content: "Resolved" },
-                { key: "version", content: "Wersja" },
-                { key: "actions", content: "Akcje" },
-              ],
-            }}
-            rows={mappings.map((m) => ({
-              key: m.schema,
-              cells: [
-                { key: "schema", content: <span className="mono">{m.schema}</span> },
-                { key: "severity", content: severitySummary(m) },
-                {
-                  key: "fingerprint",
-                  content: m.fingerprint?.length ? <Code>{m.fingerprint.join(", ")}</Code> : <Text color="color.text.subtle">cały payload</Text>,
-                },
-                { key: "resolved", content: m.resolved ? "tak" : <Text color="color.text.subtle">brak</Text> },
-                { key: "version", content: m.version ?? "—" },
-                {
-                  key: "actions",
-                  content: (
-                    <Inline space="space.100" alignBlock="center" alignInline="end" shouldWrap>
-                      <Button onClick={() => startEdit(m)} aria-label={`Edytuj mapping ${m.schema}`}>
-                        Edytuj
-                      </Button>
-                      <ConfirmInline
-                        label={<>Usuń<span className="sr-only"> mapping {m.schema}</span></>}
-                        question="Usunąć? Nowe zdarzenia tego schematu trafią do UNMAPPED."
-                        confirmLabel="Tak, usuń"
-                        busy={deleting}
-                        onConfirm={() => void remove(m.schema)}
-                      />
-                    </Inline>
-                  ),
-                },
-              ],
-            }))}
-          />
-        )}
-      </Card>
+      <div className="mp-layout">
+        {/* Lewa kolumna: lista skonfigurowanych schematów */}
+        <aside className="mp-sidebar" aria-label="Lista mappingów">
+          {mappingsRes.loading && mappingsRes.data === null && <Loading />}
+          {!mappingsRes.loading && mappings.length === 0 && (
+            <Empty>Brak mappingów. Kliknij „+ Nowy mapping”.</Empty>
+          )}
+          <ul className="mp-list">
+            {mappings.map((m) => {
+              const active = !isCreatingNew && m.schema === selectedSchema;
+              return (
+                <li key={m.schema}>
+                  <button
+                    type="button"
+                    className={`mp-item ${active ? "active" : ""}`}
+                    onClick={() => handleSelectExisting(m)}
+                  >
+                    <div className="mp-item-title">{m.schema}</div>
+                    <div className="mp-item-sub">
+                      Tytuł: <strong>{cleanPath(m.title)}</strong>
+                    </div>
+                    <div className="mp-item-sub">{severitySummary(m)}</div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </aside>
+
+        {/* Prawa kolumna: prosty edytor wybranego mappingu */}
+        <div className="mp-main">
+          {activeMapping ? (
+            <MappingEditor
+              key={isCreatingNew ? "__new__" : activeMapping.schema}
+              initial={activeMapping}
+              sample={activeSample}
+              isNew={activeIsNew}
+              onSaved={handleSaved}
+              onDelete={handleDelete}
+            />
+          ) : (
+            <Card>
+              <Heading size="small" as="h2">
+                Wybierz mapping z listy po lewej stronie
+              </Heading>
+            </Card>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

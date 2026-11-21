@@ -5,7 +5,7 @@ import Heading from "@atlaskit/heading";
 import { Inline, Stack, Text } from "@atlaskit/primitives/compiled";
 import { token } from "@atlaskit/tokens";
 import type { Schemas } from "../api/client";
-import { SeverityBadge, StateBadge } from "./Badges";
+import { SeverityBadge } from "./Badges";
 import { paletteColor } from "./colors";
 
 export function formatValue(value: unknown): string {
@@ -66,7 +66,6 @@ export default function Presentation({ alert }: { alert: Schemas["AlertDetail"] 
       <Stack space="space.100">
         <Inline space="space.100" alignBlock="center" shouldWrap>
           <SeverityBadge severity={alert.severity} />
-          <StateBadge state={alert.state} />
           <Heading size="small" as="h2">
             <span style={color ? { color: color.fg } : undefined}>{alert.title}</span>
           </Heading>

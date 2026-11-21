@@ -1,0 +1,12 @@
+runbook: trade-limit-breach
+title: Trade limit breach recovery
+rule_ids: [rates-big-rejections]
+matches: { "payload.reason": LIMIT_BREACH }
+steps:
+  - check: "Verify desk intraday limit utilization"
+    action: http_get
+    url: "http://mock-targets:8090/limits/{{desk}}/status"
+  - text: "Escalate limit breach for trade {{tradeId}} to rates risk officer"
+    action: escalate
+    team: rates
+    approval: required

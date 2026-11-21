@@ -174,37 +174,46 @@ async fn put_action(
     body: Result<Json<ActionDef>, JsonRejection>,
 ) -> ApiResult<Json<ActionDef>> {
     let def = parse_action_body(body)?;
-    if def.name != name {
-        return Err(err(StatusCode::BAD_REQUEST, "name mismatch", "name w body różni się od ścieżki"));
-    }
-    let source: Option<Option<String>> =
-        sqlx::query_scalar("SELECT source_file FROM actions WHERE name = $1").bind(&name).fetch_optional(&st.db).await.map_err(db_err)?;
-    if let Some(Some(file)) = source {
-        // File-defined actions are managed on disk and cannot be overwritten via API.
-        return Err(err(StatusCode::CONFLICT, "action defined in a file", format!("akcja pochodzi z {file}; edytuj plik")));
+    if BUILTIN_ACTIONS.contains(&name.as_str()) {
+        return Err(err(StatusCode::CONFLICT, "builtin action", "nie można modyfikować akcji wbudowanej"));
     }
     let stored = serde_json::to_value(&def).map_err(|e| err(StatusCode::BAD_REQUEST, "invalid action", e))?;
-    let version: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO actions (name, definition) VALUES ($1, $2)
-         ON CONFLICT (name) DO UPDATE SET definition = EXCLUDED.definition, version = actions.version + 1, updated_at = now()
-         WHERE actions.source_file IS NULL
+    let mut tx = st.db.begin().await.map_err(db_err)?;
+
+    if def.name != name {
+        let conflict: Option<i32> = sqlx::query_scalar("SELECT 1 FROM actions WHERE name = $1")
+            .bind(&def.name)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        if conflict.is_some() {
+            return Err(err(StatusCode::CONFLICT, "action already exists", &def.name));
+        }
+        sqlx::query("DELETE FROM actions WHERE name = $1")
+            .bind(&name)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    }
+
+    let version: i64 = sqlx::query_scalar(
+        "INSERT INTO actions (name, definition, source_file) VALUES ($1, $2, NULL)
+         ON CONFLICT (name) DO UPDATE SET definition = EXCLUDED.definition, source_file = NULL, version = actions.version + 1, updated_at = now()
          RETURNING version",
     )
-    .bind(&name)
+    .bind(&def.name)
     .bind(&stored)
-    .fetch_optional(&st.db)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(db_err)?;
-    let version = version.ok_or_else(|| err(StatusCode::CONFLICT, "action defined in a file", &name))?;
+    .map_err(db_err)?
+    ;
+    tx.commit().await.map_err(db_err)?;
     Ok(Json(ActionDef { version, ..def }))
 }
 
 async fn delete_action(State(st): State<AppState>, Path(name): Path<String>) -> ApiResult<StatusCode> {
-    let source: Option<Option<String>> =
-        sqlx::query_scalar("SELECT source_file FROM actions WHERE name = $1").bind(&name).fetch_optional(&st.db).await.map_err(db_err)?;
-    if let Some(Some(file)) = source {
-        // File-defined actions would be recreated on the next reload.
-        return Err(err(StatusCode::CONFLICT, "action defined in a file", format!("akcja pochodzi z {file}; usuń plik")));
+    if BUILTIN_ACTIONS.contains(&name.as_str()) {
+        return Err(err(StatusCode::CONFLICT, "builtin action", "nie można usunąć akcji wbudowanej"));
     }
     sqlx::query("DELETE FROM actions WHERE name = $1").bind(&name).execute(&st.db).await.map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)

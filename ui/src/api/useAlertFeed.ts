@@ -1,8 +1,5 @@
-// Lista alertów na żywo: stan początkowy z `GET /alerts`, potem zmiany ze strumienia.
-// - alert_changed → pełne podsumowanie z `GET /alerts/{id}` (zdarzenie nie ma tytułu, zespołów ani severity po regule)
-// - ui_event alert_count → licznik i ostatnie wystąpienie w miejscu (bez zapytania, bo bywa ich setki)
-// - resync → scalenie alertów dociągniętych po przerwie
-// - gdy strumień milczy → okresowe GET /alerts (usePollWhenQuiet)
+// Lista aktywnych alertów na żywo: pokazuje wyłącznie nierozwiązane alerty (state !== "resolved").
+// Gdy alert przechodzi w stan "resolved" (z przycisku lub ze strumienia SSE), natychmiast znika z panelu.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Schemas } from "./client";
 import { usePollWhenQuiet, useStream } from "./stream";
@@ -13,27 +10,54 @@ export function useAlertFeed() {
   const [alerts, setAlerts] = useState<Map<string, Alert>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // id → czas ostatniej zmiany na żywo, do krótkiego wyróżnienia wiersza
   const [touched, setTouched] = useState<Map<string, number>>(new Map());
 
-  // Kopia stanu do porównań poza setState (dociąganie wyróżnia tylko faktycznie zmienione alerty).
   const current = useRef(alerts);
   current.current = alerts;
+
+  const remove = useCallback((alertId: string) => {
+    setAlerts((prev) => {
+      if (!prev.has(alertId)) return prev;
+      const next = new Map(prev);
+      next.delete(alertId);
+      return next;
+    });
+    setTouched((prev) => {
+      if (!prev.has(alertId)) return prev;
+      const next = new Map(prev);
+      next.delete(alertId);
+      return next;
+    });
+  }, []);
 
   const merge = useCallback((items: Alert[], live: boolean) => {
     setAlerts((prev) => {
       const next = new Map(prev);
-      items.forEach((a) => next.set(a.id, a));
+      items.forEach((a) => {
+        if (a.state === "resolved") next.delete(a.id);
+        else next.set(a.id, a);
+      });
       return next;
     });
     if (live) {
       const now = Date.now();
       setTouched((prev) => {
         const next = new Map(prev);
-        items.forEach((a) => next.set(a.id, now));
+        items.forEach((a) => {
+          if (a.state === "resolved") next.delete(a.id);
+          else next.set(a.id, now);
+        });
         return next;
       });
     }
+  }, []);
+
+  const replaceAll = useCallback((items: Alert[]) => {
+    const active = new Map<string, Alert>();
+    items.forEach((a) => {
+      if (a.state !== "resolved") active.set(a.id, a);
+    });
+    setAlerts(active);
   }, []);
 
   const poll = useCallback(async () => {
@@ -41,6 +65,7 @@ export function useAlertFeed() {
     if (!data) return;
     const changed = data.filter((a) => {
       const old = current.current.get(a.id);
+      if (a.state === "resolved") return Boolean(old);
       return !old || old.last_seen !== a.last_seen || old.state !== a.state || old.count !== a.count;
     });
     if (changed.length) merge(changed, true);
@@ -60,7 +85,7 @@ export function useAlertFeed() {
     setError(null);
     api.GET("/alerts").then(
       ({ data, error }) => {
-        if (data) merge(data, false);
+        if (data) replaceAll(data);
         else setError(`Nie udało się pobrać alertów${error ? `: ${JSON.stringify(error)}` : ""}`);
         setLoading(false);
       },
@@ -69,13 +94,16 @@ export function useAlertFeed() {
         setLoading(false);
       },
     );
-  }, [merge]);
+  }, [replaceAll]);
   useEffect(load, [load]);
 
   useStream((msg) => {
-    if (msg.type === "alert_changed") void refetch(msg.data.alert_id);
-    else if (msg.type === "resync") merge(msg.alerts, true);
-    else if (msg.data.kind === "alert_count" && msg.data.alert_id) {
+    if (msg.type === "alert_changed") {
+      if (msg.data.state === "resolved") remove(msg.data.alert_id);
+      else void refetch(msg.data.alert_id);
+    } else if (msg.type === "resync") {
+      merge(msg.alerts, true);
+    } else if (msg.data.kind === "alert_count" && msg.data.alert_id) {
       const id = msg.data.alert_id;
       const p = msg.data.payload as { count?: number; last_seen?: string } | null;
       setAlerts((prev) => {
@@ -89,8 +117,10 @@ export function useAlertFeed() {
     }
   });
 
-  const list = [...alerts.values()].sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen));
-  return { alerts: list, touched, loading, error, retry: load };
+  const list = [...alerts.values()]
+    .filter((a) => a.state !== "resolved")
+    .sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen));
+  return { alerts: list, touched, loading, error, retry: load, remove };
 }
 
 /** Zespoły, do których należy osoba (z `GET /teams`). `null` do czasu pobrania. */
