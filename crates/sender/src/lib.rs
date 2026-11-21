@@ -16,7 +16,7 @@ pub use adapters::{
 };
 pub use engine::{ProcessOutcome, SenderConfig, SenderEngine, DEFAULT_BACKOFF_MS, DEFAULT_MAX_ATTEMPTS};
 pub use store::{
-    channel_to_str, db, status_to_str, str_to_channel, str_to_status, DeliveryBackend, DeliveryRecord,
+    channel_to_str, db, status_to_str, str_to_channel, str_to_status, ClaimOutcome, DeliveryBackend, DeliveryRecord,
     InMemoryBackend, MockChannelState, MockMessage, PgKafkaBackend, UpsertDelivery,
 };
 
