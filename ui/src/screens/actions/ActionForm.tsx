@@ -3,6 +3,7 @@
 // sekrety wyłącznie jako ${ENV}. Walidacja po stronie backendu jest rozstrzygająca – jej błędy pokazujemy przy polach.
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { api, type Schemas } from "../../api/client";
+import { Card, ErrorBox, Field } from "../../ui/primitives";
 import {
   METHODS,
   newRow,
@@ -27,40 +28,8 @@ type Props = {
 
 type ApiError = Schemas["Error"];
 
-function Field({
-  id,
-  label,
-  hint,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  hint?: React.ReactNode;
-  error?: string | null;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="af-field">
-      <label htmlFor={id}>{label}</label>
-      {children}
-      {hint && (
-        <p className="af-hint" id={`${id}-hint`}>
-          {hint}
-        </p>
-      )}
-      {error && (
-        <p className="af-error" id={`${id}-err`} role="alert">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export default function ActionForm({ initial, isNew, version, takenNames, onSaved, onCancel }: Props) {
-  const uid = useId();
-  const id = (s: string) => `${uid}-${s}`;
+  const headersHintId = useId();
   const [f, setF] = useState<FormState>(initial);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [serverError, setServerError] = useState<ApiError | null>(null);
@@ -129,212 +98,188 @@ export default function ActionForm({ initial, isNew, version, takenNames, onSave
   const urlError = errors.url ?? (serverField === "url" ? serverText : null);
   const topError = formError ?? (serverError && serverField !== "url" ? serverText : null);
 
+
+  const title = isNew ? "Nowa akcja HTTP" : `Edycja akcji ${initial.name}`;
+
   return (
-    <form className="af" ref={rootRef} onSubmit={(e) => void submit(e)} noValidate aria-labelledby={id("title")}>
-      <h2 id={id("title")}>{isNew ? "Nowa akcja HTTP" : `Edycja akcji ${initial.name}`}</h2>
+    <Card title={title} className="af">
+      <form className="af-form" ref={rootRef} onSubmit={(e) => void submit(e)} noValidate aria-label={title}>
+        {topError && <ErrorBox message={topError} />}
 
-      {topError && (
-        <p className="error-box" role="alert">
-          {topError}
-        </p>
-      )}
+        <div className="af-grid">
+          <Field label="Nazwa" error={errors.name} hint="Tej nazwy używają kroki runbooków (pole action).">
+            {(p) => (
+              <input
+                {...p}
+                ref={firstRef}
+                name="name"
+                value={f.name}
+                readOnly={!isNew}
+                autoComplete="off"
+                spellCheck={false}
+                className="mono"
+                onChange={(e) => set("name", e.target.value)}
+              />
+            )}
+          </Field>
 
-      <div className="af-grid">
-        <Field id={id("name")} label="Nazwa" error={errors.name} hint="Tej nazwy używają kroki runbooków (pole action).">
-          <input
-            ref={firstRef}
-            id={id("name")}
-            name="name"
-            value={f.name}
-            readOnly={!isNew}
-            autoComplete="off"
-            spellCheck={false}
-            className="mono"
-            aria-invalid={!!errors.name}
-            aria-describedby={`${id("name")}-hint${errors.name ? ` ${id("name")}-err` : ""}`}
-            onChange={(e) => set("name", e.target.value)}
-          />
+          <Field label="Ryzyko" hint="Akcja o ryzyku „wysokie” zawsze wymaga zatwierdzenia przez człowieka — niezależnie od ustawień runbooka.">
+            {(p) => (
+              <select {...p} name="risk" value={f.risk} onChange={(e) => set("risk", e.target.value as FormState["risk"])}>
+                <option value="low">niskie</option>
+                <option value="high">wysokie — zawsze z zatwierdzeniem</option>
+              </select>
+            )}
+          </Field>
+        </div>
+
+        <Field label="Opis">
+          {(p) => <input {...p} name="description" value={f.description} onChange={(e) => set("description", e.target.value)} />}
         </Field>
 
-        <Field id={id("risk")} label="Ryzyko" hint="Akcja o ryzyku „wysokie” zawsze wymaga zatwierdzenia przez człowieka — niezależnie od ustawień runbooka.">
-          <select
-            id={id("risk")}
-            name="risk"
-            value={f.risk}
-            aria-describedby={`${id("risk")}-hint`}
-            onChange={(e) => set("risk", e.target.value as FormState["risk"])}
+        <div className="af-grid af-grid-url">
+          <Field label="Metoda">
+            {(p) => (
+              <select {...p} name="method" value={f.method} onChange={(e) => set("method", e.target.value)}>
+                {METHODS.map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field
+            label="URL (szablon)"
+            error={urlError}
+            hint={
+              <>
+                Host musi być na allowliście (<code>ACTION_HOST_ALLOWLIST</code>), inaczej wykonanie kończy się błędem „host
+                niedozwolony”. Wartości z alertu i parametrów kroku: <code>{"{{service}}"}</code>.
+              </>
+            }
           >
-            <option value="low">niskie</option>
-            <option value="high">wysokie — zawsze z zatwierdzeniem</option>
-          </select>
-        </Field>
-      </div>
+            {(p) => (
+              <input
+                {...p}
+                name="url"
+                value={f.url}
+                placeholder="http://mock-targets:8090/cache/{{service}}/flush"
+                autoComplete="off"
+                spellCheck={false}
+                className="mono"
+                onChange={(e) => set("url", e.target.value)}
+              />
+            )}
+          </Field>
+        </div>
 
-      <Field id={id("desc")} label="Opis">
-        <input id={id("desc")} name="description" value={f.description} onChange={(e) => set("description", e.target.value)} />
-      </Field>
+        <fieldset className="af-headers" aria-describedby={headersHintId}>
+          <legend>Nagłówki</legend>
+          <div className="field-hint" id={headersHintId}>
+            Sekrety podawaj wyłącznie jako referencję <code>{"${ENV_NAME}"}</code>, np.{" "}
+            <code>{"Bearer ${CACHE_ADMIN_TOKEN}"}</code> — wartość jest pobierana ze środowiska w runtime i nigdy nie jest
+            zapisywana w definicji akcji.
+          </div>
+          {f.headers.length === 0 && <p className="muted">Brak nagłówków.</p>}
+          {f.headers.map((h, i) => {
+            const secret = looksLikePastedSecret(h.name, h.value);
+            return (
+              <div className="af-header-row" key={h.id}>
+                <div className="af-header-inputs">
+                  <input
+                    aria-label={`Nazwa nagłówka ${i + 1}`}
+                    value={h.name}
+                    placeholder="Authorization"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="mono"
+                    onChange={(e) => setHeader(h.id, { name: e.target.value })}
+                  />
+                  <input
+                    aria-label={`Wartość nagłówka ${i + 1}`}
+                    value={h.value}
+                    placeholder="Bearer ${CACHE_ADMIN_TOKEN}"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="mono"
+                    aria-invalid={secret}
+                    onChange={(e) => setHeader(h.id, { value: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Usuń nagłówek ${h.name || i + 1}`}
+                    onClick={() => setF((cur) => ({ ...cur, headers: cur.headers.filter((x) => x.id !== h.id) }))}
+                  >
+                    Usuń
+                  </button>
+                </div>
+                {secret && (
+                  <p className="af-warn" role="status">
+                    Ta wartość wygląda na wklejony sekret. Użyj referencji <code>{"${ENV_NAME}"}</code> zamiast wartości —
+                    sekret nie powinien trafić do definicji akcji.
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          {errors.headers && (
+            <div className="field-error" role="alert">
+              {errors.headers}
+            </div>
+          )}
+          <button type="button" onClick={() => set("headers", [...f.headers, newRow()])}>
+            Dodaj nagłówek
+          </button>
+        </fieldset>
 
-      <div className="af-grid af-grid-url">
-        <Field id={id("method")} label="Metoda">
-          <select id={id("method")} name="method" value={f.method} onChange={(e) => set("method", e.target.value)}>
-            {METHODS.map((m) => (
-              <option key={m}>{m}</option>
-            ))}
-          </select>
-        </Field>
         <Field
-          id={id("url")}
-          label="URL (szablon)"
-          error={urlError}
+          label="Treść żądania (szablon)"
           hint={
             <>
-              Host musi być na allowliście (<code>ACTION_HOST_ALLOWLIST</code>), inaczej wykonanie kończy się błędem „host
-              niedozwolony”. Wartości z alertu i parametrów kroku: <code>{"{{service}}"}</code>.
+              Opcjonalna. Szablony jak w URL, np. <code>{'{"service": "{{service}}"}'}</code>. Bez dostępu do plików i
+              zmiennych środowiskowych.
             </>
           }
         >
-          <input
-            id={id("url")}
-            name="url"
-            value={f.url}
-            placeholder="http://mock-targets:8090/cache/{{service}}/flush"
-            autoComplete="off"
-            spellCheck={false}
-            className="mono"
-            aria-invalid={!!urlError}
-            aria-describedby={`${id("url")}-hint${urlError ? ` ${id("url")}-err` : ""}`}
-            onChange={(e) => set("url", e.target.value)}
-          />
+          {(p) => <textarea {...p} name="body" rows={4} value={f.body} spellCheck={false} className="mono" onChange={(e) => set("body", e.target.value)} />}
         </Field>
-      </div>
 
-      <fieldset className="af-headers" aria-describedby={id("headers-hint")}>
-        <legend>Nagłówki</legend>
-        <p className="af-hint" id={id("headers-hint")}>
-          Sekrety podawaj wyłącznie jako referencję <code>{"${ENV_NAME}"}</code>, np.{" "}
-          <code>{"Bearer ${CACHE_ADMIN_TOKEN}"}</code> — wartość jest pobierana ze środowiska w runtime i nigdy nie jest
-          zapisywana w definicji akcji.
-        </p>
-        {f.headers.length === 0 && <p className="muted">Brak nagłówków.</p>}
-        {f.headers.map((h, i) => {
-          const secret = looksLikePastedSecret(h.name, h.value);
-          return (
-            <div className="af-header-row" key={h.id}>
-              <div className="af-header-inputs">
-                <input
-                  aria-label={`Nazwa nagłówka ${i + 1}`}
-                  value={h.name}
-                  placeholder="Authorization"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="mono"
-                  onChange={(e) => setHeader(h.id, { name: e.target.value })}
-                />
-                <input
-                  aria-label={`Wartość nagłówka ${i + 1}`}
-                  value={h.value}
-                  placeholder="Bearer ${CACHE_ADMIN_TOKEN}"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="mono"
-                  aria-invalid={secret}
-                  onChange={(e) => setHeader(h.id, { value: e.target.value })}
-                />
-                <button
-                  type="button"
-                  aria-label={`Usuń nagłówek ${h.name || i + 1}`}
-                  onClick={() => setF((cur) => ({ ...cur, headers: cur.headers.filter((x) => x.id !== h.id) }))}
-                >
-                  Usuń
-                </button>
-              </div>
-              {secret && (
-                <p className="af-warn" role="status">
-                  Ta wartość wygląda na wklejony sekret. Użyj referencji <code>{"${ENV_NAME}"}</code> zamiast wartości —
-                  sekret nie powinien trafić do definicji akcji.
-                </p>
-              )}
-            </div>
-          );
-        })}
-        {errors.headers && (
-          <p className="af-error" role="alert">
-            {errors.headers}
-          </p>
-        )}
-        <button type="button" onClick={() => set("headers", [...f.headers, newRow()])}>
-          Dodaj nagłówek
-        </button>
-      </fieldset>
+        <div className="af-grid">
+          <Field label="Timeout (ms)" error={errors.timeout} hint="Po tym czasie krok kończy się błędem timeoutu.">
+            {(p) => <input {...p} name="timeout" inputMode="numeric" value={f.timeout} className="mono" onChange={(e) => set("timeout", e.target.value)} />}
+          </Field>
+        </div>
 
-      <Field
-        id={id("body")}
-        label="Treść żądania (szablon)"
-        hint={
-          <>
-            Opcjonalna. Szablony jak w URL, np. <code>{'{"service": "{{service}}"}'}</code>. Bez dostępu do plików i
-            zmiennych środowiskowych.
-          </>
-        }
-      >
-        <textarea
-          id={id("body")}
-          name="body"
-          rows={4}
-          value={f.body}
-          spellCheck={false}
-          className="mono"
-          aria-describedby={`${id("body")}-hint`}
-          onChange={(e) => set("body", e.target.value)}
-        />
-      </Field>
-
-      <div className="af-grid">
-        <Field id={id("timeout")} label="Timeout (ms)" error={errors.timeout} hint="Po tym czasie krok kończy się błędem timeoutu.">
-          <input
-            id={id("timeout")}
-            name="timeout"
-            inputMode="numeric"
-            value={f.timeout}
-            className="mono"
-            aria-invalid={!!errors.timeout}
-            aria-describedby={`${id("timeout")}-hint${errors.timeout ? ` ${id("timeout")}-err` : ""}`}
-            onChange={(e) => set("timeout", e.target.value)}
-          />
+        <Field
+          label="Schemat parametrów (JSON Schema)"
+          error={errors.paramsSchema}
+          hint={
+            <>
+              Opcjonalny. Opisuje parametry kroku, np. <code>{'{"type":"object","required":["service"]}'}</code>.
+            </>
+          }
+        >
+          {(p) => (
+            <textarea
+              {...p}
+              name="params_schema"
+              rows={4}
+              value={f.paramsSchema}
+              spellCheck={false}
+              className="mono"
+              onChange={(e) => set("paramsSchema", e.target.value)}
+            />
+          )}
         </Field>
-      </div>
 
-      <Field
-        id={id("schema")}
-        label="Schemat parametrów (JSON Schema)"
-        error={errors.paramsSchema}
-        hint={
-          <>
-            Opcjonalny. Opisuje parametry kroku, np. <code>{'{"type":"object","required":["service"]}'}</code>.
-          </>
-        }
-      >
-        <textarea
-          id={id("schema")}
-          name="params_schema"
-          rows={4}
-          value={f.paramsSchema}
-          spellCheck={false}
-          className="mono"
-          aria-invalid={!!errors.paramsSchema}
-          aria-describedby={`${id("schema")}-hint${errors.paramsSchema ? ` ${id("schema")}-err` : ""}`}
-          onChange={(e) => set("paramsSchema", e.target.value)}
-        />
-      </Field>
-
-      <div className="af-actions">
-        <button type="submit" className="primary" disabled={saving}>
-          {saving ? "Zapisywanie…" : isNew ? "Dodaj akcję" : "Zapisz zmiany"}
-        </button>
-        <button type="button" disabled={saving} onClick={onCancel}>
-          Anuluj
-        </button>
-      </div>
-    </form>
+        <div className="af-actions">
+          <button type="submit" className="primary" disabled={saving}>
+            {saving ? "Zapisywanie…" : isNew ? "Dodaj akcję" : "Zapisz zmiany"}
+          </button>
+          <button type="button" disabled={saving} onClick={onCancel}>
+            Anuluj
+          </button>
+        </div>
+      </form>
+    </Card>
   );
 }

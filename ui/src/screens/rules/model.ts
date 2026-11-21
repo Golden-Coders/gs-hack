@@ -2,6 +2,7 @@
 // konwersje RuleDef <-> formularz <-> YAML oraz walidacja. Ewaluacją warunków zajmuje się backend (crate `condition`).
 import { LineCounter, parseDocument, stringify } from "yaml";
 import type { Schemas } from "../../api/client";
+import { PALETTE_NAMES, type PaletteName } from "../../components/colors";
 
 export type Rule = Schemas["RuleDef"];
 export type Cond = Schemas["Condition"];
@@ -36,17 +37,18 @@ export const SEVERITIES: { value: Severity; label: string }[] = [
   { value: "critical", label: "critical" },
 ];
 
-// Nazwy kolorów zgodne z components/colors.ts (paleta, bez dowolnego CSS).
-export const COLORS: { value: string; label: string }[] = [
-  { value: "red", label: "czerwony" },
-  { value: "orange", label: "pomarańczowy" },
-  { value: "yellow", label: "żółty" },
-  { value: "green", label: "zielony" },
-  { value: "blue", label: "niebieski" },
-  { value: "purple", label: "fioletowy" },
-  { value: "gray", label: "szary" },
-];
-const COLOR_SET = new Set(COLORS.map((c) => c.value));
+// Nazwy kolorów pochodzą z palety (components/colors.ts); tu tylko polskie etykiety do selecta.
+const COLOR_LABELS: Record<PaletteName, string> = {
+  red: "czerwony",
+  orange: "pomarańczowy",
+  yellow: "żółty",
+  green: "zielony",
+  blue: "niebieski",
+  purple: "fioletowy",
+  gray: "szary",
+};
+export const COLORS: { value: PaletteName; label: string }[] = PALETTE_NAMES.map((value) => ({ value, label: COLOR_LABELS[value] }));
+const COLOR_SET: ReadonlySet<string> = new Set(PALETTE_NAMES);
 
 /** Pola kanoniczne zdarzenia – podpowiadane zawsze, niezależnie od `GET /fields`. */
 export const CANONICAL_FIELDS = ["schema", "severity", "source", "title"];
