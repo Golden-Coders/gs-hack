@@ -14,6 +14,11 @@ Reguła SHALL zawierać warunek na polach kanonicznych zdarzenia oraz na dowolny
 - **WHEN** przychodzi zdarzenie trade.rejected.v2 z `desk = rates` i `notional = 25000000`
 - **THEN** reguła jest dopasowana
 
+#### Scenario: Reguła Pricing z porównaniem skali severity
+- **GIVEN** reguła `pricing-warnings` z warunkiem `severity gte warning` oraz `service glob "pricing-engine-*"` kierująca do `team:pricing`
+- **WHEN** przychodzi zdarzenie z `service = pricing-engine-7` i `severity = warning`
+- **THEN** reguła jest dopasowana i kieruje powiadomienie na kanał główny `ui`; zdarzenie z `severity = info` nie jest dopasowane
+
 #### Scenario: Pole nieistniejące
 - **WHEN** warunek odwołuje się do pola, którego nie ma w zdarzeniu
 - **THEN** warunek jest niespełniony (poza operatorem „istnieje”) i nie powoduje błędu

@@ -53,12 +53,28 @@ System SHALL NOT tracić zleconych dostarczeń przy awarii kanału lub restarcie
 - **THEN** po restarcie niedokończone dostarczenia są kontynuowane
 
 ### Requirement: Brak zdublowanych powiadomień
-System SHALL dostarczyć danej osobie na danym kanale co najwyżej jedno powiadomienie o danym epizodzie alertu, także przy ponownym przetworzeniu po restarcie.
+System SHALL dostarczyć danej osobie na danym kanale co najwyżej jedno powiadomienie o danym epizodzie alertu, także przy ponownym przetworzeniu po restarcie oraz przy równoległym przetwarzaniu zlecenia przez konsumenty `sender` i `sender-retry`.
 
 #### Scenario: Ponowne przetworzenie zlecenia
 - **GIVEN** email do Anny o epizodzie 1 alertu został dostarczony
 - **WHEN** to samo zlecenie zostaje przetworzone ponownie po restarcie
 - **THEN** Anna nie dostaje drugiego emaila
+
+#### Scenario: Równoległy wyścig sender i sender-retry
+- **GIVEN** zlecenie dostarczenia o tym samym kluczu idempotencji trafia równocześnie do `sender` i `sender-retry`
+- **WHEN** oba workery próbują wysłać powiadomienie w tym samym czasie
+- **THEN** atomowe przejęcie klucza (`claim_delivery`) wpuszcza dokładnie jednego workera i adapter kanału wywołuje się dokładnie raz
+
+### Requirement: Współbieżne dostarczanie i pula SMTP
+System SHALL umożliwiać współbieżne przetwarzanie `deliveries.requested` z zatwierdzaniem offsetów Kafki ściśle w kolejności per partycja (at-least-once) oraz ponownym użyciem połączeń SMTP z puli.
+
+#### Scenario: Zakończenie dostarczeń poza kolejnością
+- **WHEN** w obrębie jednej partycji zlecenie o offsecie 102 kończy się przed 100 i 101
+- **THEN** offset nie jest commitowany przed ukończeniem 100 i 101, a po ich zakończeniu commit przesuwa się w kolejności do 102
+
+#### Scenario: Pula połączeń SMTP
+- **WHEN** wysyłanych jest kolejno wiele wiadomości email
+- **THEN** adapter SMTP reużywa połączenie z puli zamiast otwierać nową sesję TCP+EHLO na każdą wiadomość, a przy zerwanym połączeniu automatycznie ponawia na świeżej sesji
 
 ### Requirement: Status dostarczenia
 Każde dostarczenie SHALL mieć status (oczekuje, ponawiane, dostarczone, fallback, nieudane) widoczny przy alercie w UI i aktualizowany na żywo, wraz z czasem dostarczenia.
