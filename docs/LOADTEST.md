@@ -164,7 +164,7 @@ Przy skalowaniu poziomym pula 10 połączeń na proces × ~20 procesów przekrac
 
 | Serwis | Domyślnie | Użycie bazy |
 |---|---|---|
-| lifecycle | 8 (+1 `PgListener`) | normalizer + dedup: zapytania na każdą wiadomość, docelowo przetwarzanie współbieżne |
+| lifecycle | 10 (+1 `PgListener`) | normalizer (UNMAPPED) + dedup (16 pasów; połączenie tylko na czas INSERT/flush/przejścia, duplikat = inkrement w pamięci) |
 | sender | 8 | `claim_delivery`, zapis dostarczeń/prób na każde dostarczenie, współbieżnie |
 | runbooks | 6 | runy, kroki, zatwierdzenia, wywołania akcji; mniejszy wolumen niż lifecycle/sender |
 | api | 5 | zapytania UI (lista alertów, komendy, mappings), ruch ludzki |
@@ -173,9 +173,9 @@ Przy skalowaniu poziomym pula 10 połączeń na proces × ~20 procesów przekrac
 
 Budżet (`PgListener::connect` otwiera osobne połączenie poza pulą, więc liczymy +1 dla lifecycle i router):
 
-- 1× każdy serwis: 9 + 3 + 8 + 6 + 5 + 2 = **33** połączenia.
-- Skalowane (lifecycle×4, router×4, sender×2, runbooks×2, ingest×2, api×1): 36 + 12 + 16 + 12 + 4 + 5 = **85**
-  (z 100 zostaje ~15 na psql, migracje i administrację). Pule są leniwe, więc realne użycie jest zwykle niższe.
+- 1× każdy serwis: 11 + 3 + 8 + 6 + 5 + 2 = **35** połączeń.
+- Skalowane (lifecycle×4, router×4, sender×2, runbooks×2, ingest×2, api×1): 44 + 12 + 16 + 12 + 4 + 5 = **93**
+  (z 100 zostaje ~7 na psql, migracje i administrację). Pule są leniwe, więc realne użycie jest zwykle niższe.
   Przy większej liczbie replik obniż `DB_MAX_CONNECTIONS` albo użyj PgBouncera.
 
 ### PgBouncer (opcja)

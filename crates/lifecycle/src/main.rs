@@ -3,7 +3,8 @@
 use lifecycle::{config, run_config, run_dedup, run_normalizer};
 
 /// Domyślny maks. rozmiar puli Postgresa (nadpisywany przez `DB_MAX_CONNECTIONS`, zob. docs/LOADTEST.md).
-const DB_POOL_DEFAULT: u32 = 16;
+/// 10 (+1 PgListener) mieści lifecycle×4 razem z resztą serwisów w `max_connections=100`.
+const DB_POOL_DEFAULT: u32 = 10;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
