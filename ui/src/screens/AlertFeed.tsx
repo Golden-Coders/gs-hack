@@ -11,7 +11,8 @@ import { ago } from "../ui/format";
 import Button from "@atlaskit/button/new";
 import DynamicTable from "@atlaskit/dynamic-table";
 import SectionMessage from "@atlaskit/section-message";
-import { Empty, ErrorBox, PageHeader, Segmented } from "../ui/primitives";
+import { useListKeyboard } from "../ui/keyboard";
+import { EmptyList, ErrorBox, ListSkeleton, PageHeader, Segmented } from "../ui/primitives";
 import "./AlertFeed.css";
 
 type Filter = "mine" | "all";
@@ -41,7 +42,7 @@ function useNow(intervalMs: number) {
 export default function AlertFeed() {
   const personId = usePersonId();
   const myTeams = useTeamsOf(personId);
-  const { alerts, touched, loading, error } = useAlertFeed();
+  const { alerts, touched, loading, error, retry } = useAlertFeed();
   const status = useStreamStatus();
   const navigate = useNavigate();
   const now = useNow(5_000);
@@ -62,14 +63,20 @@ export default function AlertFeed() {
     filter === "all" || !myTeams ? alerts : alerts.filter((a) => a.teams.some((t) => myTeams.includes(t)));
   const lastChange = touched.size ? Math.max(...touched.values()) : null;
 
-  const rows = visible.map((a) => {
+  const { index: current } = useListKeyboard({
+    keys: visible.map((a) => a.id),
+    enabled: true,
+    onOpen: (id) => navigate(`/alerts/${id}`),
+  });
+
+  const rows = visible.map((a, i) => {
     const t = touched.get(a.id);
     const flash = t !== undefined && Date.now() - t < FLASH_MS;
     const color = paletteColor(a.color);
     return {
       // nowy klucz po zmianie na żywo restartuje animację wyróżnienia
       key: flash ? `${a.id}:${t}` : a.id,
-      className: flash ? "flash" : undefined,
+      className: [flash && "flash", i === current && "kb-current"].filter(Boolean).join(" ") || undefined,
       style: color ? { boxShadow: `inset 4px 0 0 ${color.fg}` } : undefined,
       onClick: () => navigate(`/alerts/${a.id}`),
       cells: [
@@ -115,7 +122,7 @@ export default function AlertFeed() {
         Alerty
       </PageHeader>
 
-      {error && <ErrorBox message={error} />}
+      {error && <ErrorBox message={error} onRetry={retry} disabled={loading} />}
       {filter === "mine" && myTeams && myTeams.length === 0 && (
         <SectionMessage appearance="information">
           <Text as="p">
@@ -125,23 +132,26 @@ export default function AlertFeed() {
         </SectionMessage>
       )}
 
-      <DynamicTable
-        label="Alerty"
-        isLoading={loading}
-        loadingLabel="Ładowanie alertów…"
-        emptyView={<Empty>Brak alertów.</Empty>}
-        head={{
-          cells: [
-            { key: "severity", content: "Severity" },
-            { key: "state", content: "Stan" },
-            { key: "title", content: "Alert" },
-            { key: "teams", content: "Zespoły" },
-            { key: "count", content: "Licznik" },
-            { key: "last", content: "Ostatnio" },
-          ],
-        }}
-        rows={rows}
-      />
+      {loading && alerts.length === 0 ? (
+        <ListSkeleton label="Ładowanie alertów…" />
+      ) : (
+        <DynamicTable
+          label="Alerty"
+          highlightedRowIndex={current >= 0 ? current : undefined}
+          emptyView={<EmptyList header="Brak alertów" description="Nowe alerty pojawią się tu na żywo." />}
+          head={{
+            cells: [
+              { key: "severity", content: "Severity" },
+              { key: "state", content: "Stan" },
+              { key: "title", content: "Alert" },
+              { key: "teams", content: "Zespoły" },
+              { key: "count", content: "Licznik" },
+              { key: "last", content: "Ostatnio" },
+            ],
+          }}
+          rows={rows}
+        />
+      )}
     </section>
   );
 }

@@ -9,3 +9,5 @@
 .approval-params { display: flex; flex-wrap: wrap; gap: var(--ds-space-050) var(--ds-space-200); margin: 0; }
 .approval-params dd { font: var(--ds-font-body-small); font-family: var(--ds-font-family-code); }
 .approval-actions { display: flex; align-items: center; gap: var(--ds-space-100); flex-wrap: wrap; }
+.approval--selected { background: var(--ds-background-selected); }
+.approvals-bulk { position: sticky; top: 0; z-index: 1; margin-top: var(--ds-space-200); padding: var(--ds-space-100) var(--ds-space-200); background: var(--ds-surface-overlay); border: var(--ds-border-width) solid var(--ds-border); border-radius: var(--ds-radius-large); box-shadow: var(--ds-shadow-overlay); }

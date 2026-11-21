@@ -15,6 +15,7 @@ import {
 import { lazy, Suspense } from "react";
 import { Box } from "@atlaskit/primitives/compiled";
 import { matchPath, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import CommandPalette from "./components/CommandPalette";
 import SessionBar from "./components/SessionBar";
 import { Loading } from "./ui/primitives";
 import AlertFeed from "./screens/AlertFeed";
@@ -54,6 +55,7 @@ export default function App() {
   const { pathname } = useLocation();
   return (
     <PageLayout>
+      <CommandPalette screens={NAV} />
       <Content>
         {/* LeftSidebar (z przyciskiem zwijania): poniżej 768 px page-layout zwija go do wysuwanego panelu. */}
         <LeftSidebar

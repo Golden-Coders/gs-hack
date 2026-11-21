@@ -1,16 +1,19 @@
 // Prymitywy UI wspólne dla wszystkich ekranów (bez wiedzy o domenie), na komponentach ADS (design.md D5).
 // API eksportów sprzed migracji zachowane, żeby ekrany zmieniały się minimalnie. Kolory/odstępy tylko z tokenów.
 // Klasy `card`, `field`, `segmented` zostają jako zaczepy układu dla CSS ekranów (usuwane w fazie 3).
-import { forwardRef, useId, useState, type ReactElement, type ReactNode } from "react";
+import { forwardRef, useEffect, useId, useReducer, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import Button from "@atlaskit/button/new";
 import ButtonGroup from "@atlaskit/button/button-group";
 import { ErrorMessage, HelperMessage, Label } from "@atlaskit/form";
+import EmptyState from "@atlaskit/empty-state";
 import Heading from "@atlaskit/heading";
 import Lozenge from "@atlaskit/lozenge";
 import AdsPageHeader from "@atlaskit/page-header";
 import { Inline, Stack, Text } from "@atlaskit/primitives/compiled";
 import SectionMessage from "@atlaskit/section-message";
 import AdsSelect from "@atlaskit/select";
+import Skeleton from "@atlaskit/skeleton";
 import Spinner from "@atlaskit/spinner";
 import AdsTabs, { Tab, TabList, TabPanel } from "@atlaskit/tabs";
 import AdsTextArea from "@atlaskit/textarea";
@@ -119,6 +122,45 @@ export function Loading({ children = "Ładowanie…" }: { children?: ReactNode }
       </Inline>
     </div>
   );
+}
+
+/**
+ * Obejście dla ModalDialog w StrictMode (dev, `npm run dev` w docker compose): Portal Atlaskit usuwa swój kontener
+ * przy podwójnym wywołaniu efektów i dołącza go z powrotem dopiero przy kolejnym renderze — bez niego okno bez dalszych
+ * renderów się nie pokazuje, a po ponownym dołączeniu traci fokus (`onSettled` ustawia go jeszcze raz).
+ * W buildzie produkcyjnym niepotrzebne. Wywołaj w komponencie, który renderuje `ModalDialog`.
+ * shortcut: czasowy dodatkowy render; gdy ADS włączy flagę platform_design_system_team_portal_logic_r18_fix, usunąć.
+ */
+export function useRerenderOnMount(onSettled?: () => void) {
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  const settled = useRef(onSettled);
+  settled.current = onSettled;
+  useEffect(() => {
+    // po zamontowaniu samego Portalu (jego efekt uruchamia się w osobnym renderze)
+    const t = setTimeout(() => {
+      flushSync(rerender);
+      settled.current?.();
+    }, 50);
+    return () => clearTimeout(t);
+  }, []);
+}
+
+/** Szkielet listy na czas pierwszego ładowania (zajmuje mniej więcej tyle miejsca co wiersze). */
+export function ListSkeleton({ rows = 5, label = "Ładowanie…" }: { rows?: number; label?: string }) {
+  return (
+    <div role="status" aria-label={label}>
+      <Stack space="space.100">
+        {Array.from({ length: rows }, (_, i) => (
+          <Skeleton key={i} width="100%" height={token("space.500")} isShimmering />
+        ))}
+      </Stack>
+    </div>
+  );
+}
+
+/** Stan pusty listy: nagłówek + opis (ADS EmptyState, bez ilustracji). */
+export function EmptyList({ header, description }: { header: string; description?: ReactNode }) {
+  return <EmptyState header={header} description={description} headingLevel={2} />;
 }
 
 /** Przełącznik kilku wartości (np. filtr „mój zespół / wszystkie”). ADS nie ma segmented control → ButtonGroup. */

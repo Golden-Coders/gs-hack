@@ -13,3 +13,6 @@
 .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .data-table code { font-family: var(--ds-font-family-code); }
 .nowrap { white-space: nowrap; }
+
+/* Bieżący wiersz listy sterowanej klawiaturą (j/k) — feed alertów i kolejka zatwierdzeń. */
+.kb-current { outline: var(--ds-border-width-focused) solid var(--ds-border-focused); outline-offset: -2px; }
