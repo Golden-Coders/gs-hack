@@ -18,4 +18,6 @@ serde_json_path = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 arc-swap = { workspace = true }
+
+[dev-dependencies]
 futures = { workspace = true }

@@ -8,7 +8,7 @@
 //! `?delay_ms=10000` – odpowiedz z opóźnieniem (scenariusz „Wolna usługa”).
 //! Powtórzony `Idempotency-Key` nie „wykonuje” akcji drugi raz: wpis ma `replayed: true`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,13 +20,41 @@ use axum::{Json, Router};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-/// shortcut: log w pamięci, ostatnie MAX_CALLS wywołań; wystarczy na demo, znika po restarcie.
+/// Log w pamięci: ostatnie `MAX_CALLS` wywołań i ograniczone `seen_keys` (`MAX_SEEN_KEYS`).
 const MAX_CALLS: usize = 1000;
+const MAX_SEEN_KEYS: usize = MAX_CALLS * 2;
+
+#[derive(Default)]
+struct SeenKeys {
+    set: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl SeenKeys {
+    /// Zwraca `true`, jeśli klucz był nowy (nie był wcześniej widziany).
+    fn insert(&mut self, key: String) -> bool {
+        if !self.set.insert(key.clone()) {
+            return false;
+        }
+        self.order.push_back(key);
+        while self.order.len() > MAX_SEEN_KEYS {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
+        }
+        true
+    }
+
+    fn clear(&mut self) {
+        self.set.clear();
+        self.order.clear();
+    }
+}
 
 #[derive(Clone, Default)]
 struct AppState {
     calls: Arc<Mutex<Vec<Call>>>,
-    seen_keys: Arc<Mutex<HashSet<String>>>,
+    seen_keys: Arc<Mutex<SeenKeys>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -49,12 +77,12 @@ fn app() -> Router {
 }
 
 async fn list_calls(State(s): State<AppState>) -> Json<Vec<Call>> {
-    Json(s.calls.lock().unwrap().clone())
+    Json(s.calls.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 async fn clear_calls(State(s): State<AppState>) -> StatusCode {
-    s.calls.lock().unwrap().clear();
-    s.seen_keys.lock().unwrap().clear();
+    s.calls.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    s.seen_keys.lock().unwrap_or_else(|e| e.into_inner()).clear();
     StatusCode::NO_CONTENT
 }
 
@@ -75,12 +103,14 @@ async fn record(
         .and_then(|c| StatusCode::from_u16(c).ok())
         .unwrap_or(StatusCode::OK);
     let idempotency_key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::to_string);
-    let replayed = idempotency_key.as_ref().is_some_and(|k| !s.seen_keys.lock().unwrap().insert(k.clone()));
+    let replayed = idempotency_key
+        .as_ref()
+        .is_some_and(|k| !s.seen_keys.lock().unwrap_or_else(|e| e.into_inner()).insert(k.clone()));
     let body = serde_json::from_slice(&body).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()));
     let path = uri.path().to_string();
     tracing::info!(%method, path, replayed, status = status.as_u16(), "mock call");
 
-    let mut calls = s.calls.lock().unwrap();
+    let mut calls = s.calls.lock().unwrap_or_else(|e| e.into_inner());
     calls.push(Call {
         at: chrono::Utc::now(),
         method: method.to_string(),
@@ -145,5 +175,18 @@ mod tests {
         let base = spawn().await;
         let resp = reqwest::get(format!("{base}/counterparty-service/health?status=503")).await.unwrap();
         assert_eq!(resp.status(), 503);
+    }
+
+    #[test]
+    fn seen_keys_is_bounded_and_evicts_oldest() {
+        let mut seen = SeenKeys::default();
+        for i in 0..(MAX_SEEN_KEYS + 10) {
+            assert!(seen.insert(format!("k-{i}")));
+        }
+        assert_eq!(seen.set.len(), MAX_SEEN_KEYS);
+        assert_eq!(seen.order.len(), MAX_SEEN_KEYS);
+        // Oldest keys were evicted, newest are still deduplicated.
+        assert!(!seen.insert(format!("k-{}", MAX_SEEN_KEYS + 9)));
+        assert!(seen.insert("k-0".into()));
     }
 }

@@ -1,4 +1,4 @@
-//! Wspólny stan aplikacji (Faza 0).
+//! Shared application state for the API server.
 
 use std::sync::Arc;
 
@@ -8,9 +8,7 @@ use common::kafka::rdkafka::producer::FutureProducer;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<common::Config>,
-    /// Odczyty z tabel wszystkich strumieni; zapisy konfiguracji – tylko do tabel właściciela.
     pub db: PgPool,
-    /// Publikacja komend (`alerts.commands`, `runbooks.commands`).
     pub kafka: FutureProducer,
 }
 

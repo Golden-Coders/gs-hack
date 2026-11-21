@@ -41,7 +41,7 @@ Retry, fallback, DLQ, idempotencja (`(alert, epizod, osoba, kanał)`) i statusy 
 
 **Co robi.** `crates/mock-targets` (:8090) udaje usługi, na których runbooki wykonują akcje: ponowienie workflow, restart usługi, zgłoszenie (ticket), czyszczenie cache'u. Loguje każde wywołanie (z nagłówkiem `Idempotency-Key`), żeby na demo było widać, że akcja naprawdę poszła. Może też zwrócić błąd, żeby pokazać krok „błąd” i przyciski „ponów” / „pomiń” / „tryb ręczny”. <!-- lista endpointów do potwierdzenia przez P3 -->
 
-**Podmiana.** W definicji akcji (`config/p3/actions/*.yaml` albo ekran **Akcje**) zmień `url` na prawdziwą usługę, a jej host dopisz do `ACTION_HOST_ALLOWLIST`. Sekrety podaj jako `${ENV_NAME}` i ustaw zmienną w serwisie `runbooks`. Akcje kodowe (`escalate`, `notify`) nie korzystają z mock-targets.
+**Podmiana.** W definicji akcji (`config/actions/*.yaml` albo ekran **Akcje**) zmień `url` na prawdziwą usługę, a jej host dopisz do `ACTION_HOST_ALLOWLIST`. Sekrety podaj jako `${ENV_NAME}` i ustaw zmienną w serwisie `runbooks`. Akcje kodowe (`escalate`, `notify`) nie korzystają z mock-targets.
 
 ## Uwierzytelnianie i tożsamość
 

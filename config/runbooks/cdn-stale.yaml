@@ -1,0 +1,9 @@
+# Demo „nowa akcja HTTP w < 1 min” (18.6): akcja flush_cdn nie istnieje w rejestrze, więc krok jest manualny
+# i trafia do GET /actions/missing; po dodaniu akcji (POST /actions) kolejny run wykonuje go automatycznie.
+runbook: cdn-stale
+title: CDN serves stale content
+matches: { type: CDN_STALE }
+steps:
+  - text: "Flush the CDN cache"
+    action: flush_cdn
+    approval: none

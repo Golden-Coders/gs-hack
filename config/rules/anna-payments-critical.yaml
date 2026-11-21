@@ -1,0 +1,30 @@
+id: anna-payments-critical
+name: "Anna: critical alerts from payments-api"
+team: payments
+condition:
+  all:
+    - field: severity
+      op: eq
+      value: critical
+    - any:
+        - field: service
+          op: eq
+          value: payments-api
+        - field: raw.labels.service
+          op: eq
+          value: payments-api
+recipients:
+  - type: person
+    id: anna
+severity_override: critical
+presentation:
+  title: "{{title}}"
+  body: "Service {{raw.labels.service}} ({{raw.labels.region}}): {{raw.annotations.summary}}"
+  fields:
+    - raw.alertname
+    - raw.labels.service
+    - raw.labels.region
+  highlight: {}
+  color: null
+enabled: true
+version: 1

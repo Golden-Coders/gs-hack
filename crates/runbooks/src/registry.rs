@@ -282,7 +282,10 @@ fn overlay(alert_ctx: &Value, params: &Map<String, Value>) -> Value {
 
 /// `Bearer ${TOKEN}` → wartość z env. Sekret nie trafia do definicji, dziennika ani błędów.
 fn expand_secrets(value: &str) -> Result<String, ActionError> {
-    let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").expect("valid regex");
+    static SECRET_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = SECRET_RE.get_or_init(|| {
+        regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").expect("valid regex")
+    });
     let mut missing = None;
     let out = re.replace_all(value, |c: &regex::Captures| {
         std::env::var(&c[1]).unwrap_or_else(|_| {

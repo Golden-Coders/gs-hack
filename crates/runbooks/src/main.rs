@@ -1,6 +1,6 @@
 //! runbooks – dopasowanie i wykonanie runbooków, rejestr akcji, zatwierdzenia (właściciel: P3).
 //!
-//! - `parse`, `store` – runbooki i akcje z `config/p3` → Postgres → migawka (hot reload),
+//! - `parse`, `store` – runbooki i akcje z `config/` → Postgres → migawka (hot reload),
 //! - `registry` – rejestr akcji i bezpieczne wykonanie HTTP,
 //! - `matching` – dopasowanie runbooków do alertu, podstawianie wartości,
 //! - `engine` – runy raz na epizod, maszyna stanów kroków, komendy z UI,
@@ -9,6 +9,7 @@
 mod author;
 mod engine;
 mod matching;
+mod notify;
 mod parse;
 mod registry;
 mod store;
@@ -37,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         producer,
         executor: registry::Executor::new(config.action_host_allowlist.clone()),
         snapshot,
+        public_ui_url: config.public_ui_url.clone(),
     });
     engine.resume_all().await?;
     let consumer = tokio::spawn(engine.clone().consume(config.kafka_brokers.clone()));
@@ -49,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Seed z `config/p3` zgadza się z fixtures kontraktu (to samo widzą P2 i P4).
+/// Seed z `config/` zgadza się z fixtures kontraktu (to samo widzą P2 i P4).
 #[cfg(test)]
 mod seed_tests {
     use contracts::{ActionDef, RunbookDef};
@@ -67,7 +69,7 @@ mod seed_tests {
     }
 
     fn seed_actions() -> Vec<ActionDef> {
-        let dir = format!("{ROOT}/config/p3/actions");
+        let dir = format!("{ROOT}/config/actions");
         let mut actions = Vec::new();
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -95,7 +97,7 @@ mod seed_tests {
 
     #[test]
     fn settlement_timeout_matches_fixture() {
-        let file = "config/p3/runbooks/settlement-timeout.yaml";
+        let file = "config/runbooks/settlement-timeout.yaml";
         let def = parse::parse_runbook(file, &read(file)).unwrap();
         let resolved = registry::Registry::new(seed_actions()).classify(&def);
         let expected: RunbookDef = fixture("runbook.settlement_timeout.json");
@@ -112,7 +114,7 @@ mod seed_tests {
 
     #[test]
     fn payments_manual_matches_fixture() {
-        let file = "config/p3/runbooks/payments-high-error-rate.md";
+        let file = "config/runbooks/payments-high-error-rate.md";
         let def = parse::parse_runbook(file, &read(file)).unwrap();
         let expected: RunbookDef = fixture("runbook.payments_manual.json");
         assert_eq!(RunbookDef { version: expected.version, ..def }, expected);
@@ -120,7 +122,7 @@ mod seed_tests {
 
     #[test]
     fn pricing_free_text_loads() {
-        let file = "config/p3/runbooks/pricing-latency.txt";
+        let file = "config/runbooks/pricing-latency.txt";
         let def = parse::parse_runbook(file, &read(file)).unwrap();
         assert_eq!(def.kind, contracts::RunbookKind::Manual);
         assert!(def.matches.is_some());

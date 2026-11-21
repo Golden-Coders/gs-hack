@@ -69,7 +69,7 @@ function Primitives() {
       <div className="row">
         <Segmented label="Przykład" value={seg} onChange={setSeg} options={[{ value: "mine", label: "Mój zespół" }, { value: "all", label: "Wszystkie" }]} />
         <ConfirmInline label="Usuń" question="Usunąć?" confirmLabel="Tak, usuń" onConfirm={() => {}} />
-        <CopyButton text="config/p2/people.yaml" />
+        <CopyButton text="config/people.yaml" />
       </div>
       <Tabs label="Przykład" value={tab} onChange={setTab} tabs={[{ value: "all", label: "Wszystkie (2)" }, { value: "failed", label: "Nieudane (0)" }]} />
       <Field label="URL" hint="Host musi być na ACTION_HOST_ALLOWLIST" error="Podaj adres URL">

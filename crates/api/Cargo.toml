@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 contracts = { workspace = true }
+condition = { workspace = true }
+lifecycle = { path = "../lifecycle" }
 common = { workspace = true, features = ["db", "kafka"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -15,4 +17,5 @@ axum = { workspace = true }
 tower-http = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 futures = { workspace = true }

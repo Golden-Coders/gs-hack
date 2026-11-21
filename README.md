@@ -2,7 +2,7 @@
 
 Serwis alertingowy: przyjmuje zdarzenia w dowolnym schemacie, skleja duplikaty w jeden alert z licznikiem, dopasowuje reguły zespołów, powiadamia właściwe osoby na preferowanych kanałach i prowadzi przez runbooki z akcjami, które wymagają zatwierdzenia człowieka.
 
-Zadanie: [`docs/exercise.md`](docs/exercise.md). Plan i decyzje techniczne: [`openspec/changes/alerting-service-mvp/`](openspec/changes/alerting-service-mvp/) (`proposal.md`, `design.md`, `specs/`).
+Zadanie: [`docs/exercise.md`](docs/exercise.md). Plan i decyzje techniczne: [`openspec/changes/archive/2026-11-21-alerting-service-mvp/`](openspec/changes/archive/2026-11-21-alerting-service-mvp/) (`proposal.md`, `design.md`, `specs/`).
 
 ## Uruchomienie
 
@@ -10,10 +10,10 @@ Wymagania: Docker z Compose v2 (~4 GB RAM dla kontenerów). Nic więcej nie trze
 
 ```bash
 git clone https://github.com/Golden-Coders/gs-hack && cd gs-hack
-docker compose up --build
+docker compose up --build      # albo: make demo (to samo + dane demo, patrz niżej)
 ```
 
-Pierwsze budowanie backendu w Rust trwa kilka minut, kolejne starty kilkanaście sekund. Potem:
+To wszystko: dwie komendy (`git clone` + `docker compose up --build` lub `make demo`). Pierwsze budowanie backendu w Rust trwa kilka minut, kolejne starty kilkanaście sekund. Potem:
 
 | Co | Adres |
 |---|---|
@@ -23,7 +23,9 @@ Pierwsze budowanie backendu w Rust trwa kilka minut, kolejne starty kilkanaście
 | Mailpit (podgląd wysłanych e-maili) | http://localhost:8025 |
 | Kafka API (Redpanda) z hosta | `localhost:19092` |
 
-Dane i ruch do scenariusza demo: `make demo` (patrz [`docs/DEMO.md`](docs/DEMO.md)). Port 8080 zajęty? `API_PORT=8088 docker compose up --build`.
+**Demo.** `make demo` = `docker compose up -d --build` + generator scenariusza `scripts/demo/run.sh` (wysyła zdarzenia pokazujące deduplikację, routing, fallback i runbooki). `make down` zatrzymuje stack. Scenariusz nagrania: [`docs/DEMO.md`](docs/DEMO.md). Pomiar obciążenia: [`docs/LOADTEST.md`](docs/LOADTEST.md).
+
+**Tokeny i porty.** API wymaga nagłówka `Authorization: Bearer dev-token` (dla SSE `/stream` także `?token=dev-token`, bo `EventSource` nie ustawia nagłówków); zmiany stanu wymagają ponadto `X-Person-Id`. Ingest (`:8081`) jest bez tokenu. Port 8080 zajęty? `API_PORT=8088 docker compose up --build` (albo `API_PORT=8088 make demo`).
 
 Pierwsze zdarzenie:
 
@@ -42,7 +44,7 @@ Alert pojawia się w feedzie UI bez odświeżania strony. Wyślij to samo jeszcz
 ```mermaid
 flowchart LR
     HTTP["HTTP POST /ingest"] --> RAW[[events.raw]]
-    KSRC["Kafka: topiki źródłowe<br/>(config/p1/sources)"] --> RAW
+    KSRC["Kafka: topiki źródłowe<br/>(config/sources)"] --> RAW
     RAW --> NORM["lifecycle: normalizer<br/>(mapping per schema)"]
     NORM -- "brak mappingu" --> UNM[[events.unmapped]]
     NORM --> EN[["events.normalized<br/>(klucz = fingerprint)"]]
@@ -81,7 +83,7 @@ Wszystkie poniższe zmiany to konfiguracja albo jeden plik kodu. Format każdego
 
 ### Nowe źródło (Kafka)
 
-Dodaj plik `config/p1/sources/<nazwa>.yaml`:
+Dodaj plik `config/sources/<nazwa>.yaml`:
 
 ```yaml
 topic: trades            # topik, z którego czytamy
@@ -95,7 +97,7 @@ Zdarzenia HTTP nie wymagają konfiguracji: `POST /ingest` z kopertą `{format, s
 
 Najszybciej z UI. W **Mappingi** zdarzenia nieznanego schematu czekają jako **UNMAPPED** razem z przykładowym payloadem. Klikasz pola w payloadzie, wybierasz severity, fingerprint i warunek „rozwiązany”, patrzysz na podgląd i zapisujesz. Zaległe zdarzenia zostają przetworzone i trafiają do feedu.
 
-Albo plikiem `config/p1/mappings/<schema>.yaml`:
+Albo plikiem `config/mappings/<schema>.yaml`:
 
 ```yaml
 schema: workflow.v1
@@ -107,7 +109,7 @@ fingerprint: [$.workflowName, $.step, $.error.code]   # te same wartości = ten 
 
 ### Nowa reguła
 
-W UI: **Reguły → Nowa reguła**. Kreator warunków (wszystkie / dowolny / nie, operatory słowami) jest zsynchronizowany z YAML. Ustawiasz w nim odbiorców, wygląd alertu (szablony tytułu i treści, wyróżnione pola, kolor) i sprawdzasz regułę przyciskiem „testuj na zdarzeniu”, który pokazuje, który warunek pasował. Albo plikiem `config/p2/rules/<id>.yaml`:
+W UI: **Reguły → Nowa reguła**. Kreator warunków (wszystkie / dowolny / nie, operatory słowami) jest zsynchronizowany z YAML. Ustawiasz w nim odbiorców, wygląd alertu (szablony tytułu i treści, wyróżnione pola, kolor) i sprawdzasz regułę przyciskiem „testuj na zdarzeniu”, który pokazuje, który warunek pasował. Albo plikiem `config/rules/<id>.yaml`:
 
 ```yaml
 id: settlements-prod
@@ -127,16 +129,15 @@ presentation:
 
 Operatory: `eq, ne, in, gt, gte, lt, lte, contains, regex, exists, glob`.
 
-**Kanały** wynikają z preferencji osoby (`config/p2/people.yaml`), np. `critical → sms` w godzinach 08:00–20:00, w pozostałych godzinach `email`. Preferencje zespołu są domyślne dla jego członków. UI jest zawsze ostatnim kanałem zapasowym.
+**Kanały** wynikają z preferencji osoby (`config/people.yaml`), np. `critical → sms` w godzinach 08:00–20:00, w pozostałych godzinach `email`. Preferencje zespołu są domyślne dla jego członków. UI jest zawsze ostatnim kanałem zapasowym.
 
 ### Nowy kanał
 
-<!-- do potwierdzenia przez P2 po implementacji sendera -->
 Jeden adapter w `crates/sender` implementujący `ChannelAdapter` (`kind()`, `send(&Rendered) -> Result<ProviderRef, SendError>`). Błąd `Transient` uruchamia ponawianie (1 s, 5 s, 30 s), a `Permanent` od razu przechodzi do następnego kanału. Retry, fallback, DLQ, idempotencja i statusy działają w senderze wspólnie dla wszystkich kanałów, więc adapter tylko wysyła. Wymianę mocków na prawdziwych dostawców opisuje [`docs/MOCKS.md`](docs/MOCKS.md).
 
 ### Nowa akcja runbooka
 
-W UI: **Akcje**. Lista „brakujące akcje” pokazuje akcje użyte w runbookach, których nie ma w rejestrze. Klikasz „Dodaj”, wypełniasz formularz akcji HTTP i zapisujesz. Albo plikiem `config/p3/actions/<nazwa>.yaml`:
+W UI: **Akcje**. Lista „brakujące akcje” pokazuje akcje użyte w runbookach, których nie ma w rejestrze. Klikasz „Dodaj”, wypełniasz formularz akcji HTTP i zapisujesz. Albo plikiem `config/actions/<nazwa>.yaml`:
 
 ```yaml
 name: flush_cache
@@ -153,8 +154,7 @@ Akcje wymagające kodu (np. `escalate`, `notify`) to jedna implementacja `Action
 
 ### Nowy runbook
 
-<!-- do potwierdzenia przez P3 po implementacji runbooks -->
-Plik w `config/p3/runbooks/`:
+Plik w `config/runbooks/`:
 - `*.yaml` to runbook **automatyczny**: kroki wykonywane po kolei, start raz na epizod alertu. Krok z `approval: required` albo akcja `risk: high` czeka na zatwierdzenie w **Zatwierdzeniach**. Błąd zatrzymuje runbook, a w UI można kliknąć „ponów”, „pomiń” albo „tryb ręczny”. Nieznana akcja staje się krokiem ręcznym i pojawia się na liście brakujących akcji.
 - `*.md` albo `*.txt` to runbook **ręczny**: Markdown lub wolny tekst dołączany do powiadomień (pełna treść w UI i e-mailu, link w SMS).
 
@@ -189,8 +189,8 @@ SMS i telefon, serwer SMTP (Mailpit), usługi, na których działają akcje runb
 
 ## Użycie AI
 
-<!-- do uzupełnienia przez zespół: narzędzia każdej osoby -->
-- **Planowanie:** wymagania, decyzje techniczne i zadania powstały jako change [OpenSpec](openspec/changes/alerting-service-mvp/) z pomocą Claude Code. Każde wymaganie ma scenariusze, które służą jako przypadki testowe, a każde zadanie ma kryterium weryfikacji.
+- **Narzędzia:** zespół użył agentów Claude Code z workflow OpenSpec (propose, apply, każdy strumień w osobnym worktree) do planowania i implementacji.
+- **Planowanie:** wymagania, decyzje techniczne i zadania powstały jako change [OpenSpec](openspec/changes/archive/2026-11-21-alerting-service-mvp/) z pomocą Claude Code. Każde wymaganie ma scenariusze, które służą jako przypadki testowe, a każde zadanie ma kryterium weryfikacji.
 - **Implementacja:** Claude Code pracował w strumieniach z jawną własnością katalogów ([`CLAUDE.md`](CLAUDE.md)). Agent edytuje tylko katalogi swojego strumienia, a kontrakty (`crates/contracts`, `contracts/openapi.yaml`) są zamrożone i zmieniane wyłącznie addytywnie po uzgodnieniu z zespołem. Część ekranów UI zbudowali równolegle subagenci w osobnych worktree. Każdą zmianę przeglądał człowiek przed merge'em, a typecheck i testy crate'ów musiały przechodzić.
 - **Bezpieczeństwo i prywatność:** do narzędzi AI trafiały wyłącznie kod tego repozytorium i syntetyczne dane z `crates/contracts/fixtures/`, bez danych produkcyjnych, klientów ani prawdziwych sekretów (jedyny token to `dev-token`). Kod wygenerowany przez AI przechodził te same reguły co ręczny: allowlista hostów, approval dla `risk: high`, brak sekretów w plikach.
 - **AI w produkcie:** w MVP nie ma wywołań LLM. Jest tylko interfejs `RunbookAuthor` z implementacją `none`, przygotowany pod tworzenie runbooków z opisu. Zasady na przyszłość (design D12): do modelu trafia tylko opis runbooka po redakcji hostów, IP, e-maili i URL, nigdy dane alertów. Odpowiedź jest ograniczona schematem z akcjami z rejestru, a wynik zawsze wymaga akceptacji człowieka.

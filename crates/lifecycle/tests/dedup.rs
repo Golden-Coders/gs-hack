@@ -5,7 +5,7 @@ mod common;
 use std::time::Duration;
 
 use ::common::db::sqlx::{self, PgPool, Row};
-use contracts::{topics, AlertChanged, AlertCommandKind, AlertState, Transition, UiEvent, UiEventKind};
+use contracts::{AlertChanged, AlertCommandKind, AlertState, Transition, UiEvent, UiEventKind};
 use lifecycle::run_dedup_with;
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
@@ -14,6 +14,7 @@ use uuid::Uuid;
 /// Wszystkie testy: jedna grupa + wzajemne wykluczanie (każda grupa dostaje wszystkie zdarzenia,
 /// więc równoległe grupy liczyłyby je wielokrotnie). Offsety grupy przeżywają kolejne uruchomienia.
 const GROUP: &str = "lifecycle-dedup-test";
+const TESTS: usize = 5;
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 type Handle = (tokio::sync::watch::Sender<bool>, JoinHandle<anyhow::Result<()>>);
@@ -21,8 +22,8 @@ type Handle = (tokio::sync::watch::Sender<bool>, JoinHandle<anyhow::Result<()>>)
 fn spawn_dedup(group: &str, pool: &PgPool, producer: &::common::kafka::rdkafka::producer::FutureProducer) -> Handle {
     let (tx, rx) = tokio::sync::watch::channel(false);
     let h = tokio::spawn(run_dedup_with(
-        // grupa musi żyć dość długo – wyciekamy krótki string (test)
-        Box::leak(group.to_string().into_boxed_str()),
+        common::group(group),
+        common::topics(),
         common::brokers(),
         pool.clone(),
         producer.clone(),
@@ -66,7 +67,7 @@ async fn wait_alert(pool: &PgPool, fp: &str, what: &str, ok: impl Fn(&Row_) -> b
 }
 
 async fn changed(fp: &str, window: Duration, n: usize) -> Vec<AlertChanged> {
-    common::read_topic(topics::ALERTS_CHANGED, window, |c: &AlertChanged| c.fingerprint == fp, |o: &[AlertChanged]| o.len() >= n && n > 0).await
+    common::read_topic(&common::topics().alerts_changed, window, |c: &AlertChanged| c.fingerprint == fp, |o: &[AlertChanged]| o.len() >= n && n > 0).await
 }
 
 #[tokio::test]
@@ -74,6 +75,8 @@ async fn five_hundred_identical_events_make_one_alert() {
     let _g = SERIAL.lock().await;
     let (pool, producer) = common::setup().await;
     let fp = format!("t-500-{}", Uuid::new_v4());
+    let mut cl = common::Cleanup::new(TESTS);
+    cl.fingerprint(&fp);
     let d = spawn_dedup(GROUP, &pool, &producer);
 
     common::send_events(&producer, &fp, 500).await;
@@ -90,7 +93,7 @@ async fn five_hundred_identical_events_make_one_alert() {
     assert_eq!(ch[0].alert_id, a.id);
 
     // ui.events dostaje alert_count z końcowym licznikiem
-    let ui: Vec<UiEvent> = common::expect_topic(topics::UI_EVENTS, 1, Duration::from_secs(20), |e: &UiEvent| {
+    let ui: Vec<UiEvent> = common::expect_topic(&common::topics().ui_events, 1, Duration::from_secs(20), |e: &UiEvent| {
         e.alert_id == Some(a.id) && e.kind == UiEventKind::AlertCount && e.payload["count"] == json!(500)
     })
     .await;
@@ -103,6 +106,8 @@ async fn ack_resolve_reopen_lifecycle() {
     let _g = SERIAL.lock().await;
     let (pool, producer) = common::setup().await;
     let fp = format!("t-life-{}", Uuid::new_v4());
+    let mut cl = common::Cleanup::new(TESTS);
+    cl.fingerprint(&fp);
     let d = spawn_dedup(GROUP, &pool, &producer);
 
     common::send_events(&producer, &fp, 2).await;
@@ -124,13 +129,32 @@ async fn ack_resolve_reopen_lifecycle() {
     let res = wait_alert(&pool, &fp, "resolved", |r| r.state == "resolved").await;
     assert_eq!(res.resolved_by, Some(json!({"type": "user", "person_id": "bob"})));
 
-    // reopen tego samego alertu (nowy epizod)
-    common::send_events(&producer, &fp, 1).await;
+    // reopen tego samego alertu (nowy epizod); received_at zdarzenia wyraźnie w przeszłości,
+    // żeby odróżnić go od now() (Postgres trzyma µs, więc obcinamy do µs)
+    let received_at = chrono::DateTime::from_timestamp_micros((chrono::Utc::now() - chrono::Duration::hours(1)).timestamp_micros()).unwrap();
+    let mut ev = common::event(&fp, false);
+    ev.received_at = received_at;
+    ::common::kafka::publish(&producer, &common::topics().events_normalized, &fp, &ev).await.unwrap();
     let re = wait_alert(&pool, &fp, "reopened", |r| r.state == "reopened").await;
     assert_eq!(re.id, a.id);
     assert_eq!(re.episode, 2);
     assert_eq!(re.count, 1);
     assert!(re.acked_by.is_none() && re.resolved_by.is_none());
+
+    // first_seen = received_at zdarzenia otwierającego epizod 2, nie now(); first_seen <= last_seen
+    let times = sqlx::query("SELECT first_seen, last_seen FROM alerts WHERE id = $1").bind(a.id).fetch_one(&pool).await.unwrap();
+    let first_seen: chrono::DateTime<chrono::Utc> = times.get("first_seen");
+    let last_seen: chrono::DateTime<chrono::Utc> = times.get("last_seen");
+    assert!(first_seen <= last_seen, "first_seen {first_seen} > last_seen {last_seen}");
+    assert_eq!(first_seen, received_at);
+    assert_eq!(last_seen, received_at);
+    let ep2_opened: chrono::DateTime<chrono::Utc> = sqlx::query("SELECT opened_at FROM alert_episodes WHERE alert_id = $1 AND episode = 2")
+        .bind(a.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get("opened_at");
+    assert_eq!(ep2_opened, received_at);
 
     let eps = sqlx::query("SELECT episode, count, acked_by, resolved_by FROM alert_episodes WHERE alert_id = $1 ORDER BY episode")
         .bind(a.id)
@@ -158,12 +182,14 @@ async fn resolved_event_from_source_resolves_alert() {
     let _g = SERIAL.lock().await;
     let (pool, producer) = common::setup().await;
     let fp = format!("t-src-{}", Uuid::new_v4());
+    let mut cl = common::Cleanup::new(TESTS);
+    cl.fingerprint(&fp);
     let d = spawn_dedup(GROUP, &pool, &producer);
 
     common::send_events(&producer, &fp, 1).await;
     wait_alert(&pool, &fp, "open", |r| r.state == "open").await;
     let ev = common::event(&fp, true);
-    ::common::kafka::publish(&producer, topics::EVENTS_NORMALIZED, &fp, &ev).await.unwrap();
+    ::common::kafka::publish(&producer, &common::topics().events_normalized, &fp, &ev).await.unwrap();
     let r = wait_alert(&pool, &fp, "resolved", |r| r.state == "resolved").await;
     assert_eq!(r.resolved_by, Some(json!({"type": "source"})));
 
@@ -179,8 +205,10 @@ async fn resolved_event_for_unknown_fingerprint_creates_nothing() {
     let _g = SERIAL.lock().await;
     let (pool, producer) = common::setup().await;
     let fp = format!("t-nores-{}", Uuid::new_v4());
+    let mut cl = common::Cleanup::new(TESTS);
+    cl.fingerprint(&fp);
     let d = spawn_dedup(GROUP, &pool, &producer);
-    ::common::kafka::publish(&producer, topics::EVENTS_NORMALIZED, &fp, &common::event(&fp, true)).await.unwrap();
+    ::common::kafka::publish(&producer, &common::topics().events_normalized, &fp, &common::event(&fp, true)).await.unwrap();
     // marker: kolejne zdarzenie innego fingerprintu przejdzie po poprzednim tylko w tej samej partycji, więc po prostu czekamy
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert!(alert(&pool, &fp).await.is_none());
@@ -192,6 +220,8 @@ async fn two_instances_same_group_keep_single_alert() {
     let _g = SERIAL.lock().await;
     let (pool, producer) = common::setup().await;
     let fp = format!("t-two-{}", Uuid::new_v4());
+    let mut cl = common::Cleanup::new(TESTS);
+    cl.fingerprint(&fp);
     let group = GROUP;
     let a = spawn_dedup(group, &pool, &producer);
     let b = spawn_dedup(group, &pool, &producer);

@@ -1,4 +1,4 @@
-//! Źródła Kafki z `$CONFIG_DIR/p1/sources/*.yaml`: skaner plików + konsument na źródło.
+//! Źródła Kafki z `$CONFIG_DIR/sources/*.yaml`: skaner plików + konsument na źródło.
 
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
@@ -6,7 +6,14 @@ use common::{
     db::sqlx::PgPool,
     kafka::{
         self,
-        rdkafka::{message::Message, producer::FutureProducer},
+        rdkafka::{
+            admin::{AdminClient, AdminOptions, NewTopic, TopicReplication},
+            client::DefaultClientContext,
+            config::ClientConfig,
+            message::Message,
+            producer::FutureProducer,
+            types::RDKafkaErrorCode,
+        },
     },
 };
 use serde::Deserialize;
@@ -61,20 +68,14 @@ pub async fn run_scanner(ctx: Arc<Ctx>, dir: String) {
             tracing::info!(source = %name, topic = %def.topic, "starting source");
             running.insert(name.clone(), (text, tokio::spawn(run_source(ctx.clone(), name, def))));
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(common::reload::POLL_INTERVAL).await;
     }
 }
 
 fn read_dir(dir: &Path) -> HashMap<String, String> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return HashMap::new() };
-    entries
-        .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            let ext = p.extension()?.to_str()?;
-            if ext != "yaml" && ext != "yml" {
-                return None;
-            }
+    common::reload::yaml_files(dir)
+        .into_iter()
+        .filter_map(|p| {
             Some((p.file_stem()?.to_str()?.to_string(), std::fs::read_to_string(&p).ok()?))
         })
         .collect()
@@ -82,6 +83,9 @@ fn read_dir(dir: &Path) -> HashMap<String, String> {
 
 async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef) {
     let group = format!("ingest-source-{name}");
+    if let Err(e) = ensure_topic(&ctx.brokers, &def.topic).await {
+        tracing::warn!(source = %name, topic = %def.topic, error = %e, "ensuring source topic failed");
+    }
     let consumer = match kafka::consumer(&ctx.brokers, &group, &[def.topic.as_str()]) {
         Ok(c) => c,
         Err(e) => return tracing::error!(source = %name, error = %e, "creating source consumer failed"),
@@ -100,6 +104,21 @@ async fn run_source(ctx: Arc<Ctx>, name: String, def: SourceDef) {
             }
         }
     }
+}
+
+/// Tworzy topik źródła, jeśli nie istnieje (Redpanda w compose nie tworzy topików automatycznie,
+/// a `topics-init` zakłada tylko topiki wewnętrzne). Istniejący topik zostaje bez zmian.
+/// shortcut: replikacja 1 (jeden broker w compose), przy klastrze produkcyjnym topiki źródeł zakłada ich właściciel.
+pub async fn ensure_topic(brokers: &str, topic: &str) -> anyhow::Result<()> {
+    let admin: AdminClient<DefaultClientContext> = ClientConfig::new().set("bootstrap.servers", brokers).create()?;
+    let new = NewTopic::new(topic, contracts::topics::PARTITIONS, TopicReplication::Fixed(1));
+    for result in admin.create_topics(&[new], &AdminOptions::new()).await? {
+        match result {
+            Ok(_) | Err((_, RDKafkaErrorCode::TopicAlreadyExists)) => {}
+            Err((t, code)) => anyhow::bail!("creating topic {t}: {code}"),
+        }
+    }
+    Ok(())
 }
 
 /// Buduje (format, schema, payload) z wiadomości: gotowa koperta albo dane wg konfiguracji źródła.

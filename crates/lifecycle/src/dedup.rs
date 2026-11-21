@@ -31,7 +31,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::Shutdown;
+use crate::{Shutdown, Topics};
 
 /// Po przejęciu/utracie partycji ustawia flagę; pętla flushuje i czyści cache.
 struct RebalanceContext {
@@ -73,6 +73,7 @@ fn enum_parse<T: DeserializeOwned>(s: &str) -> Result<T> {
 struct Dedup {
     pool: PgPool,
     producer: FutureProducer,
+    topics: Topics,
     cache: HashMap<String, AlertEntry>,
 }
 
@@ -149,7 +150,7 @@ impl Dedup {
             at: chrono::Utc::now(),
         };
         let key = e.alert_id.to_string();
-        if let Err(err) = common::kafka::publish(&self.producer, topics::UI_EVENTS, &key, &ui).await {
+        if let Err(err) = common::kafka::publish(&self.producer, &self.topics.ui_events, &key, &ui).await {
             tracing::warn!(error = %err, "dedup: ui count publish failed");
         }
         Ok(())
@@ -181,7 +182,7 @@ impl Dedup {
     }
 
     async fn emit(&self, ch: &AlertChanged) {
-        self.publish(topics::ALERTS_CHANGED, &ch.alert_id.to_string(), ch).await;
+        self.publish(&self.topics.alerts_changed, &ch.alert_id.to_string(), ch).await;
     }
 
     async fn handle_event(&mut self, ev: CanonicalEvent) -> Result<()> {
@@ -285,7 +286,7 @@ impl Dedup {
         };
         let mut tx = self.pool.begin().await?;
         let n = common::db::sqlx::query(
-            "UPDATE alerts SET state = 'reopened', episode = episode + 1, count = 1, first_seen = now(), last_seen = $1,
+            "UPDATE alerts SET state = 'reopened', episode = episode + 1, count = 1, first_seen = $1, last_seen = $1,
                     severity = $2, title = $3, last_event = $4, acked_by = NULL, resolved_by = NULL, updated_at = now()
              WHERE id = $5 AND episode = $6 AND state = 'resolved'",
         )
@@ -302,9 +303,10 @@ impl Dedup {
             self.cache.remove(fp);
             return Err(anyhow!("alert {id} changed concurrently, reloading"));
         }
-        common::db::sqlx::query("INSERT INTO alert_episodes (alert_id, episode, opened_at, count) VALUES ($1, $2, now(), 1)")
+        common::db::sqlx::query("INSERT INTO alert_episodes (alert_id, episode, opened_at, count) VALUES ($1, $2, $3, 1)")
             .bind(id)
             .bind(old_ep + 1)
+            .bind(ev.received_at)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -390,7 +392,7 @@ impl Dedup {
     }
 
     async fn handle(&mut self, msg: &BorrowedMessage<'_>) -> Result<()> {
-        if msg.topic() == topics::ALERTS_COMMANDS {
+        if msg.topic() == self.topics.alerts_commands {
             match common::kafka::decode::<AlertCommand>(msg) {
                 Ok(c) => self.handle_command(c).await,
                 Err(e) => {
@@ -419,11 +421,18 @@ impl Dedup {
 
 /// Konsument `events.normalized` + `alerts.commands` w grupie `lifecycle-dedup`; działa do sygnału zatrzymania.
 pub async fn run_dedup(brokers: String, pool: PgPool, producer: FutureProducer, shutdown: Shutdown) -> Result<()> {
-    run_dedup_with(topics::groups::LIFECYCLE_DEDUP, brokers, pool, producer, shutdown).await
+    run_dedup_with(topics::groups::LIFECYCLE_DEDUP, Topics::default(), brokers, pool, producer, shutdown).await
 }
 
-/// Jak `run_dedup`, ale z podaną grupą konsumentów (testy używają własnej, izolowanej grupy).
-pub async fn run_dedup_with(group: &str, brokers: String, pool: PgPool, producer: FutureProducer, mut shutdown: Shutdown) -> Result<()> {
+/// Jak `run_dedup`, ale z podaną grupą i topikami (testy używają własnych, izolowanych).
+pub async fn run_dedup_with(
+    group: &str,
+    topics: Topics,
+    brokers: String,
+    pool: PgPool,
+    producer: FutureProducer,
+    mut shutdown: Shutdown,
+) -> Result<()> {
     let rebalanced = Arc::new(AtomicBool::new(false));
     let consumer: StreamConsumer<RebalanceContext> = ClientConfig::new()
         .set("bootstrap.servers", &brokers)
@@ -433,9 +442,9 @@ pub async fn run_dedup_with(group: &str, brokers: String, pool: PgPool, producer
         .set("session.timeout.ms", "10000")
         .create_with_context(RebalanceContext { rebalanced: rebalanced.clone() })
         .context("creating dedup consumer")?;
-    consumer.subscribe(&[topics::EVENTS_NORMALIZED, topics::ALERTS_COMMANDS])?;
+    consumer.subscribe(&[topics.events_normalized.as_str(), topics.alerts_commands.as_str()])?;
 
-    let mut d = Dedup { pool, producer, cache: HashMap::new() };
+    let mut d = Dedup { pool, producer, topics, cache: HashMap::new() };
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         if rebalanced.swap(false, Ordering::SeqCst) {

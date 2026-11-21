@@ -11,6 +11,41 @@ import { formatTime } from "../../ui/format";
 const CHANNEL: Record<Schemas["Channel"], string> = { ui: "UI", email: "e-mail", sms: "SMS", phone: "telefon" };
 const isFailed = (d: Schemas["Delivery"]) => d.status === "failed" || d.status === "dlq";
 
+// Kontrakt nie ma pola „łańcuch”: łańcuch fallbacku odtwarzamy z dostarczeń tej samej osoby i epizodu
+// (każdy kanał to osobny wiersz, uporządkowany po czasie zlecenia).
+function chainOf(all: Schemas["Delivery"][], d: Schemas["Delivery"]) {
+  return all
+    .filter((x) => x.person_id === d.person_id && x.episode === d.episode)
+    .sort((a, b) => a.received_at.localeCompare(b.received_at));
+}
+
+function FallbackInfo({ all, d }: { all: Schemas["Delivery"][]; d: Schemas["Delivery"] }) {
+  const chain = chainOf(all, d);
+  if (chain.length < 2) return null;
+  const i = chain.findIndex((x) => x.id === d.id);
+  const next = chain[i + 1];
+  const prev = chain[i - 1];
+  const label =
+    d.status === "fallback" && next
+      ? `fallback z ${CHANNEL[d.channel]} na ${CHANNEL[next.channel]}`
+      : prev?.status === "fallback"
+        ? `po fallbacku z ${CHANNEL[prev.channel]}`
+        : null;
+  return (
+    <div className="muted">
+      {label && <strong>{label}</strong>}{" "}
+      <span title="Łańcuch kanałów dla tej osoby w tym epizodzie">
+        {chain.map((x, k) => (
+          <span key={x.id}>
+            {k > 0 && " → "}
+            {x.id === d.id ? <strong>[{CHANNEL[x.channel]}]</strong> : CHANNEL[x.channel]}
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 export default function Deliveries({
   resource,
   onChanged,
@@ -77,7 +112,10 @@ export default function Deliveries({
               {rows.map((d) => (
                 <tr key={d.id}>
                   <td>{d.person_id}</td>
-                  <td>{CHANNEL[d.channel] ?? d.channel}</td>
+                  <td>
+                    {CHANNEL[d.channel] ?? d.channel}
+                    <FallbackInfo all={all} d={d} />
+                  </td>
                   <td>
                     <DeliveryStatusBadge status={d.status} />
                   </td>

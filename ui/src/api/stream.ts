@@ -63,7 +63,7 @@ function connect() {
   // Prism nie obsługuje SSE – na mocku nie łączymy się w kółko, tylko mówimy to wprost.
   if (backend === "mock") return setStatus("unavailable");
   setStatus(connectedOnce ? "reconnecting" : "connecting");
-  const es = new EventSource(`${API_URL}/stream`);
+  const es = new EventSource(`${API_URL}/stream?token=${encodeURIComponent(import.meta.env.VITE_API_TOKEN ?? "dev-token")}`);
   source = es;
 
   es.addEventListener("hello", () => {

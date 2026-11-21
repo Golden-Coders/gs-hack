@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::config::MappingStore;
 use crate::mapping::parse_payload;
-use crate::Shutdown;
+use crate::{Shutdown, Topics};
 
 /// Konsument `events.raw` w grupie `lifecycle-normalizer`; działa do sygnału zatrzymania.
 pub async fn run_normalizer(
@@ -23,19 +23,20 @@ pub async fn run_normalizer(
     store: MappingStore,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    run_normalizer_with(topics::groups::LIFECYCLE_NORMALIZER, brokers, pool, producer, store, shutdown).await
+    run_normalizer_with(topics::groups::LIFECYCLE_NORMALIZER, Topics::default(), brokers, pool, producer, store, shutdown).await
 }
 
-/// Jak `run_normalizer`, ale z podaną grupą konsumentów (testy używają własnej, izolowanej grupy).
+/// Jak `run_normalizer`, ale z podaną grupą i topikami (testy używają własnych, izolowanych).
 pub async fn run_normalizer_with(
     group: &str,
+    topics: Topics,
     brokers: String,
     pool: PgPool,
     producer: FutureProducer,
     store: MappingStore,
     mut shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let consumer = common::kafka::consumer(&brokers, group, &[topics::EVENTS_RAW])?;
+    let consumer = common::kafka::consumer(&brokers, group, &[topics.events_raw.as_str()])?;
     loop {
         let msg = tokio::select! {
             _ = shutdown.changed() => return Ok(()),
@@ -50,7 +51,7 @@ pub async fn run_normalizer_with(
         };
         // At-least-once: ponawiamy do skutku, offset commitujemy dopiero po zapisie skutków.
         loop {
-            match handle(&msg, &pool, &producer, &store).await {
+            match handle(&msg, &pool, &producer, &store, &topics).await {
                 Ok(()) => break,
                 Err(e) => {
                     tracing::warn!(error = %e, "normalizer: processing failed, retrying");
@@ -64,7 +65,13 @@ pub async fn run_normalizer_with(
     }
 }
 
-async fn handle(msg: &BorrowedMessage<'_>, pool: &PgPool, producer: &FutureProducer, store: &MappingStore) -> anyhow::Result<()> {
+async fn handle(
+    msg: &BorrowedMessage<'_>,
+    pool: &PgPool,
+    producer: &FutureProducer,
+    store: &MappingStore,
+    topics: &Topics,
+) -> anyhow::Result<()> {
     let env: Envelope = match common::kafka::decode(msg) {
         Ok(e) => e,
         Err(e) => {
@@ -84,7 +91,7 @@ async fn handle(msg: &BorrowedMessage<'_>, pool: &PgPool, producer: &FutureProdu
     match mapping {
         Some(m) => {
             let event = m.normalize(&env, raw);
-            common::kafka::publish(producer, topics::EVENTS_NORMALIZED, &event.fingerprint, &event).await?;
+            common::kafka::publish(producer, &topics.events_normalized, &event.fingerprint, &event).await?;
         }
         None => {
             common::db::sqlx::query(
@@ -102,14 +109,14 @@ async fn handle(msg: &BorrowedMessage<'_>, pool: &PgPool, producer: &FutureProdu
                 .fetch_one(pool)
                 .await?
                 .get("n");
-            common::kafka::publish(producer, topics::EVENTS_UNMAPPED, &env.schema, &env).await?;
+            common::kafka::publish(producer, &topics.events_unmapped, &env.schema, &env).await?;
             let ui = UiEvent {
                 alert_id: None,
                 kind: UiEventKind::Unmapped,
                 payload: json!({"schema": env.schema, "count": count}),
                 at: chrono::Utc::now(),
             };
-            common::kafka::publish(producer, topics::UI_EVENTS, "unmapped", &ui).await?;
+            common::kafka::publish(producer, &topics.ui_events, "unmapped", &ui).await?;
         }
     }
     Ok(())
@@ -120,6 +127,11 @@ async fn handle(msg: &BorrowedMessage<'_>, pool: &PgPool, producer: &FutureProdu
 /// transakcji = ponowna publikacja (at-least-once; deduplikacja po `event_id` nie jest potrzebna,
 /// bo powtórzone zdarzenie co najwyżej zwiększy licznik).
 pub async fn replay_unmapped(pool: &PgPool, producer: &FutureProducer, store: &MappingStore) -> anyhow::Result<()> {
+    replay_unmapped_to(pool, producer, store, topics::EVENTS_RAW).await
+}
+
+/// Jak `replay_unmapped`, ale na podany topik wejściowy (testy).
+pub async fn replay_unmapped_to(pool: &PgPool, producer: &FutureProducer, store: &MappingStore, events_raw: &str) -> anyhow::Result<()> {
     let schemas: Vec<String> = common::db::sqlx::query("SELECT DISTINCT schema FROM unmapped_events")
         .fetch_all(pool)
         .await?
@@ -145,7 +157,7 @@ pub async fn replay_unmapped(pool: &PgPool, producer: &FutureProducer, store: &M
             for row in &rows {
                 let id: Uuid = row.get("event_id");
                 let envelope: Value = row.get("envelope");
-                common::kafka::publish(producer, topics::EVENTS_RAW, &id.to_string(), &envelope).await?;
+                common::kafka::publish(producer, events_raw, &id.to_string(), &envelope).await?;
                 ids.push(id);
             }
             common::db::sqlx::query("DELETE FROM unmapped_events WHERE event_id = ANY($1)")
