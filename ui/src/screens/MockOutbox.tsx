@@ -1,14 +1,17 @@
 // Wysłane SMS / telefony z symulowanych kanałów + przełącznik dostępności kanału — tasks.md 14.4.
 // Wyłączenie kanału pokazuje awarię: kolejne dostarczenia kończą się błędem, a w szczegółach alertu widać fallback.
+import { Text } from "@atlaskit/primitives/compiled";
+import { useFlags } from "@atlaskit/flag";
+import Toggle from "@atlaskit/toggle";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type Schemas } from "../api/client";
 import { send } from "../api/request";
 import { usePollWhenQuiet, useStream } from "../api/stream";
 import { useResource } from "../api/useResource";
-import { Badge } from "../components/Badges";
 import { formatTime } from "../ui/format";
-import { Card, Empty, ErrorBox } from "../ui/primitives";
+import Button from "@atlaskit/button/new";
+import { Card, Empty, ErrorBox, PageHeader, StatusLozenge } from "../ui/primitives";
 import "./MockOutbox.css";
 
 type ChannelState = Schemas["MockChannelState"];
@@ -31,30 +34,25 @@ function ChannelSwitch({
 }) {
   const name = CHANNEL_LABEL[state.channel] ?? state.channel;
   return (
-    <li className={`channel-card ${state.available ? "channel-ok" : "channel-down"}`}>
+    <li className="channel-card">
       <div>
-        <strong>{name}</strong>
+        <Text as="strong" weight="bold">{name}</Text>
         <div className="channel-state">
-          {state.available ? "Stan: włączony" : "Stan: AWARIA (kanał wyłączony)"}
+          <StatusLozenge domain="channelAvailability" value={state.available} />
         </div>
       </div>
-      <button
-        type="button"
-        className={state.available ? "danger" : "primary"}
-        disabled={pending}
-        onClick={() => onToggle(state)}
-      >
-        {pending
-          ? "Zapisywanie…"
-          : state.available
-            ? `Wyłącz ${name} (symuluj awarię)`
-            : `Włącz ${name}`}
-      </button>
+      <Toggle
+        label={`Kanał ${name}: ${state.available ? "włączony — wyłącz (symuluj awarię)" : "wyłączony — włącz"}`}
+        isChecked={state.available}
+        isDisabled={pending}
+        onChange={() => onToggle(state)}
+      />
     </li>
   );
 }
 
 export default function MockOutbox() {
+  const { showFlag } = useFlags();
   const messages = useResource(() => api.GET("/mock/outbox"));
   const channels = useResource(() => api.GET("/mock/channels"));
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -91,6 +89,11 @@ export default function MockOutbox() {
       setToggleError(`Nie udało się zmienić stanu kanału ${CHANNEL_LABEL[channel] ?? channel}.`);
     } else {
       setSaved((s) => ({ ...s, [channel]: !state.available }));
+      showFlag({
+        title: `Kanał ${CHANNEL_LABEL[channel] ?? channel}: ${state.available ? "wyłączony (awaria)" : "włączony"}`,
+        appearance: "success",
+        isAutoDismiss: true,
+      });
       channels.refresh();
     }
     setPending((s) => {
@@ -103,16 +106,11 @@ export default function MockOutbox() {
   const rows = messages.data;
   return (
     <section className="mock-outbox">
-      <header className="mock-head">
-        <h1>Wysłane SMS / telefony</h1>
-        <button type="button" onClick={reload}>
-          Odśwież
-        </button>
-      </header>
-      <p className="muted">
+      <PageHeader actions={<Button onClick={reload}>Odśwież</Button>}>Wysłane SMS / telefony</PageHeader>
+      <Text as="p" color="color.text.subtle">
         Symulowane kanały — nic nie wychodzi na zewnątrz. Wyłącz kanał, aby pokazać awarię: kolejne dostarczenia
         przez ten kanał zakończą się błędem, a w szczegółach alertu zobaczysz kanał zapasowy.
-      </p>
+      </Text>
 
       <Card title="Dostępność kanałów" loading={channels.loading} error={channels.error} onRetry={channels.reload}>
         {toggleError && <ErrorBox message={toggleError} />}
@@ -149,18 +147,18 @@ export default function MockOutbox() {
                   <tr key={m.id}>
                     <td className="nowrap">{formatTime(m.sent_at)}</td>
                     <td>
-                      <Badge tone={m.channel === "phone" ? "blue" : "gray"}>{CHANNEL_LABEL[m.channel] ?? m.channel}</Badge>
+                      <StatusLozenge domain="channel" value={m.channel} />
                     </td>
                     <td>
                       <div>{m.person_id}</div>
                       <div className="muted outbox-to">{m.to}</div>
                     </td>
                     <td>
-                      <strong>{m.title}</strong>
+                      <Text as="strong" weight="bold">{m.title}</Text>
                       <div className="outbox-body">{m.body}</div>
                     </td>
                     <td>
-                      {m.alert_id ? <Link to={`/alerts/${m.alert_id}`}>Szczegóły alertu</Link> : <span className="muted">—</span>}
+                      {m.alert_id ? <Link to={`/alerts/${m.alert_id}`}>Szczegóły alertu</Link> : <Text color="color.text.subtle">—</Text>}
                     </td>
                   </tr>
                 ))}
