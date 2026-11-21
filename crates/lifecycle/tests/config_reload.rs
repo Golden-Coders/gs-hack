@@ -17,6 +17,8 @@ fn yaml(schema: &str, title: &str) -> String {
 async fn mapping_changes_are_hot_reloaded() {
     let (pool, producer) = common::setup().await;
     let schema = format!("t-{}", Uuid::new_v4());
+    let mut cl = common::Cleanup::new(1);
+    cl.schema(&schema);
     let dir = std::env::temp_dir().join(format!("lifecycle-cfg-{}", Uuid::new_v4()));
     let mdir = dir.join("p1").join("mappings");
     std::fs::create_dir_all(&mdir).unwrap();
