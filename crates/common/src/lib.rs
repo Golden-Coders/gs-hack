@@ -11,6 +11,7 @@ pub mod config;
 pub mod db;
 #[cfg(feature = "kafka")]
 pub mod kafka;
+pub mod reload;
 
 pub use config::Config;
 

@@ -8,8 +8,9 @@ use std::time::{Duration, SystemTime};
 use arc_swap::ArcSwap;
 use common::db::sqlx::{postgres::PgListener, PgPool, Row};
 use common::kafka::rdkafka::producer::FutureProducer;
-use contracts::{topics, MappingDef, UiEvent, UiEventKind};
-use serde_json::{json, Value};
+use common::reload::{notify_config_changed, publish_config_changed, yaml_files, POLL_INTERVAL};
+use contracts::MappingDef;
+use serde_json::Value;
 
 use crate::mapping::CompiledMapping;
 use crate::{normalizer, Shutdown};
@@ -21,23 +22,13 @@ pub fn new_store() -> MappingStore {
     Arc::new(ArcSwap::from_pointee(HashMap::new()))
 }
 
-fn mapping_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
-    let mut files: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("yaml" | "yml")))
-        .collect();
-    files.sort();
-    files
-}
-
 fn read_def(path: &Path) -> anyhow::Result<MappingDef> {
     Ok(serde_yaml::from_str(&std::fs::read_to_string(path)?)?)
 }
 
 /// Seed: wstawia mappingi z plików, nie nadpisując zmian zrobionych przez API.
 pub async fn seed_mappings(pool: &PgPool, dir: &Path) -> anyhow::Result<()> {
-    for path in mapping_files(dir) {
+    for path in yaml_files(dir) {
         match read_def(&path) {
             Ok(def) => {
                 let json = serde_json::to_value(&def)?;
@@ -85,7 +76,7 @@ pub async fn load_mappings(pool: &PgPool, store: &MappingStore) -> anyhow::Resul
 
 /// Sprawdza zmiany plików (po mtime) i wrzuca zmienione definicje do bazy.
 async fn scan_files(pool: &PgPool, dir: &Path, seen: &mut HashMap<PathBuf, SystemTime>) {
-    for path in mapping_files(dir) {
+    for path in yaml_files(dir) {
         let Ok(mtime) = std::fs::metadata(&path).and_then(|m| m.modified()) else { continue };
         if seen.get(&path) == Some(&mtime) {
             continue;
@@ -112,7 +103,7 @@ async fn scan_files(pool: &PgPool, dir: &Path, seen: &mut HashMap<PathBuf, Syste
         match res {
             Ok(r) if r.rows_affected() > 0 => {
                 tracing::info!(schema = %def.schema, "mapping file changed, upserted");
-                let _ = common::db::sqlx::query("SELECT pg_notify('config_changed', 'mappings')").execute(pool).await;
+                notify_config_changed(pool, "mappings").await;
             }
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "mapping upsert failed"),
@@ -133,7 +124,7 @@ pub async fn run_config(
     let dir = Path::new(&config_dir).join("mappings");
     seed_mappings(&pool, &dir).await?;
     let mut seen: HashMap<PathBuf, SystemTime> = HashMap::new();
-    for p in mapping_files(&dir) {
+    for p in yaml_files(&dir) {
         if let Ok(m) = std::fs::metadata(&p).and_then(|m| m.modified()) {
             seen.insert(p, m);
         }
@@ -146,8 +137,7 @@ pub async fn run_config(
         tracing::warn!(error = %e, "replay of unmapped events failed");
     }
 
-    // Polling zamiast `notify`: bind-mount Dockera na macOS nie przekazuje zdarzeń systemu plików.
-    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    let mut tick = tokio::time::interval(POLL_INTERVAL);
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
@@ -158,13 +148,7 @@ pub async fn run_config(
                         tracing::warn!(error = %e, "mapping reload failed");
                         continue;
                     }
-                    let ev = UiEvent {
-                        alert_id: None,
-                        kind: UiEventKind::ConfigChanged,
-                        payload: json!({"kind": "mappings"}),
-                        at: chrono::Utc::now(),
-                    };
-                    let _ = common::kafka::publish(&producer, topics::UI_EVENTS, "config_changed", &ev).await;
+                    publish_config_changed(&producer, "mappings").await;
                     if let Err(e) = normalizer::replay_unmapped(&pool, &producer, &store).await {
                         tracing::warn!(error = %e, "replay of unmapped events failed");
                     }

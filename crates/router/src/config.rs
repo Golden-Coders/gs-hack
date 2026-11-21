@@ -10,12 +10,13 @@ use std::time::{Duration, SystemTime};
 use anyhow::Context;
 use common::db::sqlx::{postgres::PgListener, PgPool, Row};
 use common::kafka::rdkafka::producer::FutureProducer;
+use common::reload::{notify_config_changed, publish_config_changed, yaml_files, POLL_INTERVAL};
 use contracts::{
-    topics, Channel, Condition, PersonDef, PreferenceDef, RuleDef, RunbookDef, RunbookKind,
-    Severity, TeamDef, UiEvent, UiEventKind,
+    Channel, Condition, PersonDef, PreferenceDef, RuleDef, RunbookDef, RunbookKind, Severity,
+    TeamDef,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::Shutdown;
 
@@ -85,10 +86,6 @@ impl RouterStore {
             .clone()
     }
 
-    pub fn load(&self) -> Arc<RouterSnapshot> {
-        self.load_full()
-    }
-
     pub fn store(&self, snap: Arc<RouterSnapshot>) {
         *self.inner.write().unwrap_or_else(|e| e.into_inner()) = snap;
     }
@@ -107,23 +104,6 @@ pub struct PeopleConfigFile {
     pub teams: Vec<TeamDef>,
 }
 
-fn rule_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return vec![];
-    };
-    let mut files: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            matches!(
-                p.extension().and_then(|e| e.to_str()),
-                Some("yaml" | "yml")
-            )
-        })
-        .collect();
-    files.sort();
-    files
-}
-
 /// Parsuje i waliduje definicję reguły z YAML (warunek + szablony prezentacji).
 pub fn parse_and_validate_rule_yaml(yaml_str: &str) -> anyhow::Result<RuleDef> {
     let def: RuleDef = serde_yaml::from_str(yaml_str).context("parsing rule YAML")?;
@@ -139,7 +119,7 @@ fn read_rule_def(path: &Path) -> anyhow::Result<RuleDef> {
 
 /// Seed: wstawia reguły z `config/rules/*.yaml` do tabeli `rules`, nie nadpisując zmian z API.
 pub async fn seed_rules(pool: &PgPool, rules_dir: &Path) -> anyhow::Result<()> {
-    for path in rule_files(rules_dir) {
+    for path in yaml_files(rules_dir) {
         match read_rule_def(&path) {
             Ok(mut def) => {
                 if def.version <= 0 {
@@ -324,9 +304,7 @@ pub async fn sync_people_config(pool: &PgPool, cfg: &PeopleConfigFile) -> anyhow
             teams = cfg.teams.len(),
             "people.yaml synced to postgres"
         );
-        let _ = common::db::sqlx::query("SELECT pg_notify('config_changed', 'people')")
-            .execute(pool)
-            .await;
+        notify_config_changed(pool, "people").await;
     }
 
     Ok(changed)
@@ -532,7 +510,7 @@ async fn load_manual_runbooks_from_db(pool: &PgPool) -> Vec<CompiledManualRunboo
 }
 
 /// Sprawdza zmiany plików w `config/rules/` oraz `config/people.yaml`.
-pub async fn scan_p2_files(
+pub async fn scan_config_files(
     pool: &PgPool,
     rules_dir: &Path,
     people_file: &Path,
@@ -540,7 +518,7 @@ pub async fn scan_p2_files(
     seen_people: &mut Option<SystemTime>,
 ) {
     // 1. Scan rules directory
-    let current_files = rule_files(rules_dir);
+    let current_files = yaml_files(rules_dir);
     let current_set: HashSet<PathBuf> = current_files.iter().cloned().collect();
 
     // Handle deleted rule files
@@ -632,9 +610,7 @@ pub async fn scan_p2_files(
     }
 
     if rules_notified {
-        let _ = common::db::sqlx::query("SELECT pg_notify('config_changed', 'rules')")
-            .execute(pool)
-            .await;
+        notify_config_changed(pool, "rules").await;
     }
 
     // 2. Scan people.yaml
@@ -667,7 +643,7 @@ pub async fn run_config(
     }
 
     let mut seen_rules: HashMap<PathBuf, (SystemTime, String)> = HashMap::new();
-    for p in rule_files(&rules_dir) {
+    for p in yaml_files(&rules_dir) {
         if let Ok(m) = std::fs::metadata(&p).and_then(|m| m.modified()) {
             let rule_id = read_rule_def(&p).map(|d| d.id).unwrap_or_default();
             seen_rules.insert(p, (m, rule_id));
@@ -681,13 +657,12 @@ pub async fn run_config(
     listener.listen("config_changed").await?;
     load_snapshot(&pool, &store).await?;
 
-    // Polling co 2 s (zgodnie z `crates/lifecycle/src/config.rs`, bind-mount Dockera na macOS).
-    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    let mut tick = tokio::time::interval(POLL_INTERVAL);
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
             _ = tick.tick() => {
-                scan_p2_files(&pool, &rules_dir, &people_file, &mut seen_rules, &mut seen_people).await;
+                scan_config_files(&pool, &rules_dir, &people_file, &mut seen_rules, &mut seen_people).await;
             }
             n = listener.recv() => match n {
                 Ok(n) if matches!(n.payload(), "rules" | "people" | "runbooks") => {
@@ -696,13 +671,7 @@ pub async fn run_config(
                         tracing::warn!(error = %e, kind = %kind, "router snapshot reload failed");
                         continue;
                     }
-                    let ev = UiEvent {
-                        alert_id: None,
-                        kind: UiEventKind::ConfigChanged,
-                        payload: json!({ "kind": kind }),
-                        at: chrono::Utc::now(),
-                    };
-                    let _ = common::kafka::publish(&producer, topics::UI_EVENTS, "config_changed", &ev).await;
+                    publish_config_changed(&producer, &kind).await;
                 }
                 Ok(_) => {}
                 Err(e) => {

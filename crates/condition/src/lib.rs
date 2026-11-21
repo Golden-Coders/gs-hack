@@ -180,7 +180,9 @@ fn compile_matcher(op: Op, value: &Value) -> Result<CompiledMatcher, Error> {
             let pattern = value.as_str().ok_or_else(|| {
                 Error::InvalidCondition("`regex` operator requires a string pattern".into())
             })?;
-            let re = Regex::new(pattern)
+            let re = regex::RegexBuilder::new(pattern)
+                .size_limit(1 << 20)
+                .build()
                 .map_err(|e| Error::InvalidCondition(format!("invalid regex `{pattern}`: {e}")))?;
             Ok(CompiledMatcher::Regex(re))
         }
@@ -1202,6 +1204,17 @@ value: resolved
                 }
             }
         }
+    }
+
+    #[test]
+    fn oversized_regex_is_rejected() {
+        let cond = Condition::Leaf {
+            field: "message".into(),
+            op: Op::Regex,
+            value: json!("a{1000}{1000}"),
+        };
+        let err = compile(&cond).unwrap_err();
+        assert!(matches!(err, Error::InvalidCondition(_)), "{err}");
     }
 }
 

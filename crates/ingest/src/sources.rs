@@ -68,20 +68,14 @@ pub async fn run_scanner(ctx: Arc<Ctx>, dir: String) {
             tracing::info!(source = %name, topic = %def.topic, "starting source");
             running.insert(name.clone(), (text, tokio::spawn(run_source(ctx.clone(), name, def))));
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(common::reload::POLL_INTERVAL).await;
     }
 }
 
 fn read_dir(dir: &Path) -> HashMap<String, String> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return HashMap::new() };
-    entries
-        .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            let ext = p.extension()?.to_str()?;
-            if ext != "yaml" && ext != "yml" {
-                return None;
-            }
+    common::reload::yaml_files(dir)
+        .into_iter()
+        .filter_map(|p| {
             Some((p.file_stem()?.to_str()?.to_string(), std::fs::read_to_string(&p).ok()?))
         })
         .collect()

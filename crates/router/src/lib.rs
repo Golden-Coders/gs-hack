@@ -13,7 +13,7 @@ use contracts::{topics, AlertChanged};
 
 pub use config::{
     default_fallback_chain, load_snapshot, new_store, parse_and_validate_rule_yaml, run_config,
-    scan_p2_files, seed_rules, sync_people_config, sync_people_yaml, CompiledManualRunbook,
+    scan_config_files, seed_rules, sync_people_config, sync_people_yaml, CompiledManualRunbook,
     CompiledRule, PeopleConfigFile, RouterSnapshot, RouterStore,
 };
 pub use engine::{
