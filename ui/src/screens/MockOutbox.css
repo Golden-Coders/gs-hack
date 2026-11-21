@@ -1,16 +1,8 @@
 .mock-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.mock-outbox h2 { font-size: 16px; margin: var(--space-6) 0 var(--space-2); }
 .channel-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-3); }
 .channel-card { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--green); border-radius: var(--radius); padding: var(--space-3) var(--space-4); }
 .channel-card.channel-down { border-left-color: var(--red); background: var(--red-bg); }
 .channel-state { font-size: 13px; color: var(--green); font-weight: 600; }
 .channel-down .channel-state { color: var(--red); }
-.outbox-empty { padding: var(--space-6); text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); }
-.outbox-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.outbox-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.outbox-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface-muted); }
-.outbox-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); vertical-align: top; }
-.outbox-table tr:last-child td { border-bottom: none; }
-.outbox-table .nowrap { white-space: nowrap; }
 .outbox-to { font-family: var(--font-mono); font-size: 12px; }
 .outbox-body { color: var(--text-muted); word-break: break-word; }
