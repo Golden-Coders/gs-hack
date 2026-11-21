@@ -1,4 +1,4 @@
-//! Parsowanie plików z `config/p3` (zadania 11.1, 11.2).
+//! Parsowanie plików z `config/` (zadania 11.1, 11.2).
 //!
 //! - `*.yaml|*.yml` → runbook AUTOMATIC. Format jak w Appendix B: klucze kroku
 //!   `check`, `action`, `if`, `approval`, `text`, `manual`, `note`, `id`, `type`, `params`;
@@ -263,8 +263,8 @@ steps:
 
     #[test]
     fn invalid_yaml_reports_file_and_line() {
-        let err = parse_runbook("config/p3/runbooks/bad.yaml", "steps:\n  - action: [unclosed\n").unwrap_err();
-        assert!(err.starts_with("config/p3/runbooks/bad.yaml: "), "{err}");
+        let err = parse_runbook("config/runbooks/bad.yaml", "steps:\n  - action: [unclosed\n").unwrap_err();
+        assert!(err.starts_with("config/runbooks/bad.yaml: "), "{err}");
         assert!(err.contains("line"), "{err}");
     }
 

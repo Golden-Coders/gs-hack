@@ -171,7 +171,7 @@ mod tests {
     use serde_json::json;
 
     fn snapshot() -> Snapshot {
-        // Fragment config/p2/people.yaml: kasia w counterparty-support, preferencje zespołu error → email.
+        // Fragment config/people.yaml: kasia w counterparty-support, preferencje zespołu error → email.
         let kasia: PersonDef = serde_json::from_value(json!({
             "id": "kasia", "name": "Kasia", "contacts": { "email": "kasia@example.com", "sms": "+48500000006" },
             "preferences": [], "fallback": ["sms"]

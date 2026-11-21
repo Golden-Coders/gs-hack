@@ -8,7 +8,7 @@
 #      (preferencja Anny: SMS), link do alertu w SMS (mock outbox) bez pełnej treści runbooka.
 #  (c) pricing: POST /ingest/pricing.log.v1 -> alert, runbook MANUAL dołączony (GET /alerts/{id}/runbooks),
 #      dostarczenie tylko na kanale ui (pricing = UI only; link w SMS sprawdza (b)).
-# Wymaga mappingu `pricing.log.v1` (config/p1/mappings) i runbooka pricing-latency z `matches` po polu `service`.
+# Wymaga mappingu `pricing.log.v1` (config/mappings) i runbooka pricing-latency z `matches` po polu `service`.
 # Użycie: API_URL=http://localhost:8088 scripts/e2e/runbooks.sh
 # Zmienne: API_URL, INGEST_URL (:8081), MOCK_URL (:8090), MAILPIT_URL (:8025), API_TOKEN, PERSON_ID, TIMEOUT_SECS.
 set -euo pipefail

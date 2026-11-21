@@ -8,7 +8,7 @@
 #      błędem „host niedozwolony” bez wywołania.
 #  (3) zmiana reguły bez restartu (tylko RUN_RULE_CHANGE=1): PUT /rules/settlements-prod z dodatkowym
 #      odbiorcą (kasia) -> kolejne zdarzenie ma dostarczenie dla kasia; reguła wraca do pierwotnej treści.
-# Wymaga plików config/p3/runbooks/{cdn-stale,shell-demo}.yaml (seed). Sprząta w trap: akcja flush_cdn,
+# Wymaga plików config/runbooks/{cdn-stale,shell-demo}.yaml (seed). Sprząta w trap: akcja flush_cdn,
 # reguła (jeśli była zmieniona).
 # Użycie: API_URL=http://localhost:8088 [RUN_RULE_CHANGE=1] scripts/e2e/criteria.sh
 # Zmienne: API_URL, INGEST_URL, MOCK_URL, API_TOKEN, PERSON_ID, TIMEOUT_SECS, LIMIT_SECS (limit kroku (1), domyślnie 60).
@@ -71,7 +71,7 @@ api GET "$MOCK_URL/calls" >/dev/null 2>&1 || curl -sS -f "$MOCK_URL/calls" >/dev
 STAGE="new-action-before"
 api DELETE "$API_URL/actions/flush_cdn" >/dev/null 2>&1 || true
 is_missing() { missing | grep -x flush_cdn; }
-wait_for "flush_cdn w /actions/missing (brak seedu config/p3/runbooks/cdn-stale.yaml?)" bash -c "$(declare -f api missing is_missing); API_URL='$API_URL' TOKEN='$TOKEN' PERSON='$PERSON'; is_missing" >/dev/null
+wait_for "flush_cdn w /actions/missing (brak seedu config/runbooks/cdn-stale.yaml?)" bash -c "$(declare -f api missing is_missing); API_URL='$API_URL' TOKEN='$TOKEN' PERSON='$PERSON'; is_missing" >/dev/null
 ingest CDN_STALE "CDN1-$RUN"
 A1="$(wait_for "alert CDN1-$RUN" alert_id "CDN1-$RUN")"
 manual_step() { step_of "$A1" cdn-stale | jq -ce 'select(.status == "waiting_manual" and .automation == "manual")'; }

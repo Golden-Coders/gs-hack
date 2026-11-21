@@ -25,9 +25,9 @@ Adresy: UI http://localhost:5173, Mailpit http://localhost:8025, mock-targets ht
 
 ## Krok (f): runbook z nieznaną akcją
 
-Runbooki ładowane są wyłącznie z `config/p3/runbooks/` (strumień P3), więc generator demo
+Runbooki ładowane są wyłącznie z `config/runbooks/` (strumień P3), więc generator demo
 nie dodaje tam pliku. Przed nagraniem dodaj ręcznie (seed P3, hot reload) runbook
-YAML zawierający krok z `action: flush_cdn` (akcji nie ma w `config/p3/actions`) i dopasowanie
+YAML zawierający krok z `action: flush_cdn` (akcji nie ma w `config/actions`) i dopasowanie
 np. do `trade.rejected`. Efekt: krok manualny + licznik brakujących akcji w UI. Akcję dodaj
 w kroku 3:50, by pokazać „< 1 min”.
 

@@ -1,5 +1,5 @@
--- P1: alerty i epizody. Jedynym pisarzem jest lifecycle (dedup); api tylko czyta.
--- Jeden alert na fingerprint na zawsze: reopen = ten sam wiersz, episode + 1.
+-- Cykl życia alertów i epizody. Jedynym pisarzem jest `lifecycle` (dedup).
+
 CREATE TABLE alerts (
     id          UUID PRIMARY KEY,
     fingerprint TEXT NOT NULL UNIQUE,

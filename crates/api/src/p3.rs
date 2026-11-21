@@ -76,7 +76,7 @@ fn error_line(error: &str) -> Option<i64> {
 
 async fn runbook_errors(State(st): State<AppState>) -> ApiResult<Json<Value>> {
     let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT source_file, error FROM p3_load_errors ORDER BY source_file").fetch_all(&st.db).await.map_err(db_err)?;
+        sqlx::query_as("SELECT source_file, error FROM runbook_load_errors ORDER BY source_file").fetch_all(&st.db).await.map_err(db_err)?;
     let out: Vec<Value> = rows.into_iter().map(|(file, error)| json!({ "file": file, "line": error_line(&error), "error": error })).collect();
     Ok(Json(json!(out)))
 }

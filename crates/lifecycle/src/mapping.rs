@@ -188,7 +188,7 @@ mod tests {
     }
 
     fn seed_def(schema: &str) -> MappingDef {
-        let p = format!("{ROOT}/config/p1/mappings/{schema}.yaml");
+        let p = format!("{ROOT}/config/mappings/{schema}.yaml");
         serde_yaml::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
     }
 

@@ -56,6 +56,6 @@
       "automation": "automated"
     }
   ],
-  "source_file": "config/p3/runbooks/settlement-timeout.yaml",
+  "source_file": "config/runbooks/settlement-timeout.yaml",
   "version": 1
 }

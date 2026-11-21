@@ -130,7 +130,7 @@ pub async fn run_config(
     store: MappingStore,
     mut shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let dir = Path::new(&config_dir).join("p1").join("mappings");
+    let dir = Path::new(&config_dir).join("mappings");
     seed_mappings(&pool, &dir).await?;
     let mut seen: HashMap<PathBuf, SystemTime> = HashMap::new();
     for p in mapping_files(&dir) {

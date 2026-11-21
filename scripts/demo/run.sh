@@ -46,7 +46,7 @@ fi
 echo "== (e) nieznany schemat -> UNMAPPED"
 curl -sf -o /dev/null -X POST -H "Content-Type: application/json" -d "{\"host\":\"demo-$RUN\",\"level\":\"fatal\",\"msg\":\"disk full\"}" "$INGEST_URL/ingest/judges.custom.v1" && echo "  ok judges.custom.v1"
 
-echo "== (f) runbook z nieznaną akcją (flush_cdn): krok ręczny, patrz docs/DEMO.md (runbooki ładowane tylko z config/p3/runbooks)"
+echo "== (f) runbook z nieznaną akcją (flush_cdn): krok ręczny, patrz docs/DEMO.md (runbooki ładowane tylko z config/runbooks)"
 sleep 3
 
 echo

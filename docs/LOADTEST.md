@@ -34,7 +34,7 @@ Zmienne środowiskowe:
 | `DUP_RATIO` | `0.5` | odsetek zdarzeń z payloadem bez zmian (powtórka fingerprintu), 0.0–1.0 |
 | `MODE` | `both` | `http`, `kafka` lub `both` (naprzemiennie) |
 | `INGEST_URL` | `http://localhost:8081` | baza serwisu ingest; wysyłamy na `{INGEST_URL}/ingest` |
-| `SOURCE_TOPIC` | `trades` | topik źródłowy Kafki (mapowany w `config/p1/sources/`) |
+| `SOURCE_TOPIC` | `trades` | topik źródłowy Kafki (mapowany w `config/sources/`) |
 | `KAFKA_BROKERS` | `localhost:19092` | z `common::Config` |
 
 Na końcu przebiegu `loadgen` wypisuje: wysłane, błędy, zaplanowane, osiągnięte msg/s,

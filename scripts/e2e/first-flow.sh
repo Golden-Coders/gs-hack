@@ -3,13 +3,13 @@
 #   POST /ingest (WORKFLOW_FAILED) -> alert w GET /alerts -> wpisy w GET /alerts/{id}/deliveries
 #   z received_at/delivered_at -> SMS w GET /mock/outbox (gdy okno 200 wpisów obejmuje alert).
 #
-# Reguła `settlements-prod` (config/p2/rules/settlements-prod.yaml) kieruje alert (severity
+# Reguła `settlements-prod` (config/rules/settlements-prod.yaml) kieruje alert (severity
 # nadpisane na critical) do zespołu `settlements` (jan, ola). Oboje nie mają własnych
 # preferencji, więc dostają kanały domyślne zespołu dla critical: phone + sms
-# (config/p2/people.yaml). Skrypt sprawdza SMS dla obojga.
+# (config/people.yaml). Skrypt sprawdza SMS dla obojga.
 #
 # Działa na niepustym systemie: payload dostaje unikalny `error.code` (składnik fingerprintu
-# w config/p1/mappings/workflow.v1.yaml), więc za każdym razem powstaje nowy alert.
+# w config/mappings/workflow.v1.yaml), więc za każdym razem powstaje nowy alert.
 #
 # Użycie:
 #   scripts/e2e/first-flow.sh

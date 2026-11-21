@@ -1,4 +1,4 @@
-//! Konfiguracja routera (P2): reguły (`config/p2/rules/*.yaml`), osoby i zespoły (`config/p2/people.yaml`),
+//! Konfiguracja routera (P2): reguły (`config/rules/*.yaml`), osoby i zespoły (`config/people.yaml`),
 //! oraz ładowanie runbooków MANUAL z bazy (tabela `runbooks` P3, tylko do odczytu) z hot reloadem
 //! przez `PgListener` na kanale `config_changed` i `ArcSwap` (design D5, D10; tasks 7.1, 8.1, 8.3).
 
@@ -98,7 +98,7 @@ pub fn new_store() -> RouterStore {
     RouterStore::new()
 }
 
-/// Struktura pliku `config/p2/people.yaml`.
+/// Struktura pliku `config/people.yaml`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PeopleConfigFile {
     #[serde(default)]
@@ -137,7 +137,7 @@ fn read_rule_def(path: &Path) -> anyhow::Result<RuleDef> {
     parse_and_validate_rule_yaml(&content)
 }
 
-/// Seed: wstawia reguły z `config/p2/rules/*.yaml` do tabeli `rules`, nie nadpisując zmian z API.
+/// Seed: wstawia reguły z `config/rules/*.yaml` do tabeli `rules`, nie nadpisując zmian z API.
 pub async fn seed_rules(pool: &PgPool, rules_dir: &Path) -> anyhow::Result<()> {
     for path in rule_files(rules_dir) {
         match read_rule_def(&path) {
@@ -531,7 +531,7 @@ async fn load_manual_runbooks_from_db(pool: &PgPool) -> Vec<CompiledManualRunboo
     out
 }
 
-/// Sprawdza zmiany plików w `config/p2/rules/` oraz `config/p2/people.yaml`.
+/// Sprawdza zmiany plików w `config/rules/` oraz `config/people.yaml`.
 pub async fn scan_p2_files(
     pool: &PgPool,
     rules_dir: &Path,
@@ -657,9 +657,9 @@ pub async fn run_config(
     store: RouterStore,
     mut shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let p2_dir = Path::new(&config_dir).join("p2");
-    let rules_dir = p2_dir.join("rules");
-    let people_file = p2_dir.join("people.yaml");
+    let cfg_dir = Path::new(&config_dir);
+    let rules_dir = cfg_dir.join("rules");
+    let people_file = cfg_dir.join("people.yaml");
 
     seed_rules(&pool, &rules_dir).await?;
     if let Err(e) = sync_people_yaml(&pool, &people_file).await {

@@ -23,7 +23,7 @@ fn load_repo_snapshot() -> RouterSnapshot {
 
     // Load people.yaml
     let people_yaml =
-        std::fs::read_to_string(repo_root.join("config/p2/people.yaml")).expect("people.yaml");
+        std::fs::read_to_string(repo_root.join("config/people.yaml")).expect("people.yaml");
     let people_cfg: PeopleConfigFile = serde_yaml::from_str(&people_yaml).expect("parse people");
 
     let mut people = HashMap::new();
@@ -36,7 +36,7 @@ fn load_repo_snapshot() -> RouterSnapshot {
     }
 
     // Load rules/*.yaml
-    let rules_dir = repo_root.join("config/p2/rules");
+    let rules_dir = repo_root.join("config/rules");
     let mut rule_paths: Vec<_> = std::fs::read_dir(&rules_dir)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
