@@ -63,10 +63,17 @@ compose_up() {
     fi
 }
 
-# wait_health: czeka na odpowiedź api.
+# wait_health: czeka na api (/health jest publiczne), potem sprawdza token na chronionym endpoincie;
+# 401/403 to zły API_TOKEN — fail od razu zamiast ponawiać aż do TIMEOUT.
 wait_health() {
     STAGE="health"
     wait_for "odpowiedź $API_URL/health" api GET "$API_URL/health" >/dev/null || exit 1
+    local code
+    code="$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+        -H "X-Person-Id: $PERSON" "$API_URL/alerts?limit=1" 2>/dev/null)"
+    if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+        STAGE="auth"; fail "api zwraca $code — sprawdź API_TOKEN"
+    fi
     ok "api $API_URL odpowiada"
 }
 
@@ -79,10 +86,19 @@ ingest() {
     [ "$code" = "202" ] || fail "POST $INGEST_URL/ingest zwrócił $code (oczekiwano 202)"
 }
 
-# find_alert_by_fp <podciąg>: alert z GET /alerts, którego fingerprint zawiera podciąg.
+# find_alert_by_fp <podciąg>: alert, którego fingerprint zawiera podciąg.
+# GET /alerts nie ma filtra po fingerprincie, a pod obciążeniem alert wypada z okna limit=1000,
+# więc fallback: id z Postgresa (alerts.fingerprint, tylko odczyt), potem GET /alerts/{id}
+# (nadzbiór AlertSummary).
 find_alert_by_fp() {
-    api GET "$API_URL/alerts?limit=1000" | jq -ce --arg id "$1" \
-        '[.[] | select(.fingerprint | contains($id))] | first // empty'
+    local found id
+    found="$(api GET "$API_URL/alerts?limit=1000" | jq -ce --arg id "$1" \
+        '[.[] | select(.fingerprint | contains($id))] | first // empty')"
+    if [ -n "$found" ]; then printf '%s' "$found"; return 0; fi
+    command -v docker >/dev/null || return 1
+    id="$(pg_query "SELECT id FROM alerts WHERE strpos(fingerprint, \$fp\$$1\$fp\$) > 0 ORDER BY updated_at DESC LIMIT 1")" || return 1
+    [ -n "$id" ] || return 1
+    api GET "$API_URL/alerts/$id" | jq -ce 'select(.id != null)'
 }
 
 # pg_query <sql>: zapytanie tylko do odczytu (np. deliveries.request, którego nie ma w API).
