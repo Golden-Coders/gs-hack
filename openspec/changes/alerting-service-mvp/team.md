@@ -22,7 +22,7 @@ Sekcja 1 (Faza 0) robią wszyscy razem, sekcja 18 (integracja) wszyscy razem.
 3. **Stan alertu zmienia tylko P1, stan runbooka tylko P3** — reszta wysyła komendy na `alerts.commands` / `runbooks.commands`.
 4. **Zależności Rust dodajesz tylko w swoim `Cargo.toml`**; nowa wersja we `[workspace.dependencies]` = PR + ping.
 5. **`api/src/main.rs` nie edytujesz** — routy dodajesz w swoim `api/src/pN.rs`.
-6. Migracje: tylko `migrations/pN_*.sql`, bez kluczy obcych do tabel innych strumieni.
+6. Migracje: tylko `migrations/<wersja>_pN_*.sql` w swoim zakresie numerów (P1: 1001–1999, P2: 2001–2999, P3: 3001–3999), bez kluczy obcych do tabel innych strumieni.
 7. Testujesz swój etap **sam**: publikujesz fixtures na swój topik wejściowy (`rpk topic produce`) i czytasz wyjściowy. Nie czekasz na innych.
 8. Małe, częste merge'e do `main` (co 1–2 h), każdy z zielonym `cargo test -p <twój crate>`.
 
@@ -38,9 +38,9 @@ Krótka wersja do wklejenia agentowi:
 
 | | |
 |---|---|
-| Pisze w | `crates/ingest`, `crates/lifecycle`, `crates/loadgen`, `api/src/p1.rs`, `migrations/p1_*`, `config/p1/` (sources, mappings), `docs/LOADTEST.md` |
-| Tabele | `sources`, `mappings`, `unmapped_events`, `alerts`, `alert_episodes`, `alert_occurrences_rollup` |
-| Konsumuje | HTTP, zewnętrzne topiki Kafki, `events.raw`, `events.unmapped`, `events.normalized`, `alerts.commands` |
+| Pisze w | `crates/ingest`, `crates/lifecycle`, `crates/loadgen`, `api/src/p1.rs`, `migrations/1xxx_p1_*`, `config/p1/` (sources, mappings), `docs/LOADTEST.md` |
+| Tabele | `ingest_errors`, `mappings`, `unmapped_events`, `alerts`, `alert_episodes` |
+| Konsumuje | HTTP, zewnętrzne topiki Kafki, `events.raw`, `events.normalized`, `alerts.commands` |
 | Produkuje | `events.raw`, `events.unmapped`, `events.normalized`, `alerts.changed`, `ui.events` |
 | Zależy od | `condition` od P2 (warunki severity/resolved w mappingu) — do tego czasu zaślepka z Fazy 0 |
 | Dostarcza innym | `alerts.changed` (P2, P3, api), endpointy alertów i mappingów (P4) |
@@ -53,7 +53,7 @@ Kolejność: 2.1 → 3.1–3.2 → 4.1 (**to odblokowuje pierwszy przepływ**) �
 
 | | |
 |---|---|
-| Pisze w | `crates/condition`, `crates/router`, `crates/sender`, `api/src/p2.rs`, `migrations/p2_*`, `config/p2/` (rules, people.yaml) |
+| Pisze w | `crates/condition`, `crates/router`, `crates/sender`, `api/src/p2.rs`, `migrations/2xxx_p2_*`, `config/p2/` (rules, people.yaml) |
 | Tabele | `rules`, `people`, `teams`, `team_members`, `preferences`, `deliveries`, `mock_outbox` |
 | Konsumuje | `alerts.changed`, `deliveries.requested`, `deliveries.retry`; czyta `runbooks` (tylko odczyt, runbooki MANUAL) |
 | Produkuje | `deliveries.requested`, `deliveries.retry`, `deliveries.dlq`, `ui.events` |
@@ -70,7 +70,7 @@ Uwaga: to najcięższy strumień. Plan awaryjny w sekcji „Bilans obciążenia�
 
 | | |
 |---|---|
-| Pisze w | `crates/runbooks`, `crates/mock-targets`, `api/src/p3.rs`, `migrations/p3_*`, `config/p3/` (runbooks, actions) |
+| Pisze w | `crates/runbooks`, `crates/mock-targets`, `api/src/p3.rs`, `migrations/3xxx_p3_*`, `config/p3/` (runbooks, actions) |
 | Tabele | `runbooks`, `actions`, `runbook_runs`, `step_runs`, `audit_log`, `unhandled_actions` |
 | Konsumuje | `alerts.changed`, `runbooks.commands` |
 | Produkuje | `deliveries.requested` (escalate/notify), `ui.events` |
