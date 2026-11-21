@@ -8,6 +8,8 @@
 
 mod author;
 mod engine;
+#[cfg(test)]
+mod it;
 mod matching;
 mod notify;
 mod parse;
