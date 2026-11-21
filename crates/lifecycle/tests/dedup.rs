@@ -129,13 +129,32 @@ async fn ack_resolve_reopen_lifecycle() {
     let res = wait_alert(&pool, &fp, "resolved", |r| r.state == "resolved").await;
     assert_eq!(res.resolved_by, Some(json!({"type": "user", "person_id": "bob"})));
 
-    // reopen tego samego alertu (nowy epizod)
-    common::send_events(&producer, &fp, 1).await;
+    // reopen tego samego alertu (nowy epizod); received_at zdarzenia wyraźnie w przeszłości,
+    // żeby odróżnić go od now() (Postgres trzyma µs, więc obcinamy do µs)
+    let received_at = chrono::DateTime::from_timestamp_micros((chrono::Utc::now() - chrono::Duration::hours(1)).timestamp_micros()).unwrap();
+    let mut ev = common::event(&fp, false);
+    ev.received_at = received_at;
+    ::common::kafka::publish(&producer, &common::topics().events_normalized, &fp, &ev).await.unwrap();
     let re = wait_alert(&pool, &fp, "reopened", |r| r.state == "reopened").await;
     assert_eq!(re.id, a.id);
     assert_eq!(re.episode, 2);
     assert_eq!(re.count, 1);
     assert!(re.acked_by.is_none() && re.resolved_by.is_none());
+
+    // first_seen = received_at zdarzenia otwierającego epizod 2, nie now(); first_seen <= last_seen
+    let times = sqlx::query("SELECT first_seen, last_seen FROM alerts WHERE id = $1").bind(a.id).fetch_one(&pool).await.unwrap();
+    let first_seen: chrono::DateTime<chrono::Utc> = times.get("first_seen");
+    let last_seen: chrono::DateTime<chrono::Utc> = times.get("last_seen");
+    assert!(first_seen <= last_seen, "first_seen {first_seen} > last_seen {last_seen}");
+    assert_eq!(first_seen, received_at);
+    assert_eq!(last_seen, received_at);
+    let ep2_opened: chrono::DateTime<chrono::Utc> = sqlx::query("SELECT opened_at FROM alert_episodes WHERE alert_id = $1 AND episode = 2")
+        .bind(a.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get("opened_at");
+    assert_eq!(ep2_opened, received_at);
 
     let eps = sqlx::query("SELECT episode, count, acked_by, resolved_by FROM alert_episodes WHERE alert_id = $1 ORDER BY episode")
         .bind(a.id)
